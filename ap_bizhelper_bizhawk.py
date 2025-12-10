@@ -282,32 +282,21 @@ def build_runner(settings: Dict[str, Any], bizhawk_exe: Path, proton_bin: Path) 
 
 
 def ensure_bizhawk_desktop_shortcut(settings: Dict[str, Any], runner: Path) -> None:
-    """
-    Optionally create a desktop launcher for the BizHawk Proton runner.
-
-    This mirrors the Archipelago AppImage shortcut logic, but uses its own
-    settings key BIZHAWK_DESKTOP_SHORTCUT to remember the user's choice.
-    """
-    # Runner must exist and be executable.
+    """Offer to place a BizHawk (Proton) launcher on the Desktop."""
     if not runner.is_file() or not os.access(str(runner), os.X_OK):
         return
 
-    state = str(settings.get("BIZHAWK_DESKTOP_SHORTCUT", "") or "")
-    if state:
-        return  # already decided
-
     if not _has_zenity():
-        settings["BIZHAWK_DESKTOP_SHORTCUT"] = "no"
-        _save_settings(settings)
         return
 
+    shortcut_path = Path(os.path.expanduser("~/Desktop")) / "BizHawk-Proton.desktop"
     code, _ = _run_zenity(
         [
             "--question",
             "--title=BizHawk (Proton) shortcut",
-            "--text=Create menu launcher/shortcut for BizHawk (Proton via ap-bizhelper)?",
-            "--ok-label=Yes",
-            "--cancel-label=No",
+            "--text=Would you like to place a BizHawk (Proton) shortcut on your Desktop?",
+            "--ok-label=Create shortcut",
+            "--cancel-label=Skip",
         ]
     )
     if code != 0:
@@ -315,13 +304,6 @@ def ensure_bizhawk_desktop_shortcut(settings: Dict[str, Any], runner: Path) -> N
         _save_settings(settings)
         return
 
-    applications_dir = Path(os.path.expanduser("~/.local/share/applications"))
-    try:
-        applications_dir.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
-
-    shortcut = applications_dir / "BizHawk-Proton.desktop"
     content = (
         "[Desktop Entry]\n"
         "Type=Application\n"
@@ -330,39 +312,43 @@ def ensure_bizhawk_desktop_shortcut(settings: Dict[str, Any], runner: Path) -> N
         "Terminal=false\n"
     )
     try:
-        with shortcut.open("w", encoding="utf-8") as f:
+        shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+        with shortcut_path.open("w", encoding="utf-8") as f:
             f.write(content)
-        shortcut.chmod(0o755)
+        shortcut_path.chmod(0o755)
         settings["BIZHAWK_DESKTOP_SHORTCUT"] = "yes"
         _save_settings(settings)
-    except Exception:
+        info_dialog(f"Created Desktop shortcut: {shortcut_path}")
+    except Exception as exc:  # pragma: no cover - filesystem edge cases
         settings["BIZHAWK_DESKTOP_SHORTCUT"] = "no"
         _save_settings(settings)
+        error_dialog(f"Failed to create BizHawk Desktop shortcut: {exc}")
 
 
-def maybe_update_bizhawk(settings: Dict[str, Any], bizhawk_exe: Path) -> None:
+def maybe_update_bizhawk(settings: Dict[str, Any], bizhawk_exe: Path) -> Tuple[Path, bool]:
     """
     If BizHawk is installed in our managed directory, check for an update and
-    optionally download it.
+    optionally download it. Returns the (possibly updated) executable path and
+    whether an update was installed.
     """
     try:
         _ = bizhawk_exe.relative_to(BIZHAWK_WIN_DIR)
     except ValueError:
         # User-managed install; don't auto-update.
-        return
+        return bizhawk_exe, False
 
     try:
         url, latest_ver = _github_latest_bizhawk()
     except Exception:
-        return
+        return bizhawk_exe, False
 
     current_ver = str(settings.get("BIZHAWK_VERSION", "") or "")
     skip_ver = str(settings.get("BIZHAWK_SKIP_VERSION", "") or "")
-    if current_ver == latest_ver or skip_ver == latest_ver:
-        return
+    if not current_ver or current_ver == latest_ver or skip_ver == latest_ver:
+        return bizhawk_exe, False
 
     if not _has_zenity():
-        return
+        return bizhawk_exe, False
 
     code, choice = _run_zenity(
         [
@@ -376,19 +362,19 @@ def maybe_update_bizhawk(settings: Dict[str, Any], bizhawk_exe: Path) -> None:
     )
     if code != 0:
         # "Later"
-        return
+        return bizhawk_exe, False
 
     if choice == "Skip this version":
         settings["BIZHAWK_SKIP_VERSION"] = latest_ver
         _save_settings(settings)
-        return
+        return bizhawk_exe, False
 
     # Update now
     try:
         new_exe = download_and_extract_bizhawk(url, latest_ver)
     except Exception as e:
         error_dialog(f"BizHawk update failed: {e}")
-        return
+        return bizhawk_exe, False
 
     settings["BIZHAWK_EXE"] = str(new_exe)
     settings["BIZHAWK_VERSION"] = latest_ver
@@ -403,6 +389,7 @@ def maybe_update_bizhawk(settings: Dict[str, Any], bizhawk_exe: Path) -> None:
             build_runner(settings, new_exe, proton_bin)
 
     info_dialog(f"BizHawk updated to {latest_ver}.")
+    return new_exe, True
 
 
 def ensure_bizhawk_and_proton() -> Optional[Tuple[Path, Path]]:
@@ -416,6 +403,7 @@ def ensure_bizhawk_and_proton() -> Optional[Tuple[Path, Path]]:
     """
     _ensure_dirs()
     settings = _load_settings()
+    downloaded = False
 
     # Existing config?
     exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
@@ -427,7 +415,7 @@ def ensure_bizhawk_and_proton() -> Optional[Tuple[Path, Path]]:
     proton_bin = Path(proton_str) if proton_str else None
 
     if exe and exe.is_file() and proton_bin and proton_bin.is_file() and runner and runner.is_file():
-        maybe_update_bizhawk(settings, exe)
+        exe, updated = maybe_update_bizhawk(settings, exe)
         # Settings may have changed; reload
         settings = _load_settings()
         runner_str = str(settings.get("BIZHAWK_RUNNER", "") or "")
@@ -436,6 +424,8 @@ def ensure_bizhawk_and_proton() -> Optional[Tuple[Path, Path]]:
             runner = Path(runner_str)
             exe = Path(exe_str)
             if runner.is_file() and exe.is_file():
+                if updated:
+                    ensure_bizhawk_desktop_shortcut(settings, runner)
                 return runner, exe
 
     # Need to (re)configure BizHawk
@@ -474,6 +464,7 @@ def ensure_bizhawk_and_proton() -> Optional[Tuple[Path, Path]]:
         settings["BIZHAWK_VERSION"] = ver
         settings["BIZHAWK_SKIP_VERSION"] = ""
         _save_settings(settings)
+        downloaded = True
 
     # Ensure Proton
     proton_bin = auto_detect_proton(settings)
@@ -490,11 +481,13 @@ def ensure_bizhawk_and_proton() -> Optional[Tuple[Path, Path]]:
     # Build runner
     runner = build_runner(settings, exe, proton_bin)
 
-    # Offer to create a desktop launcher for the runner.
-    ensure_bizhawk_desktop_shortcut(settings, runner)
-
     # Check for updates (in case user had an older version)
-    maybe_update_bizhawk(settings, exe)
+    exe, updated = maybe_update_bizhawk(settings, exe)
+    downloaded = downloaded or updated
+
+    # Offer to create a desktop launcher for the runner only when a download occurred.
+    if downloaded:
+        ensure_bizhawk_desktop_shortcut(settings, runner)
 
     return runner, exe
 
