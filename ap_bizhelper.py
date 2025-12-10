@@ -53,6 +53,53 @@ def _select_patch_file() -> Path:
     return patch
 
 
+def _prompt_setup_choices(*, allow_archipelago_skip: bool) -> Tuple[bool, bool, bool]:
+    if not _has_zenity():
+        # Fall back to enabling everything when zenity is unavailable.
+        return True, True, True
+
+    while True:
+        code, out = _run_zenity(
+            [
+                "--list",
+                "--checklist",
+                "--title=Download setup",
+                "--text=Select which components to download and configure.",
+                "--column=Install",
+                "--column=Component",
+                "TRUE",
+                "Archipelago",
+                "TRUE",
+                "BizHawk (with Proton)",
+                "TRUE",
+                "SNI",
+                "--ok-label=Download",
+                "--cancel-label=Cancel",
+            ]
+        )
+
+        if code != 0:
+            raise RuntimeError("User cancelled setup selection.")
+
+        selections = [s.strip() for s in out.split("|") if s.strip()]
+        arch = "Archipelago" in selections
+        bizhawk = "BizHawk (with Proton)" in selections
+        sni = "SNI" in selections
+
+        if not (arch or bizhawk):
+            error_dialog("You will be required to select one")
+            continue
+
+        if not arch and not allow_archipelago_skip:
+            error_dialog("Archipelago is required to launch patches.")
+            continue
+
+        if not sni:
+            info_dialog("SNES games will not be available.")
+
+        return arch, bizhawk, sni
+
+
 def _ensure_apworld_for_extension(ext: str) -> None:
     ext = ext.strip().lower()
     if not ext:
@@ -228,24 +275,27 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids
     _launch_bizhawk(runner, rom)
 
 
-def _run_prereqs() -> Tuple[Path, Optional[Path]]:
-    # Order mirrors the legacy script: Archipelago setup, BizHawk/Proton setup, then SNI.
-    try:
+def _run_prereqs(*, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path], Optional[Path]]:
+    arch, bizhawk, sni = _prompt_setup_choices(allow_archipelago_skip=allow_archipelago_skip)
+
+    appimage: Optional[Path] = None
+    runner: Optional[Path] = None
+
+    if arch:
         appimage = ensure_appimage()
-    except RuntimeError:
-        raise
 
-    settings = load_settings()
-    bizhawk_result = ensure_bizhawk_and_proton()
-    if bizhawk_result is None:
-        raise RuntimeError("BizHawk setup was cancelled or failed.")
+    bizhawk_result: Optional[Tuple[Path, Path]] = None
+    if bizhawk:
+        bizhawk_result = ensure_bizhawk_and_proton()
+        if bizhawk_result is None:
+            raise RuntimeError("BizHawk setup was cancelled or failed.")
+        runner, _ = bizhawk_result
 
-    # Refresh settings after BizHawk changes and ensure SNI is staged inside BizHawk.
-    settings = load_settings()
-    _ensure_sni(settings)
-    save_settings(settings)
+    if sni:
+        settings = load_settings()
+        _ensure_sni(settings)
+        save_settings(settings)
 
-    runner, _ = bizhawk_result
     return appimage, runner
 
 
@@ -254,6 +304,10 @@ def _run_full_flow() -> int:
         appimage, runner = _run_prereqs()
     except RuntimeError as exc:
         error_dialog(str(exc))
+        return 1
+
+    if appimage is None:
+        error_dialog("Archipelago was not selected for download and is required to continue.")
         return 1
 
     baseline_pids = _list_bizhawk_pids()
@@ -280,7 +334,7 @@ def _run_full_flow() -> int:
 def main(argv: list[str]) -> int:
     if len(argv) >= 2 and argv[1] == "ensure":
         try:
-            _run_prereqs()
+            _run_prereqs(allow_archipelago_skip=True)
         except RuntimeError:
             return 1
         return 0

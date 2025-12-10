@@ -439,8 +439,8 @@ def ensure_bizhawk_and_proton() -> Optional[Tuple[Path, Path]]:
             [
                 "--question",
                 "--title=BizHawk (Proton) setup",
-                "--text=BizHawk (Windows) is not configured.\n\n"
-                        "Download latest Windows build via GitHub, or cancel?",
+                "--text=BizHawk (with Proton) was selected in the Download setup dialog.\n\n"
+                        "Download the latest Windows build via GitHub, or cancel?",
                 "--ok-label=Download",
                 "--cancel-label=Cancel",
             ]
