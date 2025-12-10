@@ -22,14 +22,14 @@ from ap_bizhelper_sni import download_sni_if_needed
 from ap_bizhelper_worlds import ensure_apworld_for_patch
 
 
-def _ensure_sni(settings: dict) -> None:
+def _ensure_sni(settings: dict) -> bool:
     exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
     if not exe_str:
-        return
+        return False
     exe_path = Path(exe_str)
     if not exe_path.is_file():
-        return
-    download_sni_if_needed(exe_path.parent)
+        return False
+    return download_sni_if_needed(exe_path.parent)
 
 
 def _select_patch_file() -> Path:
@@ -282,27 +282,48 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids
 def _run_prereqs(*, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path], Optional[Path]]:
     arch, bizhawk, sni, shortcuts = _prompt_setup_choices(allow_archipelago_skip=allow_archipelago_skip)
 
+    download_messages: list[str] = []
+
     appimage: Optional[Path] = None
     runner: Optional[Path] = None
 
     if arch or not allow_archipelago_skip:
-        appimage = ensure_appimage(download_selected=arch, create_shortcut=shortcuts)
+        appimage = ensure_appimage(
+            download_selected=arch,
+            create_shortcut=shortcuts,
+            download_messages=download_messages,
+        )
 
-    bizhawk_result: Optional[Tuple[Path, Path]] = None
+    bizhawk_result: Optional[Tuple[Path, Path, bool]] = None
     bizhawk_result = ensure_bizhawk_and_proton(
-        download_selected=bizhawk, create_shortcut=shortcuts
+        download_selected=bizhawk,
+        create_shortcut=shortcuts,
+        download_messages=download_messages,
     )
     if bizhawk:
         if bizhawk_result is None:
             raise RuntimeError("BizHawk setup was cancelled or failed.")
-        runner, _ = bizhawk_result
+        runner, _, _ = bizhawk_result
     elif bizhawk_result is not None:
-        runner, _ = bizhawk_result
+        runner, _, _ = bizhawk_result
 
     if sni:
         settings = load_settings()
-        _ensure_sni(settings)
+        exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+        exe_path = Path(exe_str) if exe_str else None
+        existing_sni = (
+            exe_path.parent.joinpath("lua", "connector.lua").exists()
+            if exe_path and exe_path.is_file()
+            else False
+        )
+        sni_ok = _ensure_sni(settings)
+        if sni_ok and not existing_sni:
+            download_messages.append("Installed Windows SNI Lua")
         save_settings(settings)
+
+    if download_messages:
+        message = "Completed downloads:\n- " + "\n- ".join(download_messages)
+        info_dialog(message)
 
     return appimage, runner
 
