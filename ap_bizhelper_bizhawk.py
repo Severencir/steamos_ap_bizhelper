@@ -247,6 +247,26 @@ def select_proton_bin(initial: Optional[Path] = None) -> Optional[Path]:
     return p
 
 
+def select_bizhawk_exe(initial: Optional[Path] = None) -> Optional[Path]:
+    if not _has_zenity():
+        return None
+    args = [
+        "--file-selection",
+        "--title=Select EmuHawk.exe",
+        "--file-filter=*.exe",
+    ]
+    if initial is not None:
+        args.append(f"--filename={initial}")
+    code, out = _run_zenity(args)
+    if code != 0 or not out:
+        return None
+    p = Path(out)
+    if not p.is_file():
+        error_dialog("Selected EmuHawk.exe does not exist.")
+        return None
+    return p
+
+
 def build_runner(settings: Dict[str, Any], bizhawk_exe: Path, proton_bin: Path) -> Path:
     """
     Ensure the Python BizHawk runner path (run_bizhawk_proton.py) is recorded and executable.
@@ -392,7 +412,7 @@ def maybe_update_bizhawk(settings: Dict[str, Any], bizhawk_exe: Path) -> Tuple[P
     return new_exe, True
 
 
-def ensure_bizhawk_and_proton() -> Optional[Tuple[Path, Path]]:
+def ensure_bizhawk_and_proton(*, download_selected: bool = True) -> Optional[Tuple[Path, Path]]:
     """
     Ensure BizHawk (Windows) and Proton are configured and runnable.
 
@@ -431,40 +451,48 @@ def ensure_bizhawk_and_proton() -> Optional[Tuple[Path, Path]]:
     # Need to (re)configure BizHawk
     exe = auto_detect_bizhawk_exe(settings)
     if not exe or not exe.is_file():
-        if not _has_zenity():
+        if not download_selected and not _has_zenity():
             error_dialog("BizHawk is not configured and zenity is not available for setup.")
             return None
 
-        code, _ = _run_zenity(
-            [
-                "--question",
-                "--title=BizHawk (Proton) setup",
-                "--text=BizHawk (with Proton) was selected in the Download setup dialog.\n\n"
-                        "Download the latest Windows build via GitHub, or cancel?",
-                "--ok-label=Download",
-                "--cancel-label=Cancel",
-            ]
-        )
-        if code != 0:
-            return None
+        if download_selected:
+            try:
+                url, ver = _github_latest_bizhawk()
+            except Exception as e:
+                error_dialog(f"Failed to query latest BizHawk release: {e}")
+                return None
+            try:
+                exe = download_and_extract_bizhawk(url, ver)
+            except Exception as e:
+                error_dialog(f"BizHawk download failed or was cancelled: {e}")
+                return None
+            settings = _load_settings()
+            settings["BIZHAWK_EXE"] = str(exe)
+            settings["BIZHAWK_VERSION"] = ver
+            settings["BIZHAWK_SKIP_VERSION"] = ""
+            _save_settings(settings)
+            downloaded = True
+        else:
+            code, _ = _run_zenity(
+                [
+                    "--question",
+                    "--title=BizHawk (Proton) setup",
+                    "--text=BizHawk (with Proton) was not selected for download.\n\nSelect an existing EmuHawk.exe to continue?",
+                    "--ok-label=Select EmuHawk.exe",
+                    "--cancel-label=Cancel",
+                ]
+            )
+            if code != 0:
+                return None
 
-        # Download latest
-        try:
-            url, ver = _github_latest_bizhawk()
-        except Exception as e:
-            error_dialog(f"Failed to query latest BizHawk release: {e}")
-            return None
-        try:
-            exe = download_and_extract_bizhawk(url, ver)
-        except Exception as e:
-            error_dialog(f"BizHawk download failed or was cancelled: {e}")
-            return None
-        settings = _load_settings()
-        settings["BIZHAWK_EXE"] = str(exe)
-        settings["BIZHAWK_VERSION"] = ver
-        settings["BIZHAWK_SKIP_VERSION"] = ""
-        _save_settings(settings)
-        downloaded = True
+            exe = select_bizhawk_exe(Path(os.path.expanduser("~")))
+            if not exe:
+                return None
+            settings = _load_settings()
+            settings["BIZHAWK_EXE"] = str(exe)
+            settings["BIZHAWK_VERSION"] = ""
+            settings["BIZHAWK_SKIP_VERSION"] = ""
+            _save_settings(settings)
 
     # Ensure Proton
     proton_bin = auto_detect_proton(settings)

@@ -135,6 +135,31 @@ def select_appimage(initial: Optional[Path] = None) -> Optional[Path]:
     return p
 
 
+def _prompt_select_existing_appimage(initial: Path) -> Path:
+    """Prompt the user to select an existing AppImage without offering download."""
+
+    if not _has_zenity():
+        raise RuntimeError("zenity is required to select an Archipelago AppImage.")
+
+    code, _ = _run_zenity(
+        [
+            "--question",
+            "--title=Archipelago setup",
+            "--text=Archipelago was not selected for download.\\n\\nSelect an existing AppImage to continue?",
+            "--ok-label=Select AppImage",
+            "--cancel-label=Cancel",
+        ]
+    )
+    if code != 0:
+        raise RuntimeError("User cancelled Archipelago AppImage selection")
+
+    chosen = select_appimage(initial)
+    if not chosen:
+        raise RuntimeError("User cancelled Archipelago AppImage selection")
+
+    return chosen
+
+
 def _github_latest_appimage() -> Tuple[str, str]:
     """
     Return (download_url, version_tag) for the latest Archipelago Linux AppImage.
@@ -375,7 +400,7 @@ def maybe_update_appimage(settings: Dict[str, Any], appimage: Path) -> Tuple[Pat
     return AP_APPIMAGE_DEFAULT, True
 
 
-def ensure_appimage() -> Path:
+def ensure_appimage(*, download_selected: bool = True) -> Path:
     """
     Ensure the Archipelago AppImage is configured and up to date.
 
@@ -404,14 +429,11 @@ def ensure_appimage() -> Path:
         else:
             app_path = None
 
-    # 3. If still missing, prompt user for download vs select
-    if app_path is None or not app_path.is_file() or not os.access(str(app_path), os.X_OK):
-        action = choose_install_action(
-            "Archipelago setup",
-            "Archipelago was selected in the Download setup dialog.\\n\\n"
-            "Download the latest version from GitHub, select an existing one, or cancel?",
-        )
-        if action == "Download":
+    needs_setup = app_path is None or not app_path.is_file() or not os.access(str(app_path), os.X_OK)
+
+    # 3. If still missing, either download automatically (when selected) or prompt only for selection
+    if needs_setup:
+        if download_selected:
             try:
                 url, ver = _github_latest_appimage()
             except Exception as e:
@@ -428,18 +450,11 @@ def ensure_appimage() -> Path:
             settings["AP_SKIP_VERSION"] = ""
             _save_settings(settings)
             downloaded = True
-        elif action == "Select":
-            chosen = select_appimage(Path(os.path.expanduser("~")))
-            if not chosen:
-                # User cancelled selection; treat as overall cancellation.
-                raise RuntimeError("User cancelled Archipelago AppImage selection")
-            app_path = chosen
+        else:
+            app_path = _prompt_select_existing_appimage(Path(os.path.expanduser("~")))
             settings["AP_APPIMAGE"] = str(app_path)
             # No version information when manually selected.
             _save_settings(settings)
-        else:
-            # Cancel
-            raise RuntimeError("User cancelled Archipelago setup")
 
     if app_path is None or not app_path.is_file() or not os.access(str(app_path), os.X_OK):
         error_dialog("Archipelago AppImage was not configured correctly.")
