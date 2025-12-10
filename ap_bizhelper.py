@@ -205,20 +205,26 @@ def _handle_bizhawk_for_patch(patch: Path, baseline_pids: set[str], settings: di
     _launch_bizhawk_for_rom(rom, settings)
 
 
-def main(argv: list[str]) -> int:
-    # Order mirrors the legacy script: Archipelago setup, BizHawk/Proton setup, then SNI.
+def _ensure_all() -> tuple[Path, dict] | tuple[None, None]:
     try:
         appimage = ensure_appimage()
     except RuntimeError:
-        return 1
+        return None, None
 
     bizhawk_result = ensure_bizhawk_and_proton()
     if bizhawk_result is None:
-        return 1
+        return None, None
 
     settings = load_settings()
     _ensure_sni(settings)
     save_settings(settings)
+    return appimage, settings
+
+
+def _run_full_flow() -> int:
+    appimage, settings = _ensure_all()
+    if appimage is None or settings is None:
+        return 1
 
     baseline = _current_bizhawk_pids()
 
@@ -238,8 +244,24 @@ def main(argv: list[str]) -> int:
         return 1
 
     _handle_bizhawk_for_patch(patch, baseline, settings)
-
     return 0
+
+
+def _print_usage() -> None:
+    print("Usage: ap_bizhelper.py [ensure]")
+    print("  ensure : only perform Archipelago/BizHawk/SNI setup")
+    print("  (no args): run full flow matching the legacy launcher")
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) > 1:
+        if argv[1] == "ensure":
+            appimage, _ = _ensure_all()
+            return 0 if appimage is not None else 1
+        _print_usage()
+        return 1
+
+    return _run_full_flow()
 
 
 if __name__ == "__main__":  # pragma: no cover
