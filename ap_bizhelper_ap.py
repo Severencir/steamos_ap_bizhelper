@@ -16,6 +16,7 @@ CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper_test"))
 AP_APPIMAGE_DEFAULT = DATA_DIR / "Archipelago.AppImage"
+DESKTOP_DIR = Path(os.path.expanduser("~/Desktop"))
 
 GITHUB_API_LATEST = "https://api.github.com/repos/ArchipelagoMW/Archipelago/releases/latest"
 
@@ -261,85 +262,84 @@ def download_appimage(url: str, dest: Path, version: str) -> None:
     )
 
 
-def ensure_desktop_shortcut(settings: Dict[str, Any], appimage: Path) -> None:
-    """
-    Optionally create a desktop shortcut, respecting AP_DESKTOP_SHORTCUT.
-    """
-    if not appimage.is_file() or not os.access(str(appimage), os.X_OK):
-        return
+def _desktop_shortcut_path(name: str) -> Path:
+    return DESKTOP_DIR / f"{name}.desktop"
 
-    state = str(settings.get("AP_DESKTOP_SHORTCUT", "") or "")
-    if state:
-        return  # already decided
 
-    if not _has_zenity():
-        settings["AP_DESKTOP_SHORTCUT"] = "no"
-        _save_settings(settings)
-        return
-
-    code, _ = _run_zenity(
-        [
-            "--question",
-            "--title=Archipelago shortcut",
-            "--text=Create menu launcher/shortcut for Archipelago?",
-            "--ok-label=Yes",
-            "--cancel-label=No",
-        ]
-    )
-    if code != 0:
-        settings["AP_DESKTOP_SHORTCUT"] = "no"
-        _save_settings(settings)
-        return
-
-    applications_dir = Path(os.path.expanduser("~/.local/share/applications"))
-    try:
-        applications_dir.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
-
-    shortcut = applications_dir / "Archipelago.desktop"
+def _write_desktop_shortcut(path: Path, name: str, exec_path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     content = (
         "[Desktop Entry]\n"
         "Type=Application\n"
-        "Name=Archipelago\n"
-        f"Exec={appimage}\n"
+        f"Name={name}\n"
+        f"Exec={exec_path}\n"
         "Terminal=false\n"
     )
+    with path.open("w", encoding="utf-8") as f:
+        f.write(content)
+    path.chmod(0o755)
+
+
+def _offer_desktop_shortcut(
+    settings: Dict[str, Any], name: str, exec_path: Path, settings_key: str
+) -> None:
+    if not _has_zenity():
+        return
+
+    shortcut_path = _desktop_shortcut_path(name)
+    code, _ = _run_zenity(
+        [
+            "--question",
+            f"--title={name} shortcut",
+            f"--text=Would you like to place a {name} shortcut on your Desktop?",
+            "--ok-label=Create shortcut",
+            "--cancel-label=Skip",
+        ]
+    )
+    if code != 0:
+        settings[settings_key] = "no"
+        _save_settings(settings)
+        return
+
     try:
-        with shortcut.open("w", encoding="utf-8") as f:
-            f.write(content)
-        shortcut.chmod(0o755)
-        settings["AP_DESKTOP_SHORTCUT"] = "yes"
+        _write_desktop_shortcut(shortcut_path, name, exec_path)
+        settings[settings_key] = "yes"
         _save_settings(settings)
-    except Exception:
-        settings["AP_DESKTOP_SHORTCUT"] = "no"
+        info_dialog(f"Created Desktop shortcut: {shortcut_path}")
+    except Exception as exc:  # pragma: no cover - filesystem edge cases
+        settings[settings_key] = "no"
         _save_settings(settings)
+        error_dialog(f"Failed to create Desktop shortcut: {exc}")
 
 
-def maybe_update_appimage(settings: Dict[str, Any], appimage: Path) -> Path:
+def maybe_update_appimage(settings: Dict[str, Any], appimage: Path) -> Tuple[Path, bool]:
     """
     If we manage this AppImage (default path), check GitHub for a newer version.
 
     Respects AP_SKIP_VERSION. If an update is installed, updates AP_VERSION and
-    returns the (possibly new) appimage path.
+    returns the (possibly new) appimage path along with a flag indicating whether
+    a download occurred.
     """
     # Only auto-update if using the default managed AppImage
     if appimage != AP_APPIMAGE_DEFAULT:
-        return appimage
+        return appimage, False
 
     try:
         url, latest_ver = _github_latest_appimage()
     except Exception:
-        return appimage
+        return appimage, False
 
     current_ver = str(settings.get("AP_VERSION", "") or "")
     skip_ver = str(settings.get("AP_SKIP_VERSION", "") or "")
 
+    if not current_ver:
+        return appimage, False
+
     if current_ver == latest_ver or skip_ver == latest_ver:
-        return appimage
+        return appimage, False
 
     if not _has_zenity():
-        return appimage
+        return appimage, False
 
     code, choice = _run_zenity(
         [
@@ -353,26 +353,26 @@ def maybe_update_appimage(settings: Dict[str, Any], appimage: Path) -> Path:
     )
     if code != 0:
         # "Later"
-        return appimage
+        return appimage, False
 
     if choice == "Skip this version":
         settings["AP_SKIP_VERSION"] = latest_ver
         _save_settings(settings)
-        return appimage
+        return appimage, False
 
     # Update now
     try:
         download_appimage(url, AP_APPIMAGE_DEFAULT, latest_ver)
     except Exception as e:
         error_dialog(f"Archipelago update failed: {e}")
-        return appimage
+        return appimage, False
 
     settings["AP_APPIMAGE"] = str(AP_APPIMAGE_DEFAULT)
     settings["AP_VERSION"] = latest_ver
     settings["AP_SKIP_VERSION"] = ""
     _save_settings(settings)
     info_dialog(f"Archipelago updated to {latest_ver}.")
-    return AP_APPIMAGE_DEFAULT
+    return AP_APPIMAGE_DEFAULT, True
 
 
 def ensure_appimage() -> Path:
@@ -384,6 +384,8 @@ def ensure_appimage() -> Path:
     """
     _ensure_dirs()
     settings = _load_settings()
+
+    downloaded = False
 
     # 1. Try stored path
     app_path_str = str(settings.get("AP_APPIMAGE", "") or "")
@@ -425,6 +427,7 @@ def ensure_appimage() -> Path:
             settings["AP_VERSION"] = ver
             settings["AP_SKIP_VERSION"] = ""
             _save_settings(settings)
+            downloaded = True
         elif action == "Select":
             chosen = select_appimage(Path(os.path.expanduser("~")))
             if not chosen:
@@ -443,10 +446,12 @@ def ensure_appimage() -> Path:
         raise RuntimeError("Archipelago AppImage not configured")
 
     # 4. Auto-update if applicable
-    app_path = maybe_update_appimage(settings, app_path)
+    app_path, updated = maybe_update_appimage(settings, app_path)
+    downloaded = downloaded or updated
 
-    # 5. Optionally create a desktop shortcut
-    ensure_desktop_shortcut(settings, app_path)
+    # 5. Offer a desktop shortcut only when a download occurred
+    if downloaded:
+        _offer_desktop_shortcut(settings, "Archipelago", app_path, "AP_DESKTOP_SHORTCUT")
 
     return app_path
 
