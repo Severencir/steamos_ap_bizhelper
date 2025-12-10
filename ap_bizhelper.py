@@ -19,6 +19,7 @@ from ap_bizhelper_ap import (
 from ap_bizhelper_bizhawk import ensure_bizhawk_and_proton
 from ap_bizhelper_config import get_ext_behavior, load_settings, save_settings, set_ext_behavior
 from ap_bizhelper_sni import download_sni_if_needed
+from ap_bizhelper_worlds import ensure_apworld_for_patch
 
 
 def _ensure_sni(settings: dict) -> None:
@@ -263,7 +264,9 @@ def _run_full_flow() -> int:
         error_dialog(str(exc))
         return 1
 
-    _ensure_apworld_for_extension(patch.suffix.lstrip("."))
+    apworld_handled = ensure_apworld_for_patch(patch)
+    if not apworld_handled:
+        _ensure_apworld_for_extension(patch.suffix.lstrip("."))
 
     print(f"[ap-bizhelper] Launching Archipelago with patch: {patch}")
     try:
