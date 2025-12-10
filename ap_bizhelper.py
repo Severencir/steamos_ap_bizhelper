@@ -264,9 +264,7 @@ def _run_full_flow() -> int:
         error_dialog(str(exc))
         return 1
 
-    apworld_handled = ensure_apworld_for_patch(patch)
-    if not apworld_handled:
-        _ensure_apworld_for_extension(patch.suffix.lstrip("."))
+    ensure_apworld_for_patch(patch)
 
     print(f"[ap-bizhelper] Launching Archipelago with patch: {patch}")
     try:

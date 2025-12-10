@@ -5,13 +5,21 @@ from __future__ import annotations
 import csv
 import json
 import re
+import shutil
 import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from ap_bizhelper_ap import download_with_progress, info_dialog
+from ap_bizhelper_ap import (
+    _has_zenity,
+    _run_zenity,
+    choose_install_action,
+    download_with_progress,
+    error_dialog,
+    info_dialog,
+)
 from ap_bizhelper_config import load_settings, save_settings
 
 SPREADSHEET_ID = "1iuzDTOAvdoNe8Ne8i461qGNucg5OuEoF-Ikqs8aUQZw"
@@ -136,108 +144,163 @@ def _download_apworld(url: str, dest_name: Optional[str]) -> Optional[Path]:
     return dest if dest.is_file() else None
 
 
-def _ensure_from_github(repo_url: str, cached_version: str) -> Optional[Tuple[Path, str, str]]:
-    latest = _github_latest_apworld(repo_url)
-    if latest is None:
-        return None
-    download_url, version, name = latest
-    if cached_version and cached_version == version and (WORLD_DIR / name).is_file():
-        return WORLD_DIR / name, version, repo_url
-
-    dest = _download_apworld(download_url, name)
-    if dest is None:
-        return None
-    return dest, version, repo_url
-
-
-def _ensure_from_direct(url: str, cached_name: Optional[str]) -> Optional[Tuple[Path, str, str]]:
-    filename = cached_name or Path(urllib.parse.urlparse(url).path).name
-    if filename:
-        candidate = WORLD_DIR / (filename if filename.lower().endswith(".apworld") else f"{filename}.apworld")
-        if candidate.is_file():
-            return candidate, "", url
-
-    dest = _download_apworld(url, cached_name)
-    if dest is None:
-        return None
-    return dest, "", url
-
-
-def _ensure_playable(game: str, link: str, cached: Dict[str, Any]) -> bool:
-    normalized = _normalize_game(game)
-    cached_version = str(cached.get("version", "") or "")
-    cached_name = str(cached.get("filename", "") or "") or None
-
-    if "github.com" in link:
-        result = _ensure_from_github(link, cached_version)
-    else:
-        result = _ensure_from_direct(link, cached_name)
-
-    if result is None:
-        return False
-
-    dest, version, source = result
-    cache = load_settings().get(CACHE_KEY, {})
-    playable = cache.get("playable_worlds", {})
-    playable[normalized] = {
-        "filename": dest.name,
+def _update_playable_cache(
+    settings: Dict[str, Any],
+    cache: Dict[str, Any],
+    playable_cache: Dict[str, Any],
+    normalized: str,
+    filename: str,
+    version: str,
+    source: str,
+) -> None:
+    playable_cache[normalized] = {
+        "filename": filename,
         "version": version,
         "source": source,
     }
-    cache["playable_worlds"] = playable
-    settings = load_settings()
+    cache["playable_worlds"] = playable_cache
     settings[CACHE_KEY] = cache
     save_settings(settings)
-    info_dialog(f"Installed APWorld for {game}: {dest.name}")
-    return True
 
 
-def ensure_apworld_for_patch(patch: Path) -> bool:
-    game = _read_archipelago_game(patch)
-    if not game:
+def _select_custom_apworld(
+    title: str,
+    normalized: str,
+    settings: Dict[str, Any],
+    cache: Dict[str, Any],
+    playable_cache: Dict[str, Any],
+) -> bool:
+    if not _has_zenity():
+        print("[ap-bizhelper] zenity not available; skipping APWorld selection.")
         return False
 
-    normalized = _normalize_game(game)
+    code, apworld = _run_zenity(
+        [
+            "--file-selection",
+            f"--title=Select .apworld file for {title}",
+            "--file-filter=*.apworld",
+            f"--filename={Path.home()}/",
+        ]
+    )
+    if code != 0 or not apworld:
+        return False
+
+    apworld_path = Path(apworld)
+    if apworld_path.is_file():
+        try:
+            WORLD_DIR.mkdir(parents=True, exist_ok=True)
+            dest = WORLD_DIR / apworld_path.name
+            shutil.copy2(apworld_path, dest)
+            info_dialog(f"Copied {apworld_path.name} to:\n{WORLD_DIR}")
+            if normalized:
+                existing = playable_cache.get(normalized, {})
+                _update_playable_cache(
+                    settings,
+                    cache,
+                    playable_cache,
+                    normalized,
+                    dest.name,
+                    str(existing.get("version", "") or ""),
+                    str(existing.get("source", "") or ""),
+                )
+            return True
+        except Exception as exc:  # pragma: no cover - filesystem edge cases
+            error_dialog(f"Failed to copy {apworld_path.name}: {exc}")
+    else:
+        error_dialog("Selected .apworld file does not exist.")
+
+    return False
+
+
+def ensure_apworld_for_patch(patch: Path) -> None:
+    game = _read_archipelago_game(patch)
+    normalized = _normalize_game(game) if game else ""
+    display_name = game or (f".{patch.suffix.lstrip('.')} extension" if patch.suffix else "this game")
+
     settings = load_settings()
     cache = settings.get(CACHE_KEY, {})
     core_cached = set(cache.get("core_verified", []))
     playable_cache = cache.get("playable_worlds", {})
 
-    if normalized in core_cached:
-        return True
+    if normalized and normalized in core_cached:
+        return
 
-    if normalized in playable_cache:
-        info = playable_cache.get(normalized, {})
-        link = str(info.get("source", "") or "")
-        if link:
-            success = _ensure_playable(game, link, info)
-            if success:
-                return True
+    cached_info = playable_cache.get(normalized, {}) if normalized else {}
+    cached_name = str(cached_info.get("filename", "") or "")
+    cached_version = str(cached_info.get("version", "") or "")
+    cached_source = str(cached_info.get("source", "") or "")
+
+    if normalized and cached_name:
+        existing = WORLD_DIR / cached_name
+        if existing.is_file():
+            return
 
     core_games = _get_core_games()
-    if core_games is not None and normalized in core_games:
+    if normalized and core_games is not None and normalized in core_games:
         core_cached.add(normalized)
         cache["core_verified"] = sorted(core_cached)
         settings[CACHE_KEY] = cache
         save_settings(settings)
-        return True
+        return
 
     playable_map = _get_playable_map()
-    if playable_map and normalized in playable_map:
-        link = playable_map[normalized]
-        success = _ensure_playable(game, link, playable_cache.get(normalized, {}))
-        if success:
-            cache = load_settings().get(CACHE_KEY, {})
-            playable = cache.get("playable_worlds", {})
-            playable[normalized] = {
-                "filename": playable.get(normalized, {}).get("filename", ""),
-                "version": playable.get(normalized, {}).get("version", ""),
-                "source": link,
-            }
-            cache["playable_worlds"] = playable
-            settings = load_settings()
-            settings[CACHE_KEY] = cache
-            save_settings(settings)
-            return True
+    link = cached_source or (playable_map.get(normalized, "") if playable_map and normalized else "")
 
-    return False
+    download_candidate: Optional[Tuple[str, str, str, str]] = None
+    if link:
+        if "github.com" in link:
+            latest = _github_latest_apworld(link)
+            if latest:
+                download_url, version_tag, asset_name = latest
+                filename = asset_name
+                if cached_version == version_tag and (WORLD_DIR / asset_name).is_file():
+                    _update_playable_cache(settings, cache, playable_cache, normalized, asset_name, version_tag, link)
+                    return
+                download_candidate = (download_url, version_tag, asset_name, link)
+        else:
+            filename = cached_name or Path(urllib.parse.urlparse(link).path).name or "world.apworld"
+            candidate_name = filename if filename.lower().endswith(".apworld") else f"{filename}.apworld"
+            if (WORLD_DIR / candidate_name).is_file():
+                _update_playable_cache(settings, cache, playable_cache, normalized, candidate_name, cached_version, link)
+                return
+            download_candidate = (link, "", candidate_name, link)
+
+    if download_candidate:
+        download_url, version_tag, dest_name, source = download_candidate
+        version_phrase = f"version {version_tag}" if version_tag else "a download"
+        action = choose_install_action(
+            f"APWorld for {display_name}",
+            (
+                f"An APWorld {version_phrase} was found for {display_name}.\n\n"
+                "Would you like to download it automatically, select your own .apworld file, or cancel?"
+            ),
+        )
+        if action == "Download":
+            dest = _download_apworld(download_url, dest_name)
+            if dest is None:
+                return
+            if normalized:
+                _update_playable_cache(settings, cache, playable_cache, normalized, dest.name, version_tag, source)
+            info_dialog(f"Installed APWorld for {display_name}: {dest.name}")
+        elif action == "Select":
+            _select_custom_apworld(display_name, normalized, settings, cache, playable_cache)
+        return
+
+    if not _has_zenity():
+        print("[ap-bizhelper] zenity not available; skipping APWorld selection.")
+        return
+
+    code, _ = _run_zenity(
+        [
+            "--question",
+            f"--title=APWorld for {display_name}",
+            (
+                f"--text=No downloadable APWorld was found for {display_name}.\n\n"
+                "Do you want to select a .apworld file now or cancel?"
+            ),
+            "--ok-label=Select .apworld",
+            "--cancel-label=Cancel",
+        ]
+    )
+    if code == 0:
+        _select_custom_apworld(display_name, normalized, settings, cache, playable_cache)
