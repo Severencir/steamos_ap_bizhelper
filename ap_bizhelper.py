@@ -75,6 +75,7 @@ def _prompt_setup_choices(*, allow_archipelago_skip: bool) -> Tuple[bool, bool, 
                 "SNI",
                 "--ok-label=Download",
                 "--cancel-label=Cancel",
+                "--height=300",
             ]
         )
 
@@ -281,14 +282,16 @@ def _run_prereqs(*, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path
     appimage: Optional[Path] = None
     runner: Optional[Path] = None
 
-    if arch:
-        appimage = ensure_appimage()
+    if arch or not allow_archipelago_skip:
+        appimage = ensure_appimage(download_selected=arch)
 
     bizhawk_result: Optional[Tuple[Path, Path]] = None
+    bizhawk_result = ensure_bizhawk_and_proton(download_selected=bizhawk)
     if bizhawk:
-        bizhawk_result = ensure_bizhawk_and_proton()
         if bizhawk_result is None:
             raise RuntimeError("BizHawk setup was cancelled or failed.")
+        runner, _ = bizhawk_result
+    elif bizhawk_result is not None:
         runner, _ = bizhawk_result
 
     if sni:
