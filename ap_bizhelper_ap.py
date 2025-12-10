@@ -305,23 +305,17 @@ def _write_desktop_shortcut(path: Path, name: str, exec_path: Path) -> None:
     path.chmod(0o755)
 
 
-def _offer_desktop_shortcut(
-    settings: Dict[str, Any], name: str, exec_path: Path, settings_key: str
+def _create_desktop_shortcut(
+    settings: Dict[str, Any],
+    name: str,
+    exec_path: Path,
+    settings_key: str,
+    *,
+    enabled: bool,
 ) -> None:
-    if not _has_zenity():
-        return
-
     shortcut_path = _desktop_shortcut_path(name)
-    code, _ = _run_zenity(
-        [
-            "--question",
-            f"--title={name} shortcut",
-            f"--text=Would you like to place a {name} shortcut on your Desktop?",
-            "--ok-label=Create shortcut",
-            "--cancel-label=Skip",
-        ]
-    )
-    if code != 0:
+
+    if not enabled:
         settings[settings_key] = "no"
         _save_settings(settings)
         return
@@ -400,7 +394,7 @@ def maybe_update_appimage(settings: Dict[str, Any], appimage: Path) -> Tuple[Pat
     return AP_APPIMAGE_DEFAULT, True
 
 
-def ensure_appimage(*, download_selected: bool = True) -> Path:
+def ensure_appimage(*, download_selected: bool = True, create_shortcut: bool = False) -> Path:
     """
     Ensure the Archipelago AppImage is configured and up to date.
 
@@ -464,9 +458,15 @@ def ensure_appimage(*, download_selected: bool = True) -> Path:
     app_path, updated = maybe_update_appimage(settings, app_path)
     downloaded = downloaded or updated
 
-    # 5. Offer a desktop shortcut only when a download occurred
+    # 5. Create a desktop shortcut only when a download occurred
     if downloaded:
-        _offer_desktop_shortcut(settings, "Archipelago", app_path, "AP_DESKTOP_SHORTCUT")
+        _create_desktop_shortcut(
+            settings,
+            "Archipelago",
+            app_path,
+            "AP_DESKTOP_SHORTCUT",
+            enabled=create_shortcut,
+        )
 
     return app_path
 
