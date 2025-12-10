@@ -115,7 +115,7 @@ def download_sni_if_needed(bizhawk_dir: Path) -> bool:
         [
             "--question",
             "--title=SNI (Windows) setup",
-            "--text=Windows SNI Lua is required for SNES bridge support in BizHawk.\n\n"
+            "--text=SNI was selected in the Download setup dialog for SNES bridge support in BizHawk.\n\n"
                     "Download the Windows SNI build from GitHub now and install its Lua scripts into\n"
                     f"{bizhawk_dir}/lua ?",
             "--ok-label=Download",

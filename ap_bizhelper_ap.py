@@ -408,8 +408,8 @@ def ensure_appimage() -> Path:
     if app_path is None or not app_path.is_file() or not os.access(str(app_path), os.X_OK):
         action = choose_install_action(
             "Archipelago setup",
-            "Archipelago AppImage is not configured.\\n\\n"
-            "Download latest from GitHub, select an existing one, or cancel?",
+            "Archipelago was selected in the Download setup dialog.\\n\\n"
+            "Download the latest version from GitHub, select an existing one, or cancel?",
         )
         if action == "Download":
             try:
