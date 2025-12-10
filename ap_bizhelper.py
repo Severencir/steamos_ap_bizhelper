@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import time
@@ -49,6 +50,64 @@ def _select_patch_file() -> Path:
         raise RuntimeError("Selected patch file does not exist.")
 
     return patch
+
+
+def _ensure_apworld_for_extension(ext: str) -> None:
+    ext = ext.strip().lower()
+    if not ext:
+        return
+
+    # Only care about "new" extensions (no behavior stored yet)
+    behavior = get_ext_behavior(ext)
+    if behavior:
+        return
+
+    if not _has_zenity():
+        print(f"[ap-bizhelper] zenity not available; skipping APWorld prompt for .{ext}.")
+        return
+
+    worlds_dir = Path.home() / ".local/share/Archipelago/worlds"
+    text = (
+        f"This looks like a new Archipelago patch extension (.{ext}).\n\n"
+        "If this game requires an external .apworld file and it isn't already installed, "
+        f"you can select it now to copy into:\n{worlds_dir}\n\n"
+        "Do you want to select a .apworld file for this extension now?"
+    )
+
+    code, _ = _run_zenity(
+        [
+            "--question",
+            f"--title=APWorld for .{ext}",
+            f"--text={text}",
+            "--ok-label=Select .apworld",
+            "--cancel-label=Skip",
+        ]
+    )
+    if code != 0:
+        print(f"[ap-bizhelper] User skipped APWorld selection for .{ext}.")
+        return
+
+    code, apworld = _run_zenity(
+        [
+            "--file-selection",
+            f"--title=Select .apworld file for .{ext}",
+            "--file-filter=*.apworld",
+            f"--filename={Path.home()}/",
+        ]
+    )
+    if code != 0 or not apworld:
+        return
+
+    apworld_path = Path(apworld)
+    if apworld_path.is_file():
+        try:
+            worlds_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(apworld_path, worlds_dir / apworld_path.name)
+            info_dialog(f"Copied {apworld_path.name} to:\n{worlds_dir}")
+        except Exception as exc:  # pragma: no cover - filesystem edge cases
+            error_dialog(f"Failed to copy {apworld_path.name}: {exc}")
+    else:
+        error_dialog("Selected .apworld file does not exist.")
 
 
 def _list_bizhawk_pids() -> Set[int]:
@@ -197,6 +256,8 @@ def _run_full_flow() -> int:
         error_dialog(str(exc))
         return 1
 
+    _ensure_apworld_for_extension(patch.suffix.lstrip("."))
+
     print(f"[ap-bizhelper] Launching Archipelago with patch: {patch}")
     try:
         subprocess.Popen([str(appimage), str(patch)])
@@ -220,7 +281,6 @@ def main(argv: list[str]) -> int:
         print("Usage: ap_bizhelper.py [ensure]", file=sys.stderr)
         return 1
 
-    info_dialog("Starting Archipelago BizHelper flow…")
     return _run_full_flow()
 
 
