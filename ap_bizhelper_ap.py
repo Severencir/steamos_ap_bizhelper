@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
@@ -159,12 +160,8 @@ def _github_latest_appimage() -> Tuple[str, str]:
     raise RuntimeError("Could not find Archipelago Linux AppImage asset in latest release.")
 
 
-def download_appimage(url: str, dest: Path, version: str) -> None:
-    """
-    Download the AppImage to dest. Uses a zenity progress dialog if possible,
-    otherwise downloads silently.
-    """
-    import urllib.request
+def download_with_progress(url: str, dest: Path, *, title: str, text: str) -> None:
+    """Download ``url`` to ``dest`` with optional zenity progress UI."""
 
     _ensure_dirs()
     if dest.exists():
@@ -175,13 +172,12 @@ def download_appimage(url: str, dest: Path, version: str) -> None:
 
     # If zenity is available, show a progress dialog.
     if _has_zenity():
-        # Start zenity --progress
         proc = subprocess.Popen(
             [
                 "zenity",
                 "--progress",
-                "--title=Archipelago download",
-                f"--text=Downloading Archipelago {version}...",
+                f"--title={title}",
+                f"--text={text}",
                 "--percentage=0",
                 "--auto-close",
             ],
@@ -212,7 +208,6 @@ def download_appimage(url: str, dest: Path, version: str) -> None:
                             proc.stdin.write(f"{percent}\n")
                             proc.stdin.flush()
                         except BrokenPipeError:
-                            # User closed the dialog; abort download.
                             raise RuntimeError("Download cancelled by user")
                 if proc.stdin:
                     try:
@@ -220,21 +215,20 @@ def download_appimage(url: str, dest: Path, version: str) -> None:
                         proc.stdin.flush()
                     except BrokenPipeError:
                         pass
-        except Exception as e:
+        except Exception:
             try:
                 if proc.stdin:
                     proc.stdin.close()
             except Exception:
                 pass
             proc.wait(timeout=1)
-            # Clean up partial file
             if dest.exists():
                 try:
                     dest.unlink()
                 except Exception:
                     pass
             raise
-        else:
+        finally:
             try:
                 if proc.stdin:
                     proc.stdin.close()
@@ -242,7 +236,6 @@ def download_appimage(url: str, dest: Path, version: str) -> None:
                 pass
             proc.wait(timeout=5)
     else:
-        # No zenity; just download quietly.
         req = urllib.request.Request(url, headers={"User-Agent": "ap-bizhelper/1.0"})
         with urllib.request.urlopen(req, timeout=300) as resp, dest.open("wb") as f:
             while True:
@@ -251,11 +244,21 @@ def download_appimage(url: str, dest: Path, version: str) -> None:
                     break
                 f.write(chunk)
 
-    # Make executable
     try:
         dest.chmod(dest.stat().st_mode | 0o111)
     except Exception:
         pass
+
+
+def download_appimage(url: str, dest: Path, version: str) -> None:
+    """Download the AppImage to ``dest`` with a zenity progress dialog if possible."""
+
+    download_with_progress(
+        url,
+        dest,
+        title="Archipelago download",
+        text=f"Downloading Archipelago {version}...",
+    )
 
 
 def ensure_desktop_shortcut(settings: Dict[str, Any], appimage: Path) -> None:
