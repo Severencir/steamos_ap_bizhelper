@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
+from ap_bizhelper_ap import download_with_progress
+
 CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper_test"))
@@ -122,7 +124,6 @@ def download_and_extract_bizhawk(url: str, version: str) -> Path:
 
     Returns the detected EmuHawk.exe path.
     """
-    import urllib.request
     import zipfile
     import tempfile
 
@@ -149,17 +150,16 @@ def download_and_extract_bizhawk(url: str, version: str) -> Path:
         except Exception:
             pass
 
-    # Download zip (no progress for now)
+    # Download zip with shared progress helper
     with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmpf:
         tmp_path = Path(tmpf.name)
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "ap-bizhelper/1.0"})
-        with urllib.request.urlopen(req, timeout=300) as resp, tmp_path.open("wb") as f:
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                f.write(chunk)
+        download_with_progress(
+            url,
+            tmp_path,
+            title="BizHawk download",
+            text=f"Downloading BizHawk {version}...",
+        )
 
         # Extract
         with zipfile.ZipFile(tmp_path, "r") as zf:
@@ -394,7 +394,7 @@ def maybe_update_bizhawk(settings: Dict[str, Any], bizhawk_exe: Path) -> None:
     info_dialog(f"BizHawk updated to {latest_ver}.")
 
 
-def ensure_bizhawk_and_proton() -> Optional[Path]:
+def ensure_bizhawk_and_proton() -> Optional[Tuple[Path, Path]]:
     """
     Ensure BizHawk (Windows) and Proton are configured and runnable.
 
@@ -420,10 +420,12 @@ def ensure_bizhawk_and_proton() -> Optional[Path]:
         # Settings may have changed; reload
         settings = _load_settings()
         runner_str = str(settings.get("BIZHAWK_RUNNER", "") or "")
-        if runner_str:
+        exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+        if runner_str and exe_str:
             runner = Path(runner_str)
-            if runner.is_file():
-                return runner
+            exe = Path(exe_str)
+            if runner.is_file() and exe.is_file():
+                return runner, exe
 
     # Need to (re)configure BizHawk
     exe = auto_detect_bizhawk_exe(settings)
@@ -483,7 +485,7 @@ def ensure_bizhawk_and_proton() -> Optional[Path]:
     # Check for updates (in case user had an older version)
     maybe_update_bizhawk(settings, exe)
 
-    return runner
+    return runner, exe
 
 
 def main(argv: list[str]) -> int:
@@ -491,10 +493,11 @@ def main(argv: list[str]) -> int:
         print("Usage: ap_bizhelper_bizhawk.py ensure", file=sys.stderr)
         return 1
 
-    runner = ensure_bizhawk_and_proton()
-    if runner is None:
+    result = ensure_bizhawk_and_proton()
+    if result is None:
         return 1
 
+    runner, _ = result
     print(str(runner))
     return 0
 

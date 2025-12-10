@@ -180,10 +180,12 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> 
     return f"--lua={lua_ap_path}"
 
 
-def main(argv):
+def build_bizhawk_command(argv):
+    """Transform incoming args into a Proton BizHawk command."""
+
     bizhawk_exe = ensure_bizhawk_exe()
     bizhawk_dir = bizhawk_exe.parent
-    proton_bin, proton_prefix, steam_root = configure_proton_env()
+    proton_bin, _, _ = configure_proton_env()
 
     rom_path, ap_lua_arg, emu_args = parse_args(argv)
 
@@ -196,7 +198,11 @@ def main(argv):
     print(f"  ROM:         {rom_path}")
     print(f"  Lua:         {lua_arg}")
 
-    cmd = [proton_bin, "run", str(bizhawk_exe), *final_args]
+    return proton_bin, [proton_bin, "run", str(bizhawk_exe), *final_args]
+
+
+def main(argv):
+    proton_bin, cmd = build_bizhawk_command(argv)
     os.execvp(proton_bin, cmd)
 
 
