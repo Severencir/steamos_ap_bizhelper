@@ -10,6 +10,8 @@ from typing import Tuple
 import shutil
 import tempfile
 
+from ap_bizhelper_ap import download_with_progress
+
 # Config/data roots (only used as a workspace; final lua ends up in BizHawk dir)
 CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
 DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper_test"))
@@ -134,7 +136,6 @@ def download_sni_if_needed(bizhawk_dir: Path) -> bool:
 
     tmp_zip: Path | None = None
     try:
-        import urllib.request
         import zipfile
 
         # Download to a temp file (not necessarily SNI_WIN_ZIP, to avoid partial file issues).
@@ -142,13 +143,12 @@ def download_sni_if_needed(bizhawk_dir: Path) -> bool:
             tmp_zip = Path(tmpf.name)
 
         try:
-            req = urllib.request.Request(SNI_WIN_URL, headers={"User-Agent": "ap-bizhelper/1.0"})
-            with urllib.request.urlopen(req, timeout=300) as resp, tmp_zip.open("wb") as f:
-                while True:
-                    chunk = resp.read(65536)
-                    if not chunk:
-                        break
-                    f.write(chunk)
+            download_with_progress(
+                SNI_WIN_URL,
+                tmp_zip,
+                title="SNI (Windows) download",
+                text="Downloading Windows SNI (Lua connector)...",
+            )
 
             # Extract entire archive into extracted_dir
             with zipfile.ZipFile(tmp_zip, "r") as zf:

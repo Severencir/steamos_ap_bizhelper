@@ -32,7 +32,7 @@ import os
 import shlex
 import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # These match the paths used by the original Bash script.
 CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
@@ -52,6 +52,42 @@ SETTINGS_KEYS = [
     "BIZHAWK_SKIP_VERSION",
     "AP_DESKTOP_SHORTCUT",
 ]
+
+
+def load_settings() -> Dict[str, Any]:
+    """Return the persisted settings dictionary (empty on failure)."""
+
+    return _load_json(SETTINGS_FILE)
+
+
+def save_settings(settings: Dict[str, Any]) -> None:
+    """Persist the given settings mapping to disk."""
+
+    _save_json(SETTINGS_FILE, settings)
+
+
+def get_ext_behavior(ext: str) -> Optional[str]:
+    """Return the stored behavior for ``ext`` (case-insensitive) or ``None``."""
+
+    ext = ext.strip().lower()
+    if not ext:
+        return None
+    behaviors = _load_json(EXT_BEHAVIOR_FILE)
+    value = behaviors.get(ext)
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def set_ext_behavior(ext: str, value: str) -> None:
+    """Set and persist the behavior for ``ext`` (case-insensitive)."""
+
+    ext = ext.strip().lower()
+    if not ext:
+        return
+    behaviors = _load_json(EXT_BEHAVIOR_FILE)
+    behaviors[ext] = value
+    _save_json(EXT_BEHAVIOR_FILE, behaviors)
 
 
 def _ensure_config_dir() -> None:
