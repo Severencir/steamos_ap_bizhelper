@@ -276,7 +276,9 @@ def download_with_progress(url: str, dest: Path, *, title: str, text: str) -> No
         pass
 
 
-def download_appimage(url: str, dest: Path, version: str) -> None:
+def download_appimage(
+    url: str, dest: Path, version: str, *, download_messages: Optional[list[str]] = None
+) -> None:
     """Download the AppImage to ``dest`` with a zenity progress dialog if possible."""
 
     download_with_progress(
@@ -285,6 +287,8 @@ def download_appimage(url: str, dest: Path, version: str) -> None:
         title="Archipelago download",
         text=f"Downloading Archipelago {version}...",
     )
+    if download_messages is not None:
+        download_messages.append(f"Downloaded Archipelago {version}")
 
 
 def _desktop_shortcut_path(name: str) -> Path:
@@ -331,7 +335,9 @@ def _create_desktop_shortcut(
         error_dialog(f"Failed to create Desktop shortcut: {exc}")
 
 
-def maybe_update_appimage(settings: Dict[str, Any], appimage: Path) -> Tuple[Path, bool]:
+def maybe_update_appimage(
+    settings: Dict[str, Any], appimage: Path, *, download_messages: Optional[list[str]] = None
+) -> Tuple[Path, bool]:
     """
     If we manage this AppImage (default path), check GitHub for a newer version.
 
@@ -381,7 +387,9 @@ def maybe_update_appimage(settings: Dict[str, Any], appimage: Path) -> Tuple[Pat
 
     # Update now
     try:
-        download_appimage(url, AP_APPIMAGE_DEFAULT, latest_ver)
+        download_appimage(
+            url, AP_APPIMAGE_DEFAULT, latest_ver, download_messages=download_messages
+        )
     except Exception as e:
         error_dialog(f"Archipelago update failed: {e}")
         return appimage, False
@@ -390,11 +398,19 @@ def maybe_update_appimage(settings: Dict[str, Any], appimage: Path) -> Tuple[Pat
     settings["AP_VERSION"] = latest_ver
     settings["AP_SKIP_VERSION"] = ""
     _save_settings(settings)
-    info_dialog(f"Archipelago updated to {latest_ver}.")
+    if download_messages is not None:
+        download_messages.append(f"Updated Archipelago to {latest_ver}")
+    else:
+        info_dialog(f"Archipelago updated to {latest_ver}.")
     return AP_APPIMAGE_DEFAULT, True
 
 
-def ensure_appimage(*, download_selected: bool = True, create_shortcut: bool = False) -> Path:
+def ensure_appimage(
+    *,
+    download_selected: bool = True,
+    create_shortcut: bool = False,
+    download_messages: Optional[list[str]] = None,
+) -> Path:
     """
     Ensure the Archipelago AppImage is configured and up to date.
 
@@ -434,7 +450,9 @@ def ensure_appimage(*, download_selected: bool = True, create_shortcut: bool = F
                 error_dialog(f"Failed to query latest Archipelago release: {e}")
                 raise RuntimeError("Failed to query latest Archipelago release") from e
             try:
-                download_appimage(url, AP_APPIMAGE_DEFAULT, ver)
+                download_appimage(
+                    url, AP_APPIMAGE_DEFAULT, ver, download_messages=download_messages
+                )
             except Exception as e:
                 error_dialog(f"Archipelago download failed or was cancelled: {e}")
                 raise RuntimeError("Archipelago download failed") from e
@@ -455,7 +473,9 @@ def ensure_appimage(*, download_selected: bool = True, create_shortcut: bool = F
         raise RuntimeError("Archipelago AppImage not configured")
 
     # 4. Auto-update if applicable
-    app_path, updated = maybe_update_appimage(settings, app_path)
+    app_path, updated = maybe_update_appimage(
+        settings, app_path, download_messages=download_messages
+    )
     downloaded = downloaded or updated
 
     # 5. Create a desktop shortcut only when a download occurred
