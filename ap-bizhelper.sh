@@ -157,7 +157,7 @@ download_file_with_progress() {
   ) >"$fifo" &
   local writer_pid=$!
 
-  # Zenity progress dialog with Cancel and auto-close at 100.
+  # Zenity progress dialog with auto-close at 100 and a Cancel button.
   zenity --progress \
          --title="$title" \
          --percentage=0 \

@@ -301,25 +301,16 @@ def build_runner(settings: Dict[str, Any], bizhawk_exe: Path, proton_bin: Path) 
 
 
 
-def ensure_bizhawk_desktop_shortcut(settings: Dict[str, Any], runner: Path) -> None:
-    """Offer to place a BizHawk (Proton) launcher on the Desktop."""
+def ensure_bizhawk_desktop_shortcut(
+    settings: Dict[str, Any], runner: Path, *, enabled: bool
+) -> None:
+    """Place a BizHawk (Proton) launcher on the Desktop when enabled."""
     if not runner.is_file() or not os.access(str(runner), os.X_OK):
         return
 
-    if not _has_zenity():
-        return
-
     shortcut_path = Path(os.path.expanduser("~/Desktop")) / "BizHawk-Proton.desktop"
-    code, _ = _run_zenity(
-        [
-            "--question",
-            "--title=BizHawk (Proton) shortcut",
-            "--text=Would you like to place a BizHawk (Proton) shortcut on your Desktop?",
-            "--ok-label=Create shortcut",
-            "--cancel-label=Skip",
-        ]
-    )
-    if code != 0:
+
+    if not enabled:
         settings["BIZHAWK_DESKTOP_SHORTCUT"] = "no"
         _save_settings(settings)
         return
@@ -412,7 +403,9 @@ def maybe_update_bizhawk(settings: Dict[str, Any], bizhawk_exe: Path) -> Tuple[P
     return new_exe, True
 
 
-def ensure_bizhawk_and_proton(*, download_selected: bool = True) -> Optional[Tuple[Path, Path]]:
+def ensure_bizhawk_and_proton(
+    *, download_selected: bool = True, create_shortcut: bool = False
+) -> Optional[Tuple[Path, Path]]:
     """
     Ensure BizHawk (Windows) and Proton are configured and runnable.
 
@@ -445,7 +438,9 @@ def ensure_bizhawk_and_proton(*, download_selected: bool = True) -> Optional[Tup
             exe = Path(exe_str)
             if runner.is_file() and exe.is_file():
                 if updated:
-                    ensure_bizhawk_desktop_shortcut(settings, runner)
+                    ensure_bizhawk_desktop_shortcut(
+                        settings, runner, enabled=create_shortcut
+                    )
                 return runner, exe
 
     # Need to (re)configure BizHawk
@@ -513,9 +508,9 @@ def ensure_bizhawk_and_proton(*, download_selected: bool = True) -> Optional[Tup
     exe, updated = maybe_update_bizhawk(settings, exe)
     downloaded = downloaded or updated
 
-    # Offer to create a desktop launcher for the runner only when a download occurred.
+    # Create a desktop launcher for the runner only when a download occurred.
     if downloaded:
-        ensure_bizhawk_desktop_shortcut(settings, runner)
+        ensure_bizhawk_desktop_shortcut(settings, runner, enabled=create_shortcut)
 
     return runner, exe
 

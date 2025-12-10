@@ -53,10 +53,10 @@ def _select_patch_file() -> Path:
     return patch
 
 
-def _prompt_setup_choices(*, allow_archipelago_skip: bool) -> Tuple[bool, bool, bool]:
+def _prompt_setup_choices(*, allow_archipelago_skip: bool) -> Tuple[bool, bool, bool, bool]:
     if not _has_zenity():
         # Fall back to enabling everything when zenity is unavailable.
-        return True, True, True
+        return True, True, True, True
 
     while True:
         code, out = _run_zenity(
@@ -73,6 +73,8 @@ def _prompt_setup_choices(*, allow_archipelago_skip: bool) -> Tuple[bool, bool, 
                 "BizHawk (with Proton)",
                 "TRUE",
                 "SNI",
+                "TRUE",
+                "Create Desktop shortcuts (Archipelago & BizHawk)",
                 "--ok-label=Download",
                 "--cancel-label=Cancel",
                 "--height=300",
@@ -86,6 +88,7 @@ def _prompt_setup_choices(*, allow_archipelago_skip: bool) -> Tuple[bool, bool, 
         arch = "Archipelago" in selections
         bizhawk = "BizHawk (with Proton)" in selections
         sni = "SNI" in selections
+        shortcuts = "Create Desktop shortcuts (Archipelago & BizHawk)" in selections
 
         if not (arch or bizhawk):
             error_dialog("You will be required to select one")
@@ -98,7 +101,7 @@ def _prompt_setup_choices(*, allow_archipelago_skip: bool) -> Tuple[bool, bool, 
         if not sni:
             info_dialog("SNES games will not be available.")
 
-        return arch, bizhawk, sni
+        return arch, bizhawk, sni, shortcuts
 
 
 def _ensure_apworld_for_extension(ext: str) -> None:
@@ -277,16 +280,18 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids
 
 
 def _run_prereqs(*, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path], Optional[Path]]:
-    arch, bizhawk, sni = _prompt_setup_choices(allow_archipelago_skip=allow_archipelago_skip)
+    arch, bizhawk, sni, shortcuts = _prompt_setup_choices(allow_archipelago_skip=allow_archipelago_skip)
 
     appimage: Optional[Path] = None
     runner: Optional[Path] = None
 
     if arch or not allow_archipelago_skip:
-        appimage = ensure_appimage(download_selected=arch)
+        appimage = ensure_appimage(download_selected=arch, create_shortcut=shortcuts)
 
     bizhawk_result: Optional[Tuple[Path, Path]] = None
-    bizhawk_result = ensure_bizhawk_and_proton(download_selected=bizhawk)
+    bizhawk_result = ensure_bizhawk_and_proton(
+        download_selected=bizhawk, create_shortcut=shortcuts
+    )
     if bizhawk:
         if bizhawk_result is None:
             raise RuntimeError("BizHawk setup was cancelled or failed.")
