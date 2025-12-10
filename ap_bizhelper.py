@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import Iterable, Optional, Set, Tuple
 
-from ap_bizhelper_ap import ensure_appimage
+from ap_bizhelper_ap import (
+    _has_zenity,
+    _run_zenity,
+    ensure_appimage,
+    error_dialog,
+    info_dialog,
+)
 from ap_bizhelper_bizhawk import ensure_bizhawk_and_proton
-from ap_bizhelper_config import load_settings, save_settings
+from ap_bizhelper_config import get_ext_behavior, load_settings, save_settings, set_ext_behavior
 from ap_bizhelper_sni import download_sni_if_needed
 
 
@@ -21,28 +30,198 @@ def _ensure_sni(settings: dict) -> None:
     download_sni_if_needed(exe_path.parent)
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] != "ensure":
-        print("Usage: ap_bizhelper.py ensure", file=sys.stderr)
-        return 1
+def _select_patch_file() -> Path:
+    if not _has_zenity():
+        raise RuntimeError("zenity is required to choose an Archipelago patch file.")
 
+    code, out = _run_zenity(
+        [
+            "--file-selection",
+            "--title=Select Archipelago patch file",
+            f"--filename={Path.home()}/",
+        ]
+    )
+    if code != 0 or not out:
+        raise RuntimeError("User cancelled patch selection.")
+
+    patch = Path(out)
+    if not patch.is_file():
+        raise RuntimeError("Selected patch file does not exist.")
+
+    return patch
+
+
+def _list_bizhawk_pids() -> Set[int]:
+    try:
+        proc = subprocess.run(
+            ["pgrep", "-f", "EmuHawk.exe"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except FileNotFoundError:
+        return set()
+
+    pids = set()
+    for line in proc.stdout.splitlines():
+        try:
+            pids.add(int(line.strip()))
+        except ValueError:
+            continue
+    return pids
+
+
+def _find_matching_rom(patch: Path) -> Optional[Path]:
+    base = patch.with_suffix("")
+
+    if base != patch and base.is_file():
+        return base
+
+    pattern = f"{base.name}.*"
+    candidates = []
+    for cand in patch.parent.glob(pattern):
+        if cand == patch or cand == base:
+            continue
+        if cand.is_file():
+            candidates.append(cand)
+
+    candidates.sort()
+    return candidates[0] if candidates else None
+
+
+def _wait_for_rom(patch: Path, *, timeout: int = 60) -> Optional[Path]:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        rom = _find_matching_rom(patch)
+        if rom:
+            print(f"[ap-bizhelper] ROM detected: {rom}")
+            return rom
+        time.sleep(1)
+    print("[ap-bizhelper] Timed out waiting for ROM; not launching BizHawk.")
+    return None
+
+
+def _launch_bizhawk(runner: Path, rom: Path) -> None:
+    print(f"[ap-bizhelper] Launching BizHawk runner: {runner} {rom}")
+    try:
+        subprocess.Popen([str(runner), str(rom)])
+    except Exception as exc:  # pragma: no cover - safety net for runtime environments
+        error_dialog(f"Failed to launch BizHawk runner: {exc}")
+
+
+def _detect_new_bizhawk(baseline: Iterable[int], *, timeout: int = 10) -> bool:
+    baseline_set = set(baseline)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        current = _list_bizhawk_pids()
+        if current.difference(baseline_set):
+            return True
+        time.sleep(1)
+    return False
+
+
+def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids: Iterable[int]) -> None:
+    if runner is None or not runner.is_file():
+        print("[ap-bizhelper] BizHawk runner not configured or not executable; skipping auto-launch.")
+        return
+
+    rom = _wait_for_rom(patch)
+    if rom is None:
+        return
+
+    ext = patch.suffix.lower().lstrip(".")
+    behavior = get_ext_behavior(ext)
+    print(f"[ap-bizhelper] Patch: {patch}")
+    print(f"[ap-bizhelper] Detected extension: .{ext}")
+    print(f"[ap-bizhelper] Saved behavior for .{ext}: {behavior or '<none>'}")
+
+    if behavior == "auto":
+        print("[ap-bizhelper] Behavior 'auto': not launching BizHawk; assuming AP/user handles it.")
+        return
+    if behavior == "fallback":
+        print("[ap-bizhelper] Behavior 'fallback': launching BizHawk via Proton.")
+        _launch_bizhawk(runner, rom)
+        return
+    if behavior not in (None, ""):
+        print(f"[ap-bizhelper] Unknown behavior '{behavior}' for .{ext}; doing nothing for safety.")
+        return
+
+    print("[ap-bizhelper] No behavior stored yet; waiting briefly to see if BizHawk appears on its own.")
+    if _detect_new_bizhawk(baseline_pids):
+        print(f"[ap-bizhelper] Detected new BizHawk instance; recording .{ext} as 'auto'.")
+        set_ext_behavior(ext, "auto")
+        return
+
+    print(
+        "[ap-bizhelper] No BizHawk detected after fallback timeout; "
+        f"switching .{ext} to 'fallback' and launching runner."
+    )
+    set_ext_behavior(ext, "fallback")
+    _launch_bizhawk(runner, rom)
+
+
+def _run_prereqs() -> Tuple[Path, Optional[Path]]:
     # Order mirrors the legacy script: Archipelago setup, BizHawk/Proton setup, then SNI.
     try:
-        ensure_appimage()
+        appimage = ensure_appimage()
     except RuntimeError:
-        return 1
+        raise
 
     settings = load_settings()
     bizhawk_result = ensure_bizhawk_and_proton()
     if bizhawk_result is None:
-        return 1
+        raise RuntimeError("BizHawk setup was cancelled or failed.")
 
     # Refresh settings after BizHawk changes and ensure SNI is staged inside BizHawk.
     settings = load_settings()
     _ensure_sni(settings)
     save_settings(settings)
 
+    runner, _ = bizhawk_result
+    return appimage, runner
+
+
+def _run_full_flow() -> int:
+    try:
+        appimage, runner = _run_prereqs()
+    except RuntimeError as exc:
+        error_dialog(str(exc))
+        return 1
+
+    baseline_pids = _list_bizhawk_pids()
+
+    try:
+        patch = _select_patch_file()
+    except RuntimeError as exc:
+        error_dialog(str(exc))
+        return 1
+
+    print(f"[ap-bizhelper] Launching Archipelago with patch: {patch}")
+    try:
+        subprocess.Popen([str(appimage), str(patch)])
+    except Exception as exc:  # pragma: no cover - runtime launcher safety net
+        error_dialog(f"Failed to launch Archipelago: {exc}")
+        return 1
+
+    _handle_bizhawk_for_patch(patch, runner, baseline_pids)
     return 0
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) >= 2 and argv[1] == "ensure":
+        try:
+            _run_prereqs()
+        except RuntimeError:
+            return 1
+        return 0
+
+    if len(argv) >= 2:
+        print("Usage: ap_bizhelper.py [ensure]", file=sys.stderr)
+        return 1
+
+    info_dialog("Starting Archipelago BizHelper flow…")
+    return _run_full_flow()
 
 
 if __name__ == "__main__":  # pragma: no cover
