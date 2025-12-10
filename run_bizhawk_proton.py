@@ -54,7 +54,7 @@ def ensure_bizhawk_exe() -> Path:
     if not exe or not Path(exe).is_file():
         error_dialog("[ap-bizhelper] BIZHAWK_EXE is not set or not a file; cannot launch BizHawk.")
         sys.exit(1)
-    return Path(exe).resolve()
+    return Path(exe)
 
 
 def configure_proton_env():
@@ -98,11 +98,35 @@ def find_bizhawk_connector_linux():
     return None
 
 
-def linux_path_to_proton_win_z(p: Path) -> str:
-    """Convert /foo/bar to Z:\\foo\\bar for Proton."""
-    as_posix = str(p)
-    as_posix = as_posix.rstrip("/")
-    return "Z:" + as_posix.replace("/", "\\")
+def ensure_data_lua_symlink(bizhawk_dir: Path, connector_linux: Path) -> Path | None:
+    """Create a stable symlink into the Archipelago data/lua directory.
+
+    We prefer to reference connector_bizhawk_generic.lua via a relative path inside
+    the BizHawk directory so the Windows-side launcher receives a clean path. If the
+    symlink cannot be created we return None so the caller can fail loudly.
+    """
+
+    target_dir = connector_linux.parent
+    link_path = bizhawk_dir / "ap_data_lua"
+
+    # Remove broken/incorrect symlink to avoid stale references.
+    if link_path.is_symlink():
+        if not link_path.exists() or link_path.resolve() != target_dir:
+            try:
+                link_path.unlink()
+            except Exception:
+                return None
+    elif link_path.exists():
+        # If a regular directory/file is in the way, do not clobber it.
+        return None
+
+    if not link_path.exists():
+        try:
+            link_path.symlink_to(target_dir)
+        except Exception:
+            return None
+
+    return link_path
 
 
 def parse_args(argv):
@@ -147,15 +171,14 @@ def parse_args(argv):
     return rom_path, ap_lua_arg, emu_args
 
 
-def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> str:
+def decide_lua_arg(bizhawk_dir: Path, rom_path: str) -> str:
     """Decide the final --lua=... argument or raise on failure.
 
     - For .sfc (SNES):
         * Must find BizHawkDir/lua/connector.lua (Windows SNI Lua).
     - For non-.sfc:
-        * Prefer AP's --lua= path if provided.
-        * Otherwise locate connector_bizhawk_generic.lua in AP mount,
-          convert to Z:\\ path, and use that.
+        * Must locate connector_bizhawk_generic.lua within the Archipelago AppImage
+          mount, expose it via BizHawk-local symlink, and pass the relative path.
     - If we cannot satisfy the requirement, show dialog and exit.
     """
     ext = Path(rom_path).suffix.lower().lstrip(".")
@@ -173,26 +196,25 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> 
         print("[ap-bizhelper] Using SNI Lua connector for SNES ROM: lua\\connector.lua")
         return "--lua=lua\\connector.lua"
 
-    # Non-SNES: must attach BizHawk AP connector
-    lua_ap_path = None
-
-    if ap_lua_arg:
-        # ap_lua_arg looks like "--lua=Something"
-        lua_ap_path = ap_lua_arg[len("--lua="):]
-
-    if not lua_ap_path:
-        connector_linux = find_bizhawk_connector_linux()
-        if connector_linux is not None:
-            lua_ap_path = linux_path_to_proton_win_z(connector_linux)
-
-    if not lua_ap_path:
+    connector_linux = find_bizhawk_connector_linux()
+    if connector_linux is None:
         error_dialog(
             "[ap-bizhelper] Could not locate Archipelago BizHawk connector Lua "
             "(connector_bizhawk_generic.lua).\n"
+            "Ensure the Archipelago AppImage is mounted before launching BizHawk."
+        )
+        sys.exit(1)
+
+    link = ensure_data_lua_symlink(bizhawk_dir, connector_linux)
+    if link is None:
+        error_dialog(
+            "[ap-bizhelper] Unable to prepare BizHawk-local symlink to Archipelago "
+            "Lua connector.\n"
             "Cannot safely launch non-SNES ROM without connector."
         )
         sys.exit(1)
 
+    lua_ap_path = "ap_data_lua\\connector_bizhawk_generic.lua"
     print(f"[ap-bizhelper] Using BizHawk AP Lua for non-SNES ROM: {lua_ap_path}")
     return f"--lua={lua_ap_path}"
 
@@ -204,9 +226,9 @@ def build_bizhawk_command(argv):
     bizhawk_dir = bizhawk_exe.parent
     proton_bin, _, _ = configure_proton_env()
 
-    rom_path, ap_lua_arg, emu_args = parse_args(argv)
+    rom_path, _ap_lua_arg, emu_args = parse_args(argv)
 
-    lua_arg = decide_lua_arg(bizhawk_dir, rom_path, ap_lua_arg)
+    lua_arg = decide_lua_arg(bizhawk_dir, rom_path)
 
     final_args = [rom_path, lua_arg] + emu_args
 
@@ -215,11 +237,14 @@ def build_bizhawk_command(argv):
     print(f"  ROM:         {rom_path}")
     print(f"  Lua:         {lua_arg}")
 
-    return proton_bin, [proton_bin, "run", str(bizhawk_exe), *final_args]
+    bizhawk_exe_rel = bizhawk_exe.name
+
+    return proton_bin, bizhawk_dir, [proton_bin, "run", bizhawk_exe_rel, *final_args]
 
 
 def main(argv):
-    proton_bin, cmd = build_bizhawk_command(argv)
+    proton_bin, bizhawk_dir, cmd = build_bizhawk_command(argv)
+    os.chdir(bizhawk_dir)
     os.execvp(proton_bin, cmd)
 
 
