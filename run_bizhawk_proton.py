@@ -2,9 +2,22 @@
 import os
 import sys
 import glob
+import json
 import shutil
 import subprocess
 from pathlib import Path
+CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
+SETTINGS_FILE = CONFIG_DIR / "settings.json"
+
+
+def _load_settings():
+    if not SETTINGS_FILE.exists():
+        return {}
+    try:
+        with SETTINGS_FILE.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 def error_dialog(msg: str) -> None:
@@ -19,15 +32,21 @@ def error_dialog(msg: str) -> None:
             pass
     else:
         sys.stderr.write(f"ERROR: {msg}\n")
+_SETTINGS_CACHE = None
 
 
 def get_env_or_config(var: str):
-    """Read config from the environment.
-
-    The core script is responsible for exporting BIZHAWK_EXE, PROTON_BIN, etc.
-    """
+    """Read config from the environment or stored settings."""
     value = os.environ.get(var)
-    return value if value else None
+    if value:
+        return value
+
+    global _SETTINGS_CACHE
+    if _SETTINGS_CACHE is None:
+        _SETTINGS_CACHE = _load_settings()
+
+    value = _SETTINGS_CACHE.get(var)
+    return str(value) if value else None
 
 
 def ensure_bizhawk_exe() -> Path:
@@ -40,14 +59,12 @@ def ensure_bizhawk_exe() -> Path:
 
 def configure_proton_env():
     home = Path.home()
-    proton_bin = os.environ.get("PROTON_BIN", "proton")
-    proton_prefix = os.environ.get(
-        "PROTON_PREFIX",
-        str(home / ".local" / "share" / "ap_bizhelper_test" / "proton_prefix"),
+    proton_bin = get_env_or_config("PROTON_BIN") or "proton"
+    proton_prefix = get_env_or_config("PROTON_PREFIX") or str(
+        home / ".local" / "share" / "ap_bizhelper_test" / "proton_prefix"
     )
-    steam_root = os.environ.get(
-        "STEAM_ROOT",
-        str(home / ".local" / "share" / "Steam"),
+    steam_root = get_env_or_config("STEAM_ROOT") or str(
+        home / ".local" / "share" / "Steam"
     )
 
     os.environ["STEAM_COMPAT_DATA_PATH"] = proton_prefix
