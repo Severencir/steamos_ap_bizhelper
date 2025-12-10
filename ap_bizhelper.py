@@ -132,6 +132,9 @@ def _list_bizhawk_pids() -> Set[int]:
 
 
 def _find_matching_rom(patch: Path) -> Optional[Path]:
+    if patch.suffix.lower() == ".sfc" and patch.is_file():
+        return patch
+
     base = patch.with_suffix("")
 
     if base != patch and base.is_file():
