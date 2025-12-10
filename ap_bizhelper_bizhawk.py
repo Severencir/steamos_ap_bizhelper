@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -256,12 +257,22 @@ def build_runner(settings: Dict[str, Any], bizhawk_exe: Path, proton_bin: Path) 
     _ensure_dirs()
     runner = BIZHAWK_RUNNER
 
-    # If the runner script exists, make sure it's executable.
-    if runner.is_file():
+    source_runner = Path(__file__).with_name("run_bizhawk_proton.py")
+    if not runner.is_file():
+        if not source_runner.is_file():
+            error_dialog("BizHawk runner helper (run_bizhawk_proton.py) is missing.")
+            return runner
         try:
-            runner.chmod(runner.stat().st_mode | 0o111)
+            shutil.copy2(source_runner, runner)
         except Exception:
-            pass
+            error_dialog("Failed to stage BizHawk runner helper (run_bizhawk_proton.py).")
+            return runner
+
+    # Ensure the runner script is executable.
+    try:
+        runner.chmod(runner.stat().st_mode | 0o111)
+    except Exception:
+        pass
 
     # Persist the runner path for other helpers to consume.
     settings["BIZHAWK_RUNNER"] = str(runner)
