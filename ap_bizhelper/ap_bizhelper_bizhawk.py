@@ -9,8 +9,11 @@ import importlib.resources as resources
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
+import zipfile
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from .ap_bizhelper_ap import download_with_progress
 
@@ -23,6 +26,12 @@ PROTON_PREFIX = DATA_DIR / "proton_prefix"
 BIZHAWK_RUNNER = DATA_DIR / "run_bizhawk_proton.py"
 
 GITHUB_API_LATEST = "https://api.github.com/repos/TASEmulators/BizHawk/releases/latest"
+ARCHIPELAGO_RELEASE_API = "https://api.github.com/repos/ArchipelagoMW/Archipelago/releases"
+SNI_DOWNLOAD_URL = (
+    "https://github.com/alttpo/sni/releases/download/v0.0.102a/"
+    "sni-v0.0.102a-windows-amd64.zip"
+)
+SNI_VERSION = "v0.0.102a"
 
 
 def _ensure_dirs() -> None:
@@ -90,12 +99,11 @@ def _github_latest_bizhawk() -> Tuple[str, str]:
     Return (download_url, version_tag) for the latest BizHawk Windows x64 zip.
     """
     import urllib.request
-    import json as _json
 
     req = urllib.request.Request(GITHUB_API_LATEST, headers={"User-Agent": "ap-bizhelper/1.0"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = resp.read().decode("utf-8")
-    j = _json.loads(data)
+    j = json.loads(data)
 
     tag = j.get("tag_name") or ""
     assets = j.get("assets") or []
@@ -118,6 +126,25 @@ def _github_latest_bizhawk() -> Tuple[str, str]:
                 return url, tag
 
     raise RuntimeError("Could not find BizHawk win-x64 zip asset in latest release.")
+
+
+def _archipelago_release(tag: Optional[str] = None) -> Tuple[str, str]:
+    """Return (download_url, version_tag) for an Archipelago source archive."""
+
+    import urllib.request
+
+    url = f"{ARCHIPELAGO_RELEASE_API}/latest" if not tag else f"{ARCHIPELAGO_RELEASE_API}/tags/{tag}"
+    req = urllib.request.Request(url, headers={"User-Agent": "ap-bizhelper/1.0"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = resp.read().decode("utf-8")
+    j = json.loads(data)
+
+    tar_url = j.get("tarball_url") or j.get("zipball_url")
+    if not tar_url:
+        raise RuntimeError("Could not locate Archipelago source archive download URL.")
+
+    tag_name = j.get("tag_name") or (tag or "")
+    return tar_url, tag_name
 
 
 def download_and_extract_bizhawk(url: str, version: str) -> Path:
@@ -191,6 +218,139 @@ def download_and_extract_bizhawk(url: str, version: str) -> Path:
         raise RuntimeError("Could not find EmuHawk.exe after extracting BizHawk.")
     _stage_bizhawk_config(exe, preserved_config)
     return exe
+
+
+def _copy_tree(src: Path, dest: Path) -> None:
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(src, dest)
+
+
+def _extract_archive(archive: Path, dest_dir: Path) -> Path:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if tarfile.is_tarfile(archive):
+        with tarfile.open(archive, "r:*") as tf:
+            tf.extractall(dest_dir)
+    elif zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive, "r") as zf:
+            zf.extractall(dest_dir)
+    else:
+        raise RuntimeError("Unsupported archive format for connectors.")
+    return dest_dir
+
+
+def _stage_archipelago_connectors(
+    bizhawk_dir: Path, *, ap_version: Optional[str], download_messages: Optional[list[str]]
+) -> str:
+    """Download Archipelago source and copy data/lua into bizhawk_dir/connectors."""
+
+    url, tag = _archipelago_release(ap_version or None)
+    suffix = ".tar.gz" if "tar" in url else ".zip"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmpf:
+        tmp_path = Path(tmpf.name)
+
+    try:
+        download_with_progress(
+            url,
+            tmp_path,
+            title="Archipelago connectors",
+            text=f"Downloading Archipelago connectors ({tag})...",
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            extracted_root = _extract_archive(tmp_path, Path(td))
+            lua_dir: Optional[Path] = None
+            for data_dir in extracted_root.rglob("data"):
+                candidate = data_dir / "lua"
+                if candidate.is_dir():
+                    lua_dir = candidate
+                    break
+            if lua_dir is None:
+                raise RuntimeError("Archipelago source archive did not contain data/lua directory")
+            _copy_tree(lua_dir, bizhawk_dir / "connectors")
+    finally:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+
+    if download_messages is not None:
+        download_messages.append(f"Updated BizHawk connectors to Archipelago {tag}")
+    return tag
+
+
+def _stage_sni_connectors(bizhawk_dir: Path, download_messages: Optional[list[str]]) -> None:
+    """Download SNI release and copy lua folder into bizhawk_dir/sni."""
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmpf:
+        tmp_path = Path(tmpf.name)
+
+    try:
+        download_with_progress(
+            SNI_DOWNLOAD_URL,
+            tmp_path,
+            title="SNI connectors",
+            text=f"Downloading SNI connectors ({SNI_VERSION})...",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            extracted_root = _extract_archive(tmp_path, Path(td))
+            lua_dir = next((p for p in extracted_root.rglob("lua") if p.is_dir()), None)
+            if lua_dir is None:
+                raise RuntimeError("SNI release did not contain a lua directory")
+            _copy_tree(lua_dir, bizhawk_dir / "sni")
+    finally:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+
+    if download_messages is not None:
+        download_messages.append("Updated BizHawk SNI connectors")
+
+
+def _is_managed_bizhawk(exe: Path) -> bool:
+    try:
+        exe.relative_to(BIZHAWK_WIN_DIR)
+        return True
+    except ValueError:
+        return False
+
+
+def ensure_connectors(
+    settings: Dict[str, Any],
+    bizhawk_exe: Path,
+    *,
+    ap_version: Optional[str],
+    download_messages: Optional[list[str]],
+) -> bool:
+    """Ensure connector directories are present for managed BizHawk installs."""
+
+    if not _is_managed_bizhawk(bizhawk_exe):
+        return False
+
+    bizhawk_dir = bizhawk_exe.parent
+    updated = False
+
+    desired_ap_version = ap_version or ""
+    current_ap_version = str(settings.get("BIZHAWK_AP_CONNECTOR_VERSION", "") or "")
+    connectors_dir = bizhawk_dir / "connectors"
+    if desired_ap_version != current_ap_version or not connectors_dir.is_dir():
+        tag = _stage_archipelago_connectors(
+            bizhawk_dir, ap_version=ap_version, download_messages=download_messages
+        )
+        settings["BIZHAWK_AP_CONNECTOR_VERSION"] = tag
+        updated = True
+
+    current_sni_version = str(settings.get("BIZHAWK_SNI_VERSION", "") or "")
+    sni_dir = bizhawk_dir / "sni"
+    if current_sni_version != SNI_VERSION or not sni_dir.is_dir():
+        _stage_sni_connectors(bizhawk_dir, download_messages)
+        settings["BIZHAWK_SNI_VERSION"] = SNI_VERSION
+        updated = True
+
+    if updated:
+        _save_settings(settings)
+    return updated
 
 
 def _stage_bizhawk_config(exe: Path, preserved_config: Optional[Path]) -> None:
@@ -591,6 +751,20 @@ def ensure_bizhawk_and_proton(
         settings, exe, download_messages=download_messages
     )
     downloaded = downloaded or updated
+
+    ap_version = str(settings.get("AP_VERSION", "") or "")
+    try:
+        connectors_updated = ensure_connectors(
+            settings,
+            exe,
+            ap_version=ap_version if ap_version else None,
+            download_messages=download_messages,
+        )
+    except Exception as exc:
+        error_dialog(f"Failed to stage BizHawk connectors: {exc}")
+        return None
+
+    downloaded = downloaded or connectors_updated
 
     # Create a desktop launcher for the runner only when a download occurred.
     if downloaded:
