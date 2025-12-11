@@ -164,14 +164,28 @@ def parse_args(argv):
                 emu_args = emu_args[:idx] + emu_args[idx + 1 :]
                 break
 
-    if rom_path is None:
-        error_dialog("[ap-bizhelper] No ROM path detected in arguments.")
-        sys.exit(1)
-
     return rom_path, ap_lua_arg, emu_args
 
 
-def decide_lua_arg(bizhawk_dir: Path, rom_path: str) -> str:
+def _detect_connector_name(ap_lua_arg: str | None) -> str | None:
+    """Return the connector filename if an AP Lua path was supplied."""
+
+    if not ap_lua_arg:
+        return None
+
+    if ap_lua_arg.startswith("--lua="):
+        lua_path = ap_lua_arg[len("--lua=") :]
+    else:
+        lua_path = ap_lua_arg
+
+    name = Path(lua_path).name
+    if name.startswith("connector_") and name.endswith(".lua"):
+        return name
+
+    return None
+
+
+def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> str:
     """Decide the final --lua=... argument or raise on failure.
 
     - For .sfc (SNES):
@@ -184,7 +198,7 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str) -> str:
     ext = Path(rom_path).suffix.lower().lstrip(".")
 
     if ext == "sfc":
-        # SNES + SNI
+        # SNES + SNI (always prefer local SNI connector even if AP passed --lua)
         lua_fs_path = bizhawk_dir / "lua" / "connector.lua"
         if not lua_fs_path.is_file():
             error_dialog(
@@ -193,6 +207,11 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str) -> str:
                 "Cannot safely launch SNES ROM without SNI connector."
             )
             sys.exit(1)
+        if ap_lua_arg:
+            print(
+                "[ap-bizhelper] Ignoring AP-supplied --lua for SNES ROM; "
+                "using bundled SNI connector instead."
+            )
         print("[ap-bizhelper] Using SNI Lua connector for SNES ROM: lua\\connector.lua")
         return "--lua=lua\\connector.lua"
 
@@ -214,7 +233,21 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str) -> str:
         )
         sys.exit(1)
 
-    lua_ap_path = "ap_data_lua\\connector_bizhawk_generic.lua"
+    connector_name = _detect_connector_name(ap_lua_arg) or "connector_bizhawk_generic.lua"
+    connector_path = link / connector_name
+    if connector_name != "connector_bizhawk_generic.lua" and not connector_path.is_file():
+        connector_name = "connector_bizhawk_generic.lua"
+        connector_path = link / connector_name
+
+    if not connector_path.is_file():
+        error_dialog(
+            "[ap-bizhelper] Expected Archipelago BizHawk connector Lua next to "
+            f"{connector_linux.name} but none was found.\n"
+            "Cannot safely launch non-SNES ROM without connector."
+        )
+        sys.exit(1)
+
+    lua_ap_path = f"ap_data_lua\\{connector_name}"
     print(f"[ap-bizhelper] Using BizHawk AP Lua for non-SNES ROM: {lua_ap_path}")
     return f"--lua={lua_ap_path}"
 
@@ -226,16 +259,19 @@ def build_bizhawk_command(argv):
     bizhawk_dir = bizhawk_exe.parent
     proton_bin, _, _ = configure_proton_env()
 
-    rom_path, _ap_lua_arg, emu_args = parse_args(argv)
+    rom_path, ap_lua_arg, emu_args = parse_args(argv)
 
-    lua_arg = decide_lua_arg(bizhawk_dir, rom_path)
+    if rom_path is None:
+        final_args = emu_args
+        print("[ap-bizhelper] No ROM detected; launching BizHawk without AP connector.")
+    else:
+        lua_arg = decide_lua_arg(bizhawk_dir, rom_path, ap_lua_arg)
+        final_args = [rom_path, lua_arg] + emu_args
 
-    final_args = [rom_path, lua_arg] + emu_args
-
-    print("[ap-bizhelper] Running BizHawk via Proton:")
-    print(f"  BIZHAWK_EXE: {bizhawk_exe}")
-    print(f"  ROM:         {rom_path}")
-    print(f"  Lua:         {lua_arg}")
+        print("[ap-bizhelper] Running BizHawk via Proton:")
+        print(f"  BIZHAWK_EXE: {bizhawk_exe}")
+        print(f"  ROM:         {rom_path}")
+        print(f"  Lua:         {lua_arg}")
 
     bizhawk_exe_rel = bizhawk_exe.name
 
