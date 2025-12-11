@@ -179,7 +179,7 @@ def _detect_connector_name(ap_lua_arg: str | None) -> str | None:
         lua_path = ap_lua_arg
 
     name = Path(lua_path).name
-    if name.startswith("connector_bizhawk_") and name.endswith(".lua"):
+    if name.startswith("connector_") and name.endswith(".lua"):
         return name
 
     return None
