@@ -312,7 +312,10 @@ def _stage_runner(target: Path, source: Path) -> bool:
     """Copy the runner helper to ``target`` and mark it executable."""
 
     try:
-        shutil.copy2(source, target)
+        # Normalize newlines to avoid ``/usr/bin/env: 'python3\r': No such file``
+        # errors when the runner file was produced with Windows line endings.
+        data = source.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        target.write_bytes(data)
         target.chmod(target.stat().st_mode | 0o111)
         return True
     except Exception:
