@@ -100,6 +100,22 @@ def find_bizhawk_connector_linux():
     return None
 
 
+def find_sni_connector_linux():
+    """Locate Connector.lua inside the AP AppImage SNI Lua directory.
+
+    Example path:
+      /tmp/.mount_ArchipXXXXXX/opt/Archipelago/SNI/lua/Connector.lua
+    """
+    mount_dir = find_archip_mount_dir()
+    if mount_dir is None:
+        return None
+
+    candidate = mount_dir / "opt" / "Archipelago" / "SNI" / "lua" / "Connector.lua"
+    if candidate.is_file():
+        return candidate
+    return None
+
+
 def ensure_data_lua_symlink(bizhawk_dir: Path, connector_linux: Path) -> Path | None:
     """Create a stable symlink into the Archipelago data/lua directory.
 
@@ -120,6 +136,30 @@ def ensure_data_lua_symlink(bizhawk_dir: Path, connector_linux: Path) -> Path | 
                 return None
     elif link_path.exists():
         # If a regular directory/file is in the way, do not clobber it.
+        return None
+
+    if not link_path.exists():
+        try:
+            link_path.symlink_to(target_dir)
+        except Exception:
+            return None
+
+    return link_path
+
+
+def ensure_sni_lua_symlink(bizhawk_dir: Path, connector_linux: Path) -> Path | None:
+    """Create a stable symlink into the Archipelago SNI/lua directory."""
+
+    target_dir = connector_linux.parent
+    link_path = bizhawk_dir / "ap_sni_lua"
+
+    if link_path.is_symlink():
+        if not link_path.exists() or link_path.resolve() != target_dir:
+            try:
+                link_path.unlink()
+            except Exception:
+                return None
+    elif link_path.exists():
         return None
 
     if not link_path.exists():
@@ -190,22 +230,44 @@ def _detect_connector_name(ap_lua_arg: str | None) -> str | None:
 def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> str:
     """Decide the final --lua=... argument or raise on failure.
 
+    - We always locate the Archipelago AppImage data/lua (or SNI/lua) directory and
+      expose it via a BizHawk-local symlink before deciding which Lua to pass to
+      BizHawk.
     - For .sfc (SNES):
-        * Must find BizHawkDir/lua/connector.lua (Windows SNI Lua).
+        * Must find Connector.lua inside the symlinked Archipelago SNI/lua dir.
     - For non-.sfc:
-        * Must locate connector_bizhawk_generic.lua within the Archipelago AppImage
-          mount, expose it via BizHawk-local symlink, and pass the relative path.
+        * Must locate connector_bizhawk_generic.lua (or AP-specified connector) via
+          the same symlink and pass the relative path.
     - If we cannot satisfy the requirement, show dialog and exit.
     """
     ext = Path(rom_path).suffix.lower().lstrip(".")
 
     if ext == "sfc":
-        # SNES + SNI (always prefer local SNI connector even if AP passed --lua)
-        lua_fs_path = bizhawk_dir / "lua" / "connector.lua"
-        if not lua_fs_path.is_file():
+        # SNES + SNI (always prefer Archipelago-provided SNI connector even if AP passed --lua)
+        connector_linux = find_sni_connector_linux()
+        if connector_linux is None:
             error_dialog(
-                "[ap-bizhelper] Expected SNI Lua at "
-                f"{lua_fs_path} but it is missing.\n"
+                "[ap-bizhelper] Could not locate Archipelago SNI Lua connector "
+                "(Connector.lua).\n"
+                "Ensure the Archipelago AppImage is mounted before launching BizHawk."
+            )
+            sys.exit(1)
+
+        link = ensure_sni_lua_symlink(bizhawk_dir, connector_linux)
+        if link is None:
+            error_dialog(
+                "[ap-bizhelper] Unable to prepare BizHawk-local symlink to Archipelago "
+                "SNI Lua connector.\n"
+                "Cannot safely launch SNES ROM without connector."
+            )
+            sys.exit(1)
+
+        connector_name = connector_linux.name
+        connector_path = link / connector_name
+        if not connector_path.is_file():
+            error_dialog(
+                "[ap-bizhelper] Expected SNI Lua in Archipelago SNI/lua directory "
+                f"but it is missing ({connector_path}).\n"
                 "Cannot safely launch SNES ROM without SNI connector."
             )
             sys.exit(1)
@@ -214,8 +276,9 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> 
                 "[ap-bizhelper] Ignoring AP-supplied --lua for SNES ROM; "
                 "using bundled SNI connector instead."
             )
-        print("[ap-bizhelper] Using SNI Lua connector for SNES ROM: lua\\connector.lua")
-        return "--lua=lua\\connector.lua"
+        lua_ap_path = f"ap_sni_lua\\{connector_name}"
+        print(f"[ap-bizhelper] Using SNI Lua connector for SNES ROM: {lua_ap_path}")
+        return f"--lua={lua_ap_path}"
 
     connector_linux = find_bizhawk_connector_linux()
     if connector_linux is None:
@@ -231,7 +294,7 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> 
         error_dialog(
             "[ap-bizhelper] Unable to prepare BizHawk-local symlink to Archipelago "
             "Lua connector.\n"
-            "Cannot safely launch non-SNES ROM without connector."
+            "Cannot safely launch ROM without connector."
         )
         sys.exit(1)
 
