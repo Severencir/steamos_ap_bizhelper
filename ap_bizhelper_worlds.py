@@ -274,6 +274,7 @@ def ensure_apworld_for_patch(patch: Path) -> None:
                 f"An APWorld {version_phrase} was found for {display_name}.\n\n"
                 "Would you like to download it automatically, select your own .apworld file, or cancel?"
             ),
+            select_label="Use local .apworld",
         )
         if action == "Download":
             dest = _download_apworld(download_url, dest_name)
