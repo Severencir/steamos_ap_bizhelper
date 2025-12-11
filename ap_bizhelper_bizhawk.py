@@ -130,6 +130,18 @@ def download_and_extract_bizhawk(url: str, version: str) -> Path:
 
     _ensure_dirs()
 
+    preserved_config = None
+    try:
+        preserved_config = next(BIZHAWK_WIN_DIR.rglob("config.ini"))
+        if not preserved_config.is_file():
+            preserved_config = None
+    except StopIteration:
+        preserved_config = None
+    if preserved_config is not None:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".ini") as cfg_tmp:
+            shutil.copy2(preserved_config, cfg_tmp.name)
+            preserved_config = Path(cfg_tmp.name)
+
     # Clear existing directory
     for child in BIZHAWK_WIN_DIR.iterdir():
         try:
@@ -176,7 +188,35 @@ def download_and_extract_bizhawk(url: str, version: str) -> Path:
     exe = auto_detect_bizhawk_exe({})
     if exe is None:
         raise RuntimeError("Could not find EmuHawk.exe after extracting BizHawk.")
+    _stage_bizhawk_config(exe, preserved_config)
     return exe
+
+
+def _stage_bizhawk_config(exe: Path, preserved_config: Optional[Path]) -> None:
+    """Copy a default BizHawk config alongside ``exe`` if one is absent."""
+
+    target_cfg = exe.parent / "config.ini"
+    if target_cfg.exists():
+        if preserved_config is not None and preserved_config.exists():
+            preserved_config.unlink()
+        return
+
+    source_cfg: Optional[Path] = None
+    if preserved_config is not None and preserved_config.is_file():
+        source_cfg = preserved_config
+    else:
+        candidate = Path(__file__).with_name("config.ini")
+        if candidate.is_file():
+            source_cfg = candidate
+
+    if source_cfg is None:
+        return
+
+    try:
+        shutil.copy2(source_cfg, target_cfg)
+    finally:
+        if preserved_config is not None and preserved_config.exists():
+            preserved_config.unlink()
 
 
 def auto_detect_bizhawk_exe(settings: Dict[str, Any]) -> Optional[Path]:

@@ -857,34 +857,6 @@ ensure_sfc_lua_path() {
   save_config
 }
 
-ensure_bizhawk_skip_admin_warning() {
-  # Best-effort: adjust config.ini near EmuHawk.exe
-  if [[ -z "${BIZHAWK_EXE:-}" || ! -f "$BIZHAWK_EXE" ]]; then
-    return
-  fi
-
-  local exe_dir cfg key
-  exe_dir="$(dirname "$BIZHAWK_EXE")"
-  key="SkipSuperuserPrivsCheck"
-
-  cfg=$(find "$exe_dir" -maxdepth 3 -type f -iname "config.ini" 2>/dev/null | head -n1 || true)
-  if [[ -z "$cfg" ]]; then
-    # No config yet -> don't try to create one; let BizHawk generate it.
-    echo "[ap-bizhelper] No BizHawk config.ini found yet; skipping admin-warning tweak this run."
-    return
-  fi
-
-  # Handle both JSON-ish ("Key": false,) and INI-ish (Key=false) forms
-  if grep -q "$key" "$cfg" 2>/dev/null; then
-    sed -i -E "s/(\"$key\"[[:space:]]*:[[:space:]]*)false/\1true/" "$cfg" || true
-    sed -i -E "s/^(${key}[[:space:]]*=[[:space:]]*)false/\1true/" "$cfg" || true
-  else
-    printf '\n%s=true\n' "$key" >>"$cfg" || true
-  fi
-
-  echo "[ap-bizhelper] Ensured $key=true in BizHawk config: $cfg"
-}
-
 launch_bizhawk_for_rom() {
   local rom="$1"
 
@@ -908,8 +880,6 @@ launch_bizhawk_for_rom() {
       echo "[ap-bizhelper] No Lua script configured for .sfc; launching without Lua."
     fi
   fi
-
-  ensure_bizhawk_skip_admin_warning
 
   "$BIZHAWK_RUNNER" "$rom" "${args[@]}" &
 }
