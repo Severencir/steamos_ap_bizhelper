@@ -267,32 +267,43 @@ def select_bizhawk_exe(initial: Optional[Path] = None) -> Optional[Path]:
     return p
 
 
+def _stage_runner(target: Path, source: Path) -> bool:
+    """Copy the runner helper to ``target`` and mark it executable."""
+
+    try:
+        shutil.copy2(source, target)
+        target.chmod(target.stat().st_mode | 0o111)
+        return True
+    except Exception:
+        return False
+
+
 def build_runner(settings: Dict[str, Any], bizhawk_exe: Path, proton_bin: Path) -> Path:
     """
-    Ensure the Python BizHawk runner path (run_bizhawk_proton.py) is recorded and executable.
+    Ensure the Python BizHawk runner helper is staged alongside BizHawk.
 
-    We no longer generate a bash wrapper here; the dedicated Python
-    runner is responsible for configuring Proton and launching EmuHawk.
+    The runner is copied both to the managed data directory (for archival) and
+    into the BizHawk installation directory so that any launch shortcuts can
+    invoke it directly with the same arguments Archipelago provides.
     """
+
     _ensure_dirs()
-    runner = BIZHAWK_RUNNER
-
     source_runner = Path(__file__).with_name("run_bizhawk_proton.py")
-    if not runner.is_file():
-        if not source_runner.is_file():
-            error_dialog("BizHawk runner helper (run_bizhawk_proton.py) is missing.")
-            return runner
-        try:
-            shutil.copy2(source_runner, runner)
-        except Exception:
-            error_dialog("Failed to stage BizHawk runner helper (run_bizhawk_proton.py).")
-            return runner
+    bizhawk_runner = bizhawk_exe.parent / source_runner.name
+    fallback_runner = BIZHAWK_RUNNER
 
-    # Ensure the runner script is executable.
-    try:
-        runner.chmod(runner.stat().st_mode | 0o111)
-    except Exception:
-        pass
+    if not source_runner.is_file():
+        error_dialog("BizHawk runner helper (run_bizhawk_proton.py) is missing.")
+        return bizhawk_runner
+
+    staged_any = False
+    staged_any = _stage_runner(fallback_runner, source_runner) or staged_any
+    staged_any = _stage_runner(bizhawk_runner, source_runner) or staged_any
+
+    if not staged_any:
+        error_dialog("Failed to stage BizHawk runner helper (run_bizhawk_proton.py).")
+
+    runner = bizhawk_runner if bizhawk_runner.is_file() else fallback_runner
 
     # Persist the runner path for other helpers to consume.
     settings["BIZHAWK_RUNNER"] = str(runner)
@@ -308,7 +319,9 @@ def ensure_bizhawk_desktop_shortcut(
     if not runner.is_file() or not os.access(str(runner), os.X_OK):
         return
 
-    shortcut_path = Path(os.path.expanduser("~/Desktop")) / "BizHawk-Proton.desktop"
+    desktop_dir = Path(os.path.expanduser("~/Desktop"))
+    shortcut_path = desktop_dir / "BizHawk-Proton.sh"
+    legacy_desktop_entry = desktop_dir / "BizHawk-Proton.desktop"
 
     if not enabled:
         settings["BIZHAWK_DESKTOP_SHORTCUT"] = "no"
@@ -316,17 +329,18 @@ def ensure_bizhawk_desktop_shortcut(
         return
 
     content = (
-        "[Desktop Entry]\n"
-        "Type=Application\n"
-        "Name=BizHawk (Proton)\n"
-        f"Exec={runner}\n"
-        "Terminal=false\n"
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"exec \"{runner}\" \"$@\"\n"
     )
     try:
         shortcut_path.parent.mkdir(parents=True, exist_ok=True)
         with shortcut_path.open("w", encoding="utf-8") as f:
             f.write(content)
         shortcut_path.chmod(0o755)
+        # Clean up the legacy .desktop file if present to avoid confusion.
+        if legacy_desktop_entry.exists():
+            legacy_desktop_entry.unlink()
         settings["BIZHAWK_DESKTOP_SHORTCUT"] = "yes"
         _save_settings(settings)
     except Exception as exc:  # pragma: no cover - filesystem edge cases
