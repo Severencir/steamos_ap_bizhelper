@@ -23,7 +23,6 @@ DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper_test"))
 
 BIZHAWK_WIN_DIR = DATA_DIR / "bizhawk_win"
 PROTON_PREFIX = DATA_DIR / "proton_prefix"
-BIZHAWK_RUNNER = DATA_DIR / "run_bizhawk_proton.py"
 
 GITHUB_API_LATEST = "https://api.github.com/repos/TASEmulators/BizHawk/releases/latest"
 ARCHIPELAGO_RELEASE_API = "https://api.github.com/repos/ArchipelagoMW/Archipelago/releases"
@@ -366,9 +365,15 @@ def _stage_bizhawk_config(exe: Path, preserved_config: Optional[Path]) -> None:
     if preserved_config is not None and preserved_config.is_file():
         source_cfg = preserved_config
     else:
-        candidate = Path(__file__).with_name("config.ini")
-        if candidate.is_file():
-            source_cfg = candidate
+        try:
+            cfg_resource = resources.files(__package__).joinpath("config.ini")
+        except (ModuleNotFoundError, AttributeError):
+            cfg_resource = None
+
+        if cfg_resource is not None:
+            with resources.as_file(cfg_resource) as candidate:
+                if candidate.is_file():
+                    source_cfg = candidate
 
     if source_cfg is None:
         return
@@ -486,9 +491,9 @@ def build_runner(settings: Dict[str, Any], bizhawk_exe: Path, proton_bin: Path) 
     """
     Ensure the Python BizHawk runner helper is staged alongside BizHawk.
 
-    The runner is copied both to the managed data directory (for archival) and
-    into the BizHawk installation directory so that any launch shortcuts can
-    invoke it directly with the same arguments Archipelago provides.
+    The runner is copied into the BizHawk installation directory so that any
+    launch shortcuts can invoke it directly with the same arguments
+    Archipelago provides.
     """
 
     _ensure_dirs()
@@ -498,7 +503,6 @@ def build_runner(settings: Dict[str, Any], bizhawk_exe: Path, proton_bin: Path) 
         runner_resource = None
 
     bizhawk_runner = bizhawk_exe.parent / "run_bizhawk_proton.py"
-    fallback_runner = BIZHAWK_RUNNER
 
     if runner_resource is None:
         error_dialog("BizHawk runner helper (run_bizhawk_proton.py) is missing.")
@@ -510,13 +514,12 @@ def build_runner(settings: Dict[str, Any], bizhawk_exe: Path, proton_bin: Path) 
             error_dialog("BizHawk runner helper (run_bizhawk_proton.py) is missing.")
             return bizhawk_runner
 
-        staged_any = _stage_runner(fallback_runner, source_runner) or staged_any
         staged_any = _stage_runner(bizhawk_runner, source_runner) or staged_any
 
     if not staged_any:
         error_dialog("Failed to stage BizHawk runner helper (run_bizhawk_proton.py).")
 
-    runner = bizhawk_runner if bizhawk_runner.is_file() else fallback_runner
+    runner = bizhawk_runner
 
     # Persist the runner path for other helpers to consume.
     settings["BIZHAWK_RUNNER"] = str(runner)
@@ -646,9 +649,9 @@ def ensure_bizhawk_and_proton(
     """
     Ensure BizHawk (Windows) and Proton are configured and runnable.
 
-    On success, returns the Path to the BizHawk runner script (BIZHAWK_RUNNER),
-    the EmuHawk.exe path, and a flag indicating whether any downloads occurred.
-    
+    On success, returns the Path to the BizHawk runner script, the EmuHawk.exe
+    path, and a flag indicating whether any downloads occurred.
+
     On failure or user cancellation, returns None.
     """
     _ensure_dirs()
