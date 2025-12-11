@@ -90,14 +90,6 @@ def _prompt_setup_choices(*, allow_archipelago_skip: bool) -> Tuple[bool, bool, 
         sni = "SNI" in selections
         shortcuts = "Create Desktop shortcuts (Archipelago & BizHawk)" in selections
 
-        if not (arch or bizhawk):
-            error_dialog("You will be required to select one")
-            continue
-
-        if not arch and not allow_archipelago_skip:
-            error_dialog("Archipelago is required to launch patches.")
-            continue
-
         if not sni:
             info_dialog("SNES games will not be available.")
 
