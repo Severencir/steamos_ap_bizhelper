@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import importlib.resources as resources
 import shutil
 import subprocess
 import sys
@@ -328,17 +329,26 @@ def build_runner(settings: Dict[str, Any], bizhawk_exe: Path, proton_bin: Path) 
     """
 
     _ensure_dirs()
-    source_runner = Path(__file__).with_name("run_bizhawk_proton.py")
-    bizhawk_runner = bizhawk_exe.parent / source_runner.name
+    try:
+        runner_resource = resources.files(__package__).joinpath("run_bizhawk_proton.py")
+    except (ModuleNotFoundError, AttributeError):
+        runner_resource = None
+
+    bizhawk_runner = bizhawk_exe.parent / "run_bizhawk_proton.py"
     fallback_runner = BIZHAWK_RUNNER
 
-    if not source_runner.is_file():
+    if runner_resource is None:
         error_dialog("BizHawk runner helper (run_bizhawk_proton.py) is missing.")
         return bizhawk_runner
 
     staged_any = False
-    staged_any = _stage_runner(fallback_runner, source_runner) or staged_any
-    staged_any = _stage_runner(bizhawk_runner, source_runner) or staged_any
+    with resources.as_file(runner_resource) as source_runner:
+        if not source_runner.is_file():
+            error_dialog("BizHawk runner helper (run_bizhawk_proton.py) is missing.")
+            return bizhawk_runner
+
+        staged_any = _stage_runner(fallback_runner, source_runner) or staged_any
+        staged_any = _stage_runner(bizhawk_runner, source_runner) or staged_any
 
     if not staged_any:
         error_dialog("Failed to stage BizHawk runner helper (run_bizhawk_proton.py).")
