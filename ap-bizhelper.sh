@@ -90,20 +90,24 @@ info_dialog() {
 choose_install_action() {
   local title="$1"
   local text="$2"
+  local select_label="${3:-Select}"
 
   if ! command -v zenity >/dev/null 2>&1; then
     echo "Cancel"
     return 0
   fi
 
-  local output
-  if output=$(zenity --question \
+  local output status
+  output=$(zenity --question \
       --title="$title" \
       --text="$text" \
       --ok-label="Download" \
       --cancel-label="Cancel" \
-      --extra-button="Select"); then
-    if [[ "$output" == "Select" ]]; then
+      --extra-button="$select_label")
+  status=$?
+
+  if [[ $status -eq 0 || $status -eq 5 ]]; then
+    if [[ "$output" == "$select_label" ]]; then
       echo "Select"
     else
       echo "Download"
