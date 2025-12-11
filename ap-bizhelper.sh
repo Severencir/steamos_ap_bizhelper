@@ -19,11 +19,6 @@ PROTON_BIN=""           # path to Proton "proton" script
 PROTON_PREFIX="$DATA_DIR/proton_prefix"
 BIZHAWK_RUNNER="$DATA_DIR/run_bizhawk_proton.sh"
 
-# Windows SNI (from alttpo)
-SNI_WIN_DIR="$DATA_DIR/sni_win"
-SNI_WIN_ZIP="$SNI_WIN_DIR/sni-win.zip"
-SNI_WIN_URL="https://github.com/alttpo/sni/releases/download/v0.0.102a/sni-v0.0.102a-windows-amd64.zip"
-
 # Lua for SNES (Windows-style path used inside BizHawk, e.g. "SNI\\lua\\Connector.lua")
 SFC_LUA_PATH=""
 
@@ -726,76 +721,6 @@ ensure_bizhawk_proton() {
   save_config
 }
 
-########################################
-# Windows SNI download (pinned version)
-########################################
-
-download_sni_windows() {
-  mkdir -p "$SNI_WIN_DIR"
-
-  # If already extracted once, reuse
-  if [[ -d "$SNI_WIN_DIR/extracted" ]]; then
-    return 0
-  fi
-
-  if ! command -v unzip >/dev/null 2>&1; then
-    error_dialog "unzip is required to extract SNI.\nInstall unzip and try again."
-    return 1
-  fi
-
-  local zip="$SNI_WIN_ZIP"
-
-  if ! download_file_with_progress "$SNI_WIN_URL" "$zip" \
-        "SNI download" "Downloading Windows SNI (for BizHawk)..."; then
-    error_dialog "SNI download failed or was cancelled."
-    return 1
-  fi
-
-  mkdir -p "$SNI_WIN_DIR/extracted"
-  if ! unzip -o "$zip" -d "$SNI_WIN_DIR/extracted" >/dev/null; then
-    error_dialog "Failed to extract SNI archive."
-    return 1
-  fi
-
-  return 0
-}
-
-# Front-loaded consent for SNI so we never silently download it mid-run
-ensure_sni_prepared() {
-  # Only relevant if BizHawk runner exists
-  if [[ -z "${BIZHAWK_RUNNER:-}" || ! -x "$BIZHAWK_RUNNER" ]]; then
-    return
-  fi
-
-  # Already prepared
-  if [[ -d "$SNI_WIN_DIR/extracted" ]]; then
-    return
-  fi
-
-  if ! command -v zenity >/dev/null 2>&1; then
-    echo "[ap-bizhelper] SNI not set up and zenity unavailable; continuing without SNES Lua injection."
-    return
-  fi
-
-  if zenity --question \
-      --title="SNI setup" \
-      --text="SNI (SNES bridge) is required to auto-inject the Lua connector into BizHawk for SNES worlds.\n\nDownload and set it up now?" \
-      --ok-label="Download" \
-      --cancel-label="Skip"; then
-    if ! download_sni_windows; then
-      echo "[ap-bizhelper] SNI download/extract failed; continuing without Lua injection."
-    else
-      echo "[ap-bizhelper] SNI downloaded and prepared."
-    fi
-  else
-    echo "[ap-bizhelper] User skipped SNI setup; continuing without SNES Lua injection."
-  fi
-}
-
-########################################
-# Lua + admin warning helpers
-########################################
-
 ensure_sfc_lua_path() {
   load_config
 
@@ -812,20 +737,12 @@ ensure_sfc_lua_path() {
   local bizdir
   bizdir="$(dirname "$BIZHAWK_EXE")"
 
-  # If we've already set up SNI once, reuse it.
   if [[ -f "$bizdir/SNI/lua/Connector.lua" ]]; then
     SFC_LUA_PATH="SNI\\lua\\Connector.lua"
     save_config
     return
   fi
 
-  # If SNI hasn't been prepared (no consent / no download), don't do anything silently
-  if [[ ! -d "$SNI_WIN_DIR/extracted" ]]; then
-    echo "[ap-bizhelper] Windows SNI not prepared; skipping Lua injection."
-    return
-  fi
-
-  # 2) Find Archipelago's Connector.lua in the Linux AppImage mount
   local connector
   connector=$(
     find /tmp "$HOME" \
@@ -840,19 +757,17 @@ ensure_sfc_lua_path() {
     return
   fi
 
-  # 3) Build BizHawk-side SNI tree:
-  #    - Lua from AP
-  #    - Windows binaries from the SNI zip
-  mkdir -p "$bizdir/SNI/lua"
+  local ap_sni_root
+  ap_sni_root="$(dirname "$(dirname "$connector")")"
 
-  cp -f "$connector" "$bizdir/SNI/lua/Connector.lua"
-  cp -a "$SNI_WIN_DIR/extracted"/. "$bizdir/SNI/" || {
-    echo "[ap-bizhelper] Failed to copy Windows SNI into BizHawk directory."
+  mkdir -p "$bizdir/SNI"
+  if ! cp -a "$ap_sni_root"/. "$bizdir/SNI/"; then
+    echo "[ap-bizhelper] Failed to copy Archipelago SNI files into BizHawk directory."
     return
-  }
+  fi
 
   SFC_LUA_PATH="SNI\\lua\\Connector.lua"
-  echo "[ap-bizhelper] Installed hybrid SNI: Lua from AP, DLLs from Windows SNI zip."
+  echo "[ap-bizhelper] Installed Archipelago SNI files from AppImage."
   echo "[ap-bizhelper] Using Lua path inside BizHawk: $SFC_LUA_PATH"
   save_config
 }
@@ -1054,7 +969,6 @@ handle_bizhawk_for_patch() {
 
 ensure_ap_appimage
 ensure_bizhawk_proton
-ensure_sni_prepared   # front-loaded SNI consent/download
 
 BASELINE_BIZHAWK_PIDS=$(pgrep -f 'EmuHawk.exe' || true)
 
