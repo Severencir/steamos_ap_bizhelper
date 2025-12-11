@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ap-bizhelper"
+version = "0.1.0"
+description = "SteamOS Archipelago BizHawk helper"
+requires-python = ">=3.8"
+readme = "README.md"
+
+[project.scripts]
+ap-bizhelper = "ap_bizhelper:console_main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["ap_bizhelper"]
+
+[tool.setuptools.package-data]
+ap_bizhelper = ["config.ini", "run_bizhawk_proton.py"]

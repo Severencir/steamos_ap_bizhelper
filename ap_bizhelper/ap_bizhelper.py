@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Iterable, Optional, Set, Tuple
 
-from ap_bizhelper_ap import (
+from .ap_bizhelper_ap import (
     AP_APPIMAGE_DEFAULT,
     _has_zenity,
     _run_zenity,
@@ -18,9 +18,14 @@ from ap_bizhelper_ap import (
     error_dialog,
     info_dialog,
 )
-from ap_bizhelper_bizhawk import ensure_bizhawk_and_proton
-from ap_bizhelper_config import get_ext_behavior, load_settings, save_settings, set_ext_behavior
-from ap_bizhelper_worlds import ensure_apworld_for_patch
+from .ap_bizhelper_bizhawk import ensure_bizhawk_and_proton
+from .ap_bizhelper_config import (
+    get_ext_behavior,
+    load_settings,
+    save_settings,
+    set_ext_behavior,
+)
+from .ap_bizhelper_worlds import ensure_apworld_for_patch
 
 
 def _select_patch_file() -> Path:
