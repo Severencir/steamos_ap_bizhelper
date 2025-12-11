@@ -365,6 +365,7 @@ def _stage_bizhawk_config(exe: Path, preserved_config: Optional[Path]) -> None:
     if preserved_config is not None and preserved_config.is_file():
         source_cfg = preserved_config
     else:
+        package_cfg: Optional[Path] = None
         try:
             cfg_resource = resources.files(__package__).joinpath("config.ini")
         except (ModuleNotFoundError, AttributeError):
@@ -373,7 +374,14 @@ def _stage_bizhawk_config(exe: Path, preserved_config: Optional[Path]) -> None:
         if cfg_resource is not None:
             with resources.as_file(cfg_resource) as candidate:
                 if candidate.is_file():
-                    source_cfg = candidate
+                    package_cfg = candidate
+
+        if package_cfg is None:
+            candidate = Path(__file__).with_name("config.ini")
+            if candidate.is_file():
+                package_cfg = candidate
+
+        source_cfg = package_cfg
 
     if source_cfg is None:
         return
