@@ -3,7 +3,6 @@ from __future__ import annotations
 import subprocess
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 
 import zipapp
@@ -34,14 +33,29 @@ def _create_zipapp(source_dir: Path, target: Path) -> None:
     )
 
 
+def _install_wheel_with_dependencies(wheel: Path, target: Path) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--target",
+            str(target),
+            str(wheel),
+        ],
+        check=True,
+    )
+
+
 def build_zipapp() -> Path:
     wheel = _build_wheel()
     pyz_path = DIST_DIR / "ap-bizhelper.pyz"
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
-        with zipfile.ZipFile(wheel, "r") as zf:
-            zf.extractall(tmp_path)
+        _install_wheel_with_dependencies(wheel, tmp_path)
         _create_zipapp(tmp_path, pyz_path)
 
     return pyz_path
