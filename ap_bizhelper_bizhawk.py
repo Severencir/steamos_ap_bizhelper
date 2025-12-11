@@ -329,7 +329,6 @@ def ensure_bizhawk_desktop_shortcut(
         shortcut_path.chmod(0o755)
         settings["BIZHAWK_DESKTOP_SHORTCUT"] = "yes"
         _save_settings(settings)
-        info_dialog(f"Created Desktop shortcut: {shortcut_path}")
     except Exception as exc:  # pragma: no cover - filesystem edge cases
         settings["BIZHAWK_DESKTOP_SHORTCUT"] = "no"
         _save_settings(settings)
