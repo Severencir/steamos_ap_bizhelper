@@ -328,7 +328,6 @@ def _create_desktop_shortcut(
         _write_desktop_shortcut(shortcut_path, name, exec_path)
         settings[settings_key] = "yes"
         _save_settings(settings)
-        info_dialog(f"Created Desktop shortcut: {shortcut_path}")
     except Exception as exc:  # pragma: no cover - filesystem edge cases
         settings[settings_key] = "no"
         _save_settings(settings)

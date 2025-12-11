@@ -111,20 +111,7 @@ def download_sni_if_needed(bizhawk_dir: Path) -> bool:
         _info("[ap-bizhelper] SNI Lua not present and zenity is unavailable; skipping SNI setup.")
         return False
 
-    code, _ = _run_zenity(
-        [
-            "--question",
-            "--title=SNI (Windows) setup",
-            "--text=SNI was selected in the Download setup dialog for SNES bridge support in BizHawk.\n\n"
-                    "Download the Windows SNI build from GitHub now and install its Lua scripts into\n"
-                    f"{bizhawk_dir}/lua ?",
-            "--ok-label=Download",
-            "--cancel-label=Skip",
-        ]
-    )
-    if code != 0:
-        _info("[ap-bizhelper] User skipped Windows SNI download.")
-        return False
+    _info("[ap-bizhelper] Downloading Windows SNI Lua for BizHawk.")
 
     extracted_dir = SNI_WIN_DIR / "extracted"
 
