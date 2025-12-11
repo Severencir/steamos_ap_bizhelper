@@ -107,10 +107,11 @@ def choose_install_action(title: str, text: str, select_label: str = "Select") -
             f"--extra-button={select_label}",
         ]
     )
+    if out == select_label or code == 5:
+        # Extra button: select a local file.
+        return "Select"
     if code == 0:
-        # Either "Download" (no stdout) or "Select" (stdout = "Select").
-        if out == select_label:
-            return "Select"
+        # "Download" was chosen.
         return "Download"
     # User hit Cancel/close
     return "Cancel"
