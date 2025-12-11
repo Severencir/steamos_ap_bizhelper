@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Iterable, Optional, Set, Tuple
 
 from ap_bizhelper_ap import (
+    AP_APPIMAGE_DEFAULT,
     _has_zenity,
     _run_zenity,
     ensure_appimage,
@@ -53,33 +55,82 @@ def _select_patch_file() -> Path:
     return patch
 
 
-def _prompt_setup_choices(*, allow_archipelago_skip: bool) -> Tuple[bool, bool, bool, bool]:
+def _needs_archipelago_download(settings: dict) -> bool:
+    app_path_str = str(settings.get("AP_APPIMAGE", "") or "")
+    app_path = Path(app_path_str) if app_path_str else None
+
+    if app_path and app_path.is_file() and os.access(str(app_path), os.X_OK):
+        return False
+
+    if AP_APPIMAGE_DEFAULT.is_file() and os.access(str(AP_APPIMAGE_DEFAULT), os.X_OK):
+        return False
+
+    return True
+
+
+def _needs_bizhawk_download(settings: dict) -> bool:
+    exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+    runner_str = str(settings.get("BIZHAWK_RUNNER", "") or "")
+    proton_str = str(settings.get("PROTON_BIN", "") or "")
+
+    exe = Path(exe_str) if exe_str else None
+    runner = Path(runner_str) if runner_str else None
+    proton_bin = Path(proton_str) if proton_str else None
+
+    return not (
+        exe and exe.is_file() and runner and runner.is_file() and proton_bin and proton_bin.is_file()
+    )
+
+
+def _needs_sni_download(settings: dict) -> bool:
+    exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+    exe_path = Path(exe_str) if exe_str else None
+
+    if exe_path and exe_path.is_file():
+        lua = exe_path.parent / "lua" / "connector.lua"
+        return not lua.exists()
+
+    # If BizHawk isn't configured yet, assume SNI will be needed once it is.
+    return True
+
+
+def _prompt_setup_choices(
+    *,
+    allow_archipelago_skip: bool,
+    show_archipelago: bool,
+    show_bizhawk: bool,
+    show_sni: bool,
+) -> Tuple[bool, bool, bool, bool]:
+    if not any((show_archipelago, show_bizhawk, show_sni)):
+        return False, False, False, False
+
     if not _has_zenity():
-        # Fall back to enabling everything when zenity is unavailable.
-        return True, True, True, True
+        # Fall back to enabling available options when zenity is unavailable.
+        shortcuts = show_archipelago or show_bizhawk
+        return show_archipelago, show_bizhawk, show_sni, shortcuts
 
     while True:
-        code, out = _run_zenity(
-            [
-                "--list",
-                "--checklist",
-                "--title=Download setup",
-                "--text=Select which components to download and configure.",
-                "--column=Install",
-                "--column=Component",
-                "TRUE",
-                "Archipelago",
-                "TRUE",
-                "BizHawk (with Proton)",
-                "TRUE",
-                "SNI",
-                "TRUE",
-                "Create Desktop shortcuts (Archipelago & BizHawk)",
-                "--ok-label=Download",
-                "--cancel-label=Cancel",
-                "--height=300",
-            ]
-        )
+        args = [
+            "--list",
+            "--checklist",
+            "--title=Download setup",
+            "--text=Select which components to download and configure.",
+            "--column=Install",
+            "--column=Component",
+        ]
+
+        if show_archipelago:
+            args.extend(["TRUE", "Archipelago"])
+        if show_bizhawk:
+            args.extend(["TRUE", "BizHawk (with Proton)"])
+        if show_sni:
+            args.extend(["TRUE", "SNI"])
+        if show_archipelago or show_bizhawk:
+            args.extend(["TRUE", "Create Desktop shortcuts (Archipelago & BizHawk)"])
+
+        args.extend(["--ok-label=Download", "--cancel-label=Cancel", "--height=300"])
+
+        code, out = _run_zenity(args)
 
         if code != 0:
             raise RuntimeError("User cancelled setup selection.")
@@ -90,7 +141,7 @@ def _prompt_setup_choices(*, allow_archipelago_skip: bool) -> Tuple[bool, bool, 
         sni = "SNI" in selections
         shortcuts = "Create Desktop shortcuts (Archipelago & BizHawk)" in selections
 
-        if not sni:
+        if show_sni and not sni:
             info_dialog("SNES games will not be available.")
 
         return arch, bizhawk, sni, shortcuts
@@ -272,7 +323,23 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids
 
 
 def _run_prereqs(*, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path], Optional[Path]]:
-    arch, bizhawk, sni, shortcuts = _prompt_setup_choices(allow_archipelago_skip=allow_archipelago_skip)
+    settings = load_settings()
+    need_arch = _needs_archipelago_download(settings)
+    need_bizhawk = _needs_bizhawk_download(settings)
+    need_sni = _needs_sni_download(settings)
+
+    if any((need_arch, need_bizhawk, need_sni)):
+        arch, bizhawk, sni, shortcuts = _prompt_setup_choices(
+            allow_archipelago_skip=allow_archipelago_skip,
+            show_archipelago=need_arch,
+            show_bizhawk=need_bizhawk,
+            show_sni=need_sni,
+        )
+    else:
+        arch = False
+        bizhawk = False
+        sni = False
+        shortcuts = False
 
     download_messages: list[str] = []
 
