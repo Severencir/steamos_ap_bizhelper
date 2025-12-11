@@ -13,8 +13,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from .ap_bizhelper_ap import (
+    _has_qt_dialogs,
     _has_zenity,
+    _qt_question_dialog,
     _run_zenity,
+    _select_file_dialog,
     choose_install_action,
     download_with_progress,
     error_dialog,
@@ -170,22 +173,15 @@ def _select_custom_apworld(
     cache: Dict[str, Any],
     playable_cache: Dict[str, Any],
 ) -> bool:
-    if not _has_zenity():
-        print("[ap-bizhelper] zenity not available; skipping APWorld selection.")
-        return False
-
-    code, apworld = _run_zenity(
-        [
-            "--file-selection",
-            f"--title=Select .apworld file for {title}",
-            "--file-filter=*.apworld",
-            f"--filename={Path.home()}/",
-        ]
+    selection = _select_file_dialog(
+        title=f"Select .apworld file for {title}",
+        initial=Path.home(),
+        file_filter="*.apworld",
     )
-    if code != 0 or not apworld:
+    if selection is None:
         return False
 
-    apworld_path = Path(apworld)
+    apworld_path = Path(selection)
     if apworld_path.is_file():
         try:
             WORLD_DIR.mkdir(parents=True, exist_ok=True)
@@ -287,21 +283,35 @@ def ensure_apworld_for_patch(patch: Path) -> None:
             _select_custom_apworld(display_name, normalized, settings, cache, playable_cache)
         return
 
-    if not _has_zenity():
-        print("[ap-bizhelper] zenity not available; skipping APWorld selection.")
-        return
-
-    code, _ = _run_zenity(
-        [
-            "--question",
-            f"--title=APWorld for {display_name}",
-            (
-                f"--text=No downloadable APWorld was found for {display_name}.\n\n"
+    if _has_qt_dialogs():
+        choice = _qt_question_dialog(
+            title=f"APWorld for {display_name}",
+            text=(
+                f"No downloadable APWorld was found for {display_name}.\n\n"
                 "Do you want to select a .apworld file now or cancel?"
             ),
-            "--ok-label=Select .apworld",
-            "--cancel-label=Cancel",
-        ]
-    )
-    if code == 0:
-        _select_custom_apworld(display_name, normalized, settings, cache, playable_cache)
+            ok_label="Select .apworld",
+            cancel_label="Cancel",
+        )
+        if choice == "ok":
+            _select_custom_apworld(display_name, normalized, settings, cache, playable_cache)
+        return
+
+    if _has_zenity():
+        code, _ = _run_zenity(
+            [
+                "--question",
+                f"--title=APWorld for {display_name}",
+                (
+                    f"--text=No downloadable APWorld was found for {display_name}.\n\n"
+                    "Do you want to select a .apworld file now or cancel?"
+                ),
+                "--ok-label=Select .apworld",
+                "--cancel-label=Cancel",
+            ]
+        )
+        if code == 0:
+            _select_custom_apworld(display_name, normalized, settings, cache, playable_cache)
+        return
+
+    print("[ap-bizhelper] No dialog backend available; skipping APWorld selection.")
