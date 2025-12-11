@@ -12,8 +12,12 @@ from typing import Iterable, Optional, Set, Tuple
 
 from .ap_bizhelper_ap import (
     AP_APPIMAGE_DEFAULT,
+    _ensure_qt_app,
+    _has_qt_dialogs,
     _has_zenity,
     _run_zenity,
+    _select_file_dialog,
+    _qt_question_dialog,
     ensure_appimage,
     error_dialog,
     info_dialog,
@@ -29,20 +33,13 @@ from .ap_bizhelper_worlds import ensure_apworld_for_patch
 
 
 def _select_patch_file() -> Path:
-    if not _has_zenity():
-        raise RuntimeError("zenity is required to choose an Archipelago patch file.")
-
-    code, out = _run_zenity(
-        [
-            "--file-selection",
-            "--title=Select Archipelago patch file",
-            f"--filename={Path.home()}/",
-        ]
+    patch = _select_file_dialog(
+        title="Select Archipelago patch file",
+        initial=Path.home(),
     )
-    if code != 0 or not out:
+    if patch is None:
         raise RuntimeError("User cancelled patch selection.")
 
-    patch = Path(out)
     if not patch.is_file():
         raise RuntimeError("Selected patch file does not exist.")
 
@@ -84,6 +81,54 @@ def _prompt_setup_choices(
 ) -> Tuple[bool, bool, bool]:
     if not any((show_archipelago, show_bizhawk)):
         return False, False, False
+
+    if _has_qt_dialogs():
+        from PySide6 import QtWidgets
+
+        _ensure_qt_app()
+        dialog = QtWidgets.QDialog()
+        dialog.setWindowTitle("Download setup")
+        layout = QtWidgets.QVBoxLayout(dialog)
+        label = QtWidgets.QLabel("Select which components to download and configure.")
+        layout.addWidget(label)
+
+        arch_box = None
+        if show_archipelago:
+            arch_box = QtWidgets.QCheckBox("Archipelago")
+            arch_box.setChecked(True)
+            layout.addWidget(arch_box)
+
+        bizhawk_box = None
+        if show_bizhawk:
+            bizhawk_box = QtWidgets.QCheckBox("BizHawk (with Proton)")
+            bizhawk_box.setChecked(True)
+            layout.addWidget(bizhawk_box)
+
+        shortcut_box = None
+        if show_archipelago or show_bizhawk:
+            shortcut_box = QtWidgets.QCheckBox(
+                "Create Desktop shortcuts (Archipelago & BizHawk)"
+            )
+            shortcut_box.setChecked(True)
+            layout.addWidget(shortcut_box)
+
+        buttons = QtWidgets.QDialogButtonBox()
+        download_btn = QtWidgets.QPushButton("Download")
+        cancel_btn = QtWidgets.QPushButton("Cancel")
+        buttons.addButton(download_btn, QtWidgets.QDialogButtonBox.AcceptRole)
+        buttons.addButton(cancel_btn, QtWidgets.QDialogButtonBox.RejectRole)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            raise RuntimeError("User cancelled setup selection.")
+
+        arch = arch_box.isChecked() if arch_box is not None else False
+        bizhawk = bizhawk_box.isChecked() if bizhawk_box is not None else False
+        shortcuts = shortcut_box.isChecked() if shortcut_box is not None else False
+
+        return arch, bizhawk, shortcuts
 
     if not _has_zenity():
         # Fall back to enabling available options when zenity is unavailable.
@@ -132,8 +177,10 @@ def _ensure_apworld_for_extension(ext: str) -> None:
     if behavior:
         return
 
-    if not _has_zenity():
-        print(f"[ap-bizhelper] zenity not available; skipping APWorld prompt for .{ext}.")
+    if not (_has_qt_dialogs() or _has_zenity()):
+        print(
+            f"[ap-bizhelper] No dialog backend available; skipping APWorld prompt for .{ext}."
+        )
         return
 
     worlds_dir = Path.home() / ".local/share/Archipelago/worlds"
@@ -144,31 +191,53 @@ def _ensure_apworld_for_extension(ext: str) -> None:
         "Do you want to select a .apworld file for this extension now?"
     )
 
-    code, _ = _run_zenity(
-        [
-            "--question",
-            f"--title=APWorld for .{ext}",
-            f"--text={text}",
-            "--ok-label=Select .apworld",
-            "--cancel-label=Skip",
-        ]
-    )
-    if code != 0:
-        print(f"[ap-bizhelper] User skipped APWorld selection for .{ext}.")
+    apworld_path: Optional[Path]
+    if _has_qt_dialogs():
+        choice = _qt_question_dialog(
+            title=f"APWorld for .{ext}",
+            text=text,
+            ok_label="Select .apworld",
+            cancel_label="Skip",
+        )
+        if choice != "ok":
+            print(f"[ap-bizhelper] User skipped APWorld selection for .{ext}.")
+            return
+
+        apworld_path = _select_file_dialog(
+            title=f"Select .apworld file for .{ext}",
+            initial=Path.home(),
+            file_filter="*.apworld",
+        )
+    else:
+        code, _ = _run_zenity(
+            [
+                "--question",
+                f"--title=APWorld for .{ext}",
+                f"--text={text}",
+                "--ok-label=Select .apworld",
+                "--cancel-label=Skip",
+            ]
+        )
+        if code != 0:
+            print(f"[ap-bizhelper] User skipped APWorld selection for .{ext}.")
+            return
+
+        code, apworld = _run_zenity(
+            [
+                "--file-selection",
+                f"--title=Select .apworld file for .{ext}",
+                "--file-filter=*.apworld",
+                f"--filename={Path.home()}/",
+            ]
+        )
+        if code != 0 or not apworld:
+            return
+
+        apworld_path = Path(apworld)
+
+    if apworld_path is None:
         return
 
-    code, apworld = _run_zenity(
-        [
-            "--file-selection",
-            f"--title=Select .apworld file for .{ext}",
-            "--file-filter=*.apworld",
-            f"--filename={Path.home()}/",
-        ]
-    )
-    if code != 0 or not apworld:
-        return
-
-    apworld_path = Path(apworld)
     if apworld_path.is_file():
         try:
             worlds_dir.mkdir(parents=True, exist_ok=True)
@@ -178,8 +247,6 @@ def _ensure_apworld_for_extension(ext: str) -> None:
             error_dialog(f"Failed to copy {apworld_path.name}: {exc}")
     else:
         error_dialog("Selected .apworld file does not exist.")
-
-
 def _list_bizhawk_pids() -> Set[int]:
     try:
         proc = subprocess.run(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -9,7 +10,7 @@ import subprocess
 import sys
 import urllib.request
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 # Paths mirror the bash script and the config helper.
 CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
@@ -19,6 +20,9 @@ AP_APPIMAGE_DEFAULT = DATA_DIR / "Archipelago.AppImage"
 DESKTOP_DIR = Path(os.path.expanduser("~/Desktop"))
 
 GITHUB_API_LATEST = "https://api.github.com/repos/ArchipelagoMW/Archipelago/releases/latest"
+
+_QT_APP: Optional["QtWidgets.QApplication"] = None
+_QT_MIN_POINT_SIZE = 12
 
 
 def _ensure_dirs() -> None:
@@ -46,6 +50,33 @@ def _save_settings(settings: Dict[str, Any]) -> None:
     tmp.replace(SETTINGS_FILE)
 
 
+def _has_qt_dialogs() -> bool:
+    return importlib.util.find_spec("PySide6") is not None
+
+
+def _ensure_qt_app() -> "QtWidgets.QApplication":
+    global _QT_APP
+
+    if _QT_APP is not None:
+        return _QT_APP
+
+    from PySide6 import QtGui, QtWidgets
+
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication(sys.argv[:1] or ["ap-bizhelper"])
+
+    font: QtGui.QFont = app.font()
+    if font.pointSize() > 0 and font.pointSize() < _QT_MIN_POINT_SIZE:
+        font.setPointSize(_QT_MIN_POINT_SIZE)
+    elif font.pixelSize() > 0:
+        font.setPixelSize(max(font.pixelSize(), int(_QT_MIN_POINT_SIZE * 1.5)))
+    app.setFont(font)
+
+    _QT_APP = app
+    return app
+
+
 def _has_zenity() -> bool:
     return subprocess.call(["which", "zenity"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
 
@@ -71,20 +102,109 @@ def _run_zenity(args: list[str], *, input_text: Optional[str] = None) -> Tuple[i
         return 127, ""
 
 
+def _qt_question_dialog(
+    *, title: str, text: str, ok_label: str, cancel_label: str, extra_label: Optional[str] = None
+) -> str:
+    from PySide6 import QtWidgets
+
+    _ensure_qt_app()
+    box = QtWidgets.QMessageBox()
+    box.setWindowTitle(title)
+    box.setText(text)
+    box.setIcon(QtWidgets.QMessageBox.Question)
+    ok_button = box.addButton(ok_label, QtWidgets.QMessageBox.AcceptRole)
+    cancel_button = box.addButton(cancel_label, QtWidgets.QMessageBox.RejectRole)
+    extra_button = None
+    if extra_label:
+        extra_button = box.addButton(extra_label, QtWidgets.QMessageBox.ActionRole)
+    box.setDefaultButton(ok_button)
+    box.exec()
+    clicked = box.clickedButton()
+    if clicked == ok_button:
+        return "ok"
+    if extra_button is not None and clicked == extra_button:
+        return "extra"
+    return "cancel"
+
+
+def _qt_file_dialog(
+    *, title: str, initial: Optional[Path] = None, file_filter: Optional[str] = None
+) -> Optional[Path]:
+    from PySide6 import QtWidgets
+
+    _ensure_qt_app()
+    start_dir = str(initial) if initial is not None else str(Path.home())
+    filter_text = file_filter or "All Files (*)"
+    selected, _ = QtWidgets.QFileDialog.getOpenFileName(
+        None, title, start_dir, filter_text, options=QtWidgets.QFileDialog.Options()
+    )
+    return Path(selected) if selected else None
+
+
+def _zenity_file_dialog(
+    *, title: str, initial: Optional[Path] = None, file_filter: Optional[str] = None
+) -> Optional[Path]:
+    args = ["--file-selection", f"--title={title}"]
+    if initial is not None:
+        args.append(f"--filename={initial}")
+    if file_filter:
+        args.append(f"--file-filter={file_filter}")
+
+    code, out = _run_zenity(args)
+    if code != 0 or not out:
+        return None
+    candidate = Path(out)
+    return candidate if candidate.is_file() else None
+
+
+def _select_file_dialog(
+    *, title: str, initial: Optional[Path] = None, file_filter: Optional[str] = None
+) -> Optional[Path]:
+    if _has_qt_dialogs():
+        selection = _qt_file_dialog(title=title, initial=initial, file_filter=file_filter)
+        if selection is not None:
+            return selection
+    if _has_zenity():
+        selection = _zenity_file_dialog(title=title, initial=initial, file_filter=file_filter)
+        if selection is not None:
+            return selection
+    return None
+
+
 def info_dialog(message: str) -> None:
+    if _has_qt_dialogs():
+        from PySide6 import QtWidgets
+
+        _ensure_qt_app()
+        box = QtWidgets.QMessageBox()
+        box.setIcon(QtWidgets.QMessageBox.Information)
+        box.setWindowTitle("Information")
+        box.setText(message)
+        box.exec()
+        return
+
     if _has_zenity():
         _run_zenity(["--info", f"--text={message}"])
     else:
         # Last resort: print to stderr
-        sys.stderr.write(message + "\\n")
-
+        sys.stderr.write(message + "\n")
 
 def error_dialog(message: str) -> None:
+    if _has_qt_dialogs():
+        from PySide6 import QtWidgets
+
+        _ensure_qt_app()
+        box = QtWidgets.QMessageBox()
+        box.setIcon(QtWidgets.QMessageBox.Critical)
+        box.setWindowTitle("Error")
+        box.setText(message)
+        box.exec()
+        return
+
     if _has_zenity():
         _run_zenity(["--error", f"--text={message}"])
     else:
-        sys.stderr.write("ERROR: " + message + "\\n")
-
+        sys.stderr.write("ERROR: " + message + "\n")
 
 def choose_install_action(title: str, text: str, select_label: str = "Select") -> str:
     """
@@ -93,6 +213,20 @@ def choose_install_action(title: str, text: str, select_label: str = "Select") -
     Returns "Download", "Select", or "Cancel". ``select_label`` customizes the
     text shown for the "Select" button.
     """
+    if _has_qt_dialogs():
+        choice = _qt_question_dialog(
+            title=title,
+            text=text,
+            ok_label="Download",
+            cancel_label="Cancel",
+            extra_label=select_label,
+        )
+        if choice == "extra":
+            return "Select"
+        if choice == "ok":
+            return "Download"
+        return "Cancel"
+
     if not _has_zenity():
         # Without zenity we can't offer a clickable choice safely.
         return "Cancel"
@@ -118,15 +252,10 @@ def choose_install_action(title: str, text: str, select_label: str = "Select") -
 
 
 def select_appimage(initial: Optional[Path] = None) -> Optional[Path]:
-    if not _has_zenity():
+    selection = _select_file_dialog(title="Select Archipelago AppImage", initial=initial)
+    if selection is None:
         return None
-    args = ["--file-selection", "--title=Select Archipelago AppImage"]
-    if initial is not None:
-        args.append(f"--filename={initial}")
-    code, out = _run_zenity(args)
-    if code != 0 or not out:
-        return None
-    p = Path(out)
+    p = selection
     if not p.is_file():
         error_dialog("Selected file does not exist.")
         return None
@@ -140,28 +269,35 @@ def select_appimage(initial: Optional[Path] = None) -> Optional[Path]:
 def _prompt_select_existing_appimage(initial: Path) -> Path:
     """Prompt the user to select an existing AppImage without offering download."""
 
-    if not _has_zenity():
+    if _has_qt_dialogs():
+        choice = _qt_question_dialog(
+            title="Archipelago setup",
+            text="Archipelago was not selected for download.\n\nSelect an existing AppImage to continue?",
+            ok_label="Select AppImage",
+            cancel_label="Cancel",
+        )
+        if choice != "ok":
+            raise RuntimeError("User cancelled Archipelago AppImage selection")
+    elif not _has_zenity():
         raise RuntimeError("zenity is required to select an Archipelago AppImage.")
-
-    code, _ = _run_zenity(
-        [
-            "--question",
-            "--title=Archipelago setup",
-            "--text=Archipelago was not selected for download.\\n\\nSelect an existing AppImage to continue?",
-            "--ok-label=Select AppImage",
-            "--cancel-label=Cancel",
-        ]
-    )
-    if code != 0:
-        raise RuntimeError("User cancelled Archipelago AppImage selection")
+    else:
+        code, _ = _run_zenity(
+            [
+                "--question",
+                "--title=Archipelago setup",
+                "--text=Archipelago was not selected for download.\n\nSelect an existing AppImage to continue?",
+                "--ok-label=Select AppImage",
+                "--cancel-label=Cancel",
+            ]
+        )
+        if code != 0:
+            raise RuntimeError("User cancelled Archipelago AppImage selection")
 
     chosen = select_appimage(initial)
     if not chosen:
         raise RuntimeError("User cancelled Archipelago AppImage selection")
 
     return chosen
-
-
 def _github_latest_appimage() -> Tuple[str, str]:
     """
     Return (download_url, version_tag) for the latest Archipelago Linux AppImage.
@@ -364,33 +500,44 @@ def maybe_update_appimage(
     if current_ver == latest_ver or skip_ver == latest_ver:
         return appimage, False
 
-    if not _has_zenity():
+    if _has_qt_dialogs():
+        choice = _qt_question_dialog(
+            title="Archipelago update",
+            text="An Archipelago update is available. Update now?",
+            ok_label="Update now",
+            cancel_label="Later",
+            extra_label="Skip this version",
+        )
+        if choice == "cancel":
+            return appimage, False
+        if choice == "extra":
+            settings["AP_SKIP_VERSION"] = latest_ver
+            _save_settings(settings)
+            return appimage, False
+    elif not _has_zenity():
         return appimage, False
-
-    code, choice = _run_zenity(
-        [
-            "--question",
-            "--title=Archipelago update",
-            "--text=An Archipelago update is available. Update now?",
-            "--ok-label=Update now",
-            "--cancel-label=Later",
-            "--extra-button=Skip this version",
-        ]
-    )
-    if code != 0:
-        # "Later"
-        return appimage, False
-
-    if choice == "Skip this version":
-        settings["AP_SKIP_VERSION"] = latest_ver
-        _save_settings(settings)
-        return appimage, False
+    else:
+        code, choice = _run_zenity(
+            [
+                "--question",
+                "--title=Archipelago update",
+                "--text=An Archipelago update is available. Update now?",
+                "--ok-label=Update now",
+                "--cancel-label=Later",
+                "--extra-button=Skip this version",
+            ]
+        )
+        if code != 0:
+            # "Later"
+            return appimage, False
+        if choice == "Skip this version":
+            settings["AP_SKIP_VERSION"] = latest_ver
+            _save_settings(settings)
+            return appimage, False
 
     # Update now
     try:
-        download_appimage(
-            url, AP_APPIMAGE_DEFAULT, latest_ver, download_messages=download_messages
-        )
+        download_appimage(url, AP_APPIMAGE_DEFAULT, latest_ver, download_messages=download_messages)
     except Exception as e:
         error_dialog(f"Archipelago update failed: {e}")
         return appimage, False
@@ -404,8 +551,6 @@ def maybe_update_appimage(
     else:
         info_dialog(f"Archipelago updated to {latest_ver}.")
     return AP_APPIMAGE_DEFAULT, True
-
-
 def ensure_appimage(
     *,
     download_selected: bool = True,
