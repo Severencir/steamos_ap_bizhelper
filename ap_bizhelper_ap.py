@@ -86,11 +86,12 @@ def error_dialog(message: str) -> None:
         sys.stderr.write("ERROR: " + message + "\\n")
 
 
-def choose_install_action(title: str, text: str) -> str:
+def choose_install_action(title: str, text: str, select_label: str = "Select") -> str:
     """
     Show a dialog offering Download / Select / Cancel.
 
-    Returns "Download", "Select", or "Cancel".
+    Returns "Download", "Select", or "Cancel". ``select_label`` customizes the
+    text shown for the "Select" button.
     """
     if not _has_zenity():
         # Without zenity we can't offer a clickable choice safely.
@@ -103,12 +104,12 @@ def choose_install_action(title: str, text: str) -> str:
             f"--text={text}",
             "--ok-label=Download",
             "--cancel-label=Cancel",
-            "--extra-button=Select",
+            f"--extra-button={select_label}",
         ]
     )
     if code == 0:
         # Either "Download" (no stdout) or "Select" (stdout = "Select").
-        if out == "Select":
+        if out == select_label:
             return "Select"
         return "Download"
     # User hit Cancel/close
