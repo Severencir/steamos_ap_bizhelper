@@ -314,6 +314,14 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids
         return
 
     ext = rom.suffix.lower().lstrip(".")
+
+    if ext != "sfc":
+        print(
+            "[ap-bizhelper] Non-SFC ROM detected; skipping BizHawk auto-launch and "
+            "deferring to Archipelago."
+        )
+        return
+
     behavior = get_ext_behavior(ext)
     print(f"[ap-bizhelper] Patch: {patch}")
     print(f"[ap-bizhelper] ROM: {rom}")
