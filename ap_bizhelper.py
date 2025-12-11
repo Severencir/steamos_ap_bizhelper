@@ -249,10 +249,6 @@ def _detect_new_bizhawk(baseline: Iterable[int], *, timeout: int = 10) -> bool:
 
 
 def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids: Iterable[int]) -> None:
-    if patch.suffix.lower() != ".sfc":
-        print("[ap-bizhelper] Non-.sfc patch detected; skipping BizHawk auto-launch.")
-        return
-
     if runner is None or not runner.is_file():
         print("[ap-bizhelper] BizHawk runner not configured or not executable; skipping auto-launch.")
         return
@@ -261,9 +257,10 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids
     if rom is None:
         return
 
-    ext = patch.suffix.lower().lstrip(".")
+    ext = rom.suffix.lower().lstrip(".")
     behavior = get_ext_behavior(ext)
     print(f"[ap-bizhelper] Patch: {patch}")
+    print(f"[ap-bizhelper] ROM: {rom}")
     print(f"[ap-bizhelper] Detected extension: .{ext}")
     print(f"[ap-bizhelper] Saved behavior for .{ext}: {behavior or '<none>'}")
 
