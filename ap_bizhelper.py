@@ -196,6 +196,57 @@ def _list_bizhawk_pids() -> Set[int]:
     return pids
 
 
+def _is_archipelago_running() -> bool:
+    try:
+        proc = subprocess.run(
+            ["pgrep", "-f", "Archipelago"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except FileNotFoundError:
+        return False
+
+    return any(line.strip() for line in proc.stdout.splitlines())
+
+
+def _is_appimage_mounted(appimage: Optional[Path]) -> bool:
+    if appimage is None:
+        return False
+
+    try:
+        with open("/proc/mounts", "r", encoding="utf-8") as mounts:
+            for line in mounts:
+                if str(appimage) in line:
+                    return True
+    except Exception:
+        pass
+
+    try:
+        for candidate in Path("/tmp").glob(".mount_*"):
+            if candidate.is_dir() and appimage.stem.lower() in candidate.name.lower():
+                return True
+    except Exception:
+        pass
+
+    return False
+
+
+def _wait_for_archipelago_ready(appimage: Path, *, timeout: int = 30) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _is_archipelago_running() or _is_appimage_mounted(appimage):
+            return True
+        time.sleep(1)
+
+    print(
+        "[ap-bizhelper] Archipelago did not appear to start within the timeout; "
+        "skipping BizHawk auto-launch."
+    )
+    return False
+
+
 def _find_matching_rom(patch: Path) -> Optional[Path]:
     if patch.suffix.lower() == ".sfc" and patch.is_file():
         return patch
@@ -365,7 +416,8 @@ def _run_full_flow() -> int:
         error_dialog(f"Failed to launch Archipelago: {exc}")
         return 1
 
-    _handle_bizhawk_for_patch(patch, runner, baseline_pids)
+    if _wait_for_archipelago_ready(appimage):
+        _handle_bizhawk_for_patch(patch, runner, baseline_pids)
     return 0
 
 
