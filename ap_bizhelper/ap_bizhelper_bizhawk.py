@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
-from ap_bizhelper_ap import download_with_progress
+from .ap_bizhelper_ap import download_with_progress
 
 CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"

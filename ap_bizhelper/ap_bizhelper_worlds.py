@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from ap_bizhelper_ap import (
+from .ap_bizhelper_ap import (
     _has_zenity,
     _run_zenity,
     choose_install_action,
@@ -20,7 +20,7 @@ from ap_bizhelper_ap import (
     error_dialog,
     info_dialog,
 )
-from ap_bizhelper_config import load_settings, save_settings
+from .ap_bizhelper_config import load_settings, save_settings
 
 SPREADSHEET_ID = "1iuzDTOAvdoNe8Ne8i461qGNucg5OuEoF-Ikqs8aUQZw"
 CORE_SHEET_NAME = "Core-Verified Worlds"
