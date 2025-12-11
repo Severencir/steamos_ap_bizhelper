@@ -20,18 +20,7 @@ from ap_bizhelper_ap import (
 )
 from ap_bizhelper_bizhawk import ensure_bizhawk_and_proton
 from ap_bizhelper_config import get_ext_behavior, load_settings, save_settings, set_ext_behavior
-from ap_bizhelper_sni import download_sni_if_needed
 from ap_bizhelper_worlds import ensure_apworld_for_patch
-
-
-def _ensure_sni(settings: dict) -> bool:
-    exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
-    if not exe_str:
-        return False
-    exe_path = Path(exe_str)
-    if not exe_path.is_file():
-        return False
-    return download_sni_if_needed(exe_path.parent)
 
 
 def _select_patch_file() -> Path:
@@ -82,32 +71,19 @@ def _needs_bizhawk_download(settings: dict) -> bool:
     )
 
 
-def _needs_sni_download(settings: dict) -> bool:
-    exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
-    exe_path = Path(exe_str) if exe_str else None
-
-    if exe_path and exe_path.is_file():
-        lua = exe_path.parent / "lua" / "connector.lua"
-        return not lua.exists()
-
-    # If BizHawk isn't configured yet, assume SNI will be needed once it is.
-    return True
-
-
 def _prompt_setup_choices(
     *,
     allow_archipelago_skip: bool,
     show_archipelago: bool,
     show_bizhawk: bool,
-    show_sni: bool,
-) -> Tuple[bool, bool, bool, bool]:
-    if not any((show_archipelago, show_bizhawk, show_sni)):
-        return False, False, False, False
+) -> Tuple[bool, bool, bool]:
+    if not any((show_archipelago, show_bizhawk)):
+        return False, False, False
 
     if not _has_zenity():
         # Fall back to enabling available options when zenity is unavailable.
         shortcuts = show_archipelago or show_bizhawk
-        return show_archipelago, show_bizhawk, show_sni, shortcuts
+        return show_archipelago, show_bizhawk, shortcuts
 
     while True:
         args = [
@@ -123,8 +99,6 @@ def _prompt_setup_choices(
             args.extend(["TRUE", "Archipelago"])
         if show_bizhawk:
             args.extend(["TRUE", "BizHawk (with Proton)"])
-        if show_sni:
-            args.extend(["TRUE", "SNI"])
         if show_archipelago or show_bizhawk:
             args.extend(["TRUE", "Create Desktop shortcuts (Archipelago & BizHawk)"])
 
@@ -138,13 +112,9 @@ def _prompt_setup_choices(
         selections = [s.strip() for s in out.split("|") if s.strip()]
         arch = "Archipelago" in selections
         bizhawk = "BizHawk (with Proton)" in selections
-        sni = "SNI" in selections
         shortcuts = "Create Desktop shortcuts (Archipelago & BizHawk)" in selections
 
-        if show_sni and not sni:
-            info_dialog("SNES games will not be available.")
-
-        return arch, bizhawk, sni, shortcuts
+        return arch, bizhawk, shortcuts
 
 
 def _ensure_apworld_for_extension(ext: str) -> None:
@@ -326,19 +296,16 @@ def _run_prereqs(*, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path
     settings = load_settings()
     need_arch = _needs_archipelago_download(settings)
     need_bizhawk = _needs_bizhawk_download(settings)
-    need_sni = _needs_sni_download(settings)
 
-    if any((need_arch, need_bizhawk, need_sni)):
-        arch, bizhawk, sni, shortcuts = _prompt_setup_choices(
+    if any((need_arch, need_bizhawk)):
+        arch, bizhawk, shortcuts = _prompt_setup_choices(
             allow_archipelago_skip=allow_archipelago_skip,
             show_archipelago=need_arch,
             show_bizhawk=need_bizhawk,
-            show_sni=need_sni,
         )
     else:
         arch = False
         bizhawk = False
-        sni = False
         shortcuts = False
 
     download_messages: list[str] = []
@@ -365,20 +332,6 @@ def _run_prereqs(*, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path
         runner, _, _ = bizhawk_result
     elif bizhawk_result is not None:
         runner, _, _ = bizhawk_result
-
-    if sni:
-        settings = load_settings()
-        exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
-        exe_path = Path(exe_str) if exe_str else None
-        existing_sni = (
-            exe_path.parent.joinpath("lua", "connector.lua").exists()
-            if exe_path and exe_path.is_file()
-            else False
-        )
-        sni_ok = _ensure_sni(settings)
-        if sni_ok and not existing_sni:
-            download_messages.append("Installed Windows SNI Lua")
-        save_settings(settings)
 
     if download_messages:
         message = "Completed downloads:\n- " + "\n- ".join(download_messages)
