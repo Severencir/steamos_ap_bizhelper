@@ -18,6 +18,7 @@ from .ap_bizhelper_ap import (
     _run_zenity,
     _select_file_dialog,
     _qt_question_dialog,
+    _zenity_error_dialog,
     ensure_appimage,
     error_dialog,
     info_dialog,
@@ -209,31 +210,11 @@ def _ensure_apworld_for_extension(ext: str) -> None:
             file_filter="*.apworld",
         )
     else:
-        code, _ = _run_zenity(
-            [
-                "--question",
-                f"--title=APWorld for .{ext}",
-                f"--text={text}",
-                "--ok-label=Select .apworld",
-                "--cancel-label=Skip",
-            ]
+        _zenity_error_dialog(
+            "PySide6 is required to select .apworld files.\n"
+            "Install PySide6 and rerun the setup to pick a .apworld file."
         )
-        if code != 0:
-            print(f"[ap-bizhelper] User skipped APWorld selection for .{ext}.")
-            return
-
-        code, apworld = _run_zenity(
-            [
-                "--file-selection",
-                f"--title=Select .apworld file for .{ext}",
-                "--file-filter=*.apworld",
-                f"--filename={Path.home()}/",
-            ]
-        )
-        if code != 0 or not apworld:
-            return
-
-        apworld_path = Path(apworld)
+        return
 
     if apworld_path is None:
         return

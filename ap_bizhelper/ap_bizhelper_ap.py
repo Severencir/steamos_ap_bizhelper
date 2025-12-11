@@ -102,6 +102,15 @@ def _run_zenity(args: list[str], *, input_text: Optional[str] = None) -> Tuple[i
         return 127, ""
 
 
+def _zenity_error_dialog(message: str) -> None:
+    """Attempt to show a zenity error dialog with detailed text."""
+
+    if _has_zenity():
+        _run_zenity(["--error", f"--text={message}"])
+    else:
+        sys.stderr.write("ERROR: " + message + "\n")
+
+
 def _qt_question_dialog(
     *, title: str, text: str, ok_label: str, cancel_label: str, extra_label: Optional[str] = None
 ) -> str:
@@ -141,34 +150,23 @@ def _qt_file_dialog(
     return Path(selected) if selected else None
 
 
-def _zenity_file_dialog(
-    *, title: str, initial: Optional[Path] = None, file_filter: Optional[str] = None
-) -> Optional[Path]:
-    args = ["--file-selection", f"--title={title}"]
-    if initial is not None:
-        args.append(f"--filename={initial}")
-    if file_filter:
-        args.append(f"--file-filter={file_filter}")
-
-    code, out = _run_zenity(args)
-    if code != 0 or not out:
-        return None
-    candidate = Path(out)
-    return candidate if candidate.is_file() else None
-
-
 def _select_file_dialog(
     *, title: str, initial: Optional[Path] = None, file_filter: Optional[str] = None
 ) -> Optional[Path]:
-    if _has_qt_dialogs():
+    if not _has_qt_dialogs():
+        _zenity_error_dialog(
+            "PySide6 is required for file selection but is not installed.\n"
+            "Please install PySide6 (e.g. `pip install PySide6`) and try again."
+        )
+        return None
+
+    try:
         selection = _qt_file_dialog(title=title, initial=initial, file_filter=file_filter)
-        if selection is not None:
-            return selection
-    if _has_zenity():
-        selection = _zenity_file_dialog(title=title, initial=initial, file_filter=file_filter)
-        if selection is not None:
-            return selection
-    return None
+    except Exception as exc:  # pragma: no cover - GUI/runtime issues
+        _zenity_error_dialog(f"PySide6 file selection failed: {exc}")
+        return None
+
+    return selection
 
 
 def info_dialog(message: str) -> None:

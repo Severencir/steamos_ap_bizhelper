@@ -15,7 +15,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .ap_bizhelper_ap import download_with_progress
+from .ap_bizhelper_ap import _select_file_dialog, download_with_progress
 
 CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
@@ -438,15 +438,9 @@ def auto_detect_proton(settings: Dict[str, Any]) -> Optional[Path]:
 
 
 def select_proton_bin(initial: Optional[Path] = None) -> Optional[Path]:
-    if not _has_zenity():
+    p = _select_file_dialog(title="Select Proton binary", initial=initial)
+    if p is None:
         return None
-    args = ["--file-selection", "--title=Select Proton binary"]
-    if initial is not None:
-        args.append(f"--filename={initial}")
-    code, out = _run_zenity(args)
-    if code != 0 or not out:
-        return None
-    p = Path(out)
     if not p.is_file():
         error_dialog("Selected Proton binary does not exist.")
         return None
@@ -454,19 +448,11 @@ def select_proton_bin(initial: Optional[Path] = None) -> Optional[Path]:
 
 
 def select_bizhawk_exe(initial: Optional[Path] = None) -> Optional[Path]:
-    if not _has_zenity():
+    p = _select_file_dialog(
+        title="Select EmuHawk.exe", initial=initial, file_filter="*.exe"
+    )
+    if p is None:
         return None
-    args = [
-        "--file-selection",
-        "--title=Select EmuHawk.exe",
-        "--file-filter=*.exe",
-    ]
-    if initial is not None:
-        args.append(f"--filename={initial}")
-    code, out = _run_zenity(args)
-    if code != 0 or not out:
-        return None
-    p = Path(out)
     if not p.is_file():
         error_dialog("Selected EmuHawk.exe does not exist.")
         return None
