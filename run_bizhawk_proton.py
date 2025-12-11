@@ -198,7 +198,7 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> 
     ext = Path(rom_path).suffix.lower().lstrip(".")
 
     if ext == "sfc":
-        # SNES + SNI
+        # SNES + SNI (always prefer local SNI connector even if AP passed --lua)
         lua_fs_path = bizhawk_dir / "lua" / "connector.lua"
         if not lua_fs_path.is_file():
             error_dialog(
@@ -207,6 +207,11 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> 
                 "Cannot safely launch SNES ROM without SNI connector."
             )
             sys.exit(1)
+        if ap_lua_arg:
+            print(
+                "[ap-bizhelper] Ignoring AP-supplied --lua for SNES ROM; "
+                "using bundled SNI connector instead."
+            )
         print("[ap-bizhelper] Using SNI Lua connector for SNES ROM: lua\\connector.lua")
         return "--lua=lua\\connector.lua"
 
