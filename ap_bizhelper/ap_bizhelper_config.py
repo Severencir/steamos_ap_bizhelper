@@ -64,8 +64,9 @@ def load_settings() -> Dict[str, Any]:
 
 def save_settings(settings: Dict[str, Any]) -> None:
     """Persist the given settings mapping to disk."""
-
-    _save_json(SETTINGS_FILE, settings)
+    existing = _load_json(SETTINGS_FILE)
+    merged = {**existing, **settings}
+    _save_json(SETTINGS_FILE, merged)
 
 
 def get_ext_behavior(ext: str) -> Optional[str]:
