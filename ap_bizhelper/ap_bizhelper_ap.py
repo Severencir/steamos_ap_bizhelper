@@ -199,9 +199,11 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         self.gamepad = new_gamepad
         self._warned_no_gamepad = False
         self._connect_signals()
-        self._stop_gamepad_discovery()
         self._stop_bind_timer()
         return True
+
+    def __del__(self) -> None:  # pragma: no cover - best effort cleanup
+        self._stop_gamepad_discovery()
 
     def _first_connected_gamepad_id(self) -> Optional[int]:
         try:
