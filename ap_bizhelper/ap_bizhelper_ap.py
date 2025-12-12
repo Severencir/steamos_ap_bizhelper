@@ -53,16 +53,9 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         self.QtCore = QtCore
         self.QtGui = QtGui
         self.QtWidgets = QtWidgets
-        try:
-            self.gamepad = QtGamepad.QGamepad()
-        except Exception as exc:
-            self.gamepad = None
-            self._warn_gamepad_unavailable(
-                "Qt Gamepad backend or plugins are missing; falling back to keyboard navigation."
-                f" Details: {exc}"
-            )
-            self._fallback_to_keyboard_navigation()
-            return
+        self.gamepad: Optional[QtGamepad.QGamepad] = None
+        self._warned_no_gamepad = False
+        self._gamepad_manager = QtGamepad.QGamepadManager.instance()
 
         self.sidebar_view: Optional[QtWidgets.QWidget] = self._find_sidebar()
         self.file_view: Optional[QtWidgets.QWidget] = self._find_file_view()
@@ -76,7 +69,16 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
             dialog.installEventFilter(self)
         except Exception:
             return
-        self._connect_signals()
+
+        try:
+            self._gamepad_manager.connectedGamepadsChanged.connect(
+                self._on_connected_gamepads_changed
+            )
+        except Exception:
+            return
+
+        if not self._bind_first_gamepad(initial=True):
+            self._fallback_to_keyboard_navigation()
 
     def eventFilter(self, obj: "QtCore.QObject", event: "QtCore.QEvent") -> bool:  # type: ignore[override]
         if obj is self.dialog and event.type() == self.QtCore.QEvent.Show:
@@ -85,6 +87,8 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         return False
 
     def _connect_signals(self) -> None:
+        if self.gamepad is None:
+            return
         self.gamepad.buttonAChanged.connect(self._on_accept)
         self.gamepad.buttonBChanged.connect(self._on_cancel)
         self.gamepad.buttonL1Changed.connect(self._on_back)
@@ -97,6 +101,66 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         self.gamepad.buttonDownChanged.connect(self._on_down)
         self.gamepad.axisLeftXChanged.connect(self._on_axis_x)
         self.gamepad.axisLeftYChanged.connect(self._on_axis_y)
+
+    def _disconnect_signals(self) -> None:
+        if self.gamepad is None:
+            return
+        try:
+            self.gamepad.buttonAChanged.disconnect()
+            self.gamepad.buttonBChanged.disconnect()
+            self.gamepad.buttonL1Changed.disconnect()
+            self.gamepad.buttonR1Changed.disconnect()
+            self.gamepad.buttonYChanged.disconnect()
+            self.gamepad.buttonXChanged.disconnect()
+            self.gamepad.buttonLeftChanged.disconnect()
+            self.gamepad.buttonRightChanged.disconnect()
+            self.gamepad.buttonUpChanged.disconnect()
+            self.gamepad.buttonDownChanged.disconnect()
+            self.gamepad.axisLeftXChanged.disconnect()
+            self.gamepad.axisLeftYChanged.disconnect()
+        except Exception:
+            pass
+
+    def _bind_first_gamepad(self, *, initial: bool = False) -> bool:
+        from PySide6 import QtGamepad
+
+        connected = self._gamepad_manager.connectedGamepads()
+        if not connected:
+            if not self._warned_no_gamepad:
+                self._warn_gamepad_unavailable(
+                    "No connected gamepads detected; connect a controller to enable navigation."
+                )
+                self._warned_no_gamepad = True
+            self._disconnect_signals()
+            self.gamepad = None
+            return False
+
+        device_id = connected[0]
+        try:
+            new_gamepad = QtGamepad.QGamepad(device_id, parent=self)
+        except Exception as exc:
+            self._warn_gamepad_unavailable(
+                "Qt Gamepad backend or plugins are missing; falling back to keyboard navigation."
+                f" Details: {exc}"
+            )
+            self._disconnect_signals()
+            self.gamepad = None
+            return False
+
+        self._disconnect_signals()
+        if self.gamepad is not None:
+            try:
+                self.gamepad.deleteLater()
+            except Exception:
+                pass
+        self.gamepad = new_gamepad
+        self._warned_no_gamepad = False
+        self._connect_signals()
+        return True
+
+    def _on_connected_gamepads_changed(self) -> None:
+        if not self._bind_first_gamepad():
+            self._fallback_to_keyboard_navigation()
 
     def _fallback_to_keyboard_navigation(self) -> None:
         try:
