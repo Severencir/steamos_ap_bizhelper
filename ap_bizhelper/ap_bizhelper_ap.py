@@ -143,9 +143,11 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
             method = getattr(self._gamepad_manager, method_name, None)
             if callable(method):
                 try:
-                    method()
+                    result = method()
                 except Exception:
-                    pass
+                    continue
+                if result is False:
+                    continue
                 return
 
     def _stop_gamepad_discovery(self) -> None:
