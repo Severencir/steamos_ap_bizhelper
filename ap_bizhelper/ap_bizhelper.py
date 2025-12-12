@@ -155,22 +155,29 @@ def _find_shortcut_appid(target: Path) -> Optional[int]:
     return None
 
 
-def _maybe_relaunch_via_steam(argv: list[str]) -> None:
+def _capture_steam_appid_if_present(settings: dict) -> None:
+    """Persist ``SteamGameId`` into settings when available."""
+
+    steam_game_id = os.environ.get("SteamGameId")
+    if not (steam_game_id and steam_game_id.isdigit()):
+        return
+
+    cached_appid = str(settings.get("STEAM_APPID") or "")
+    if cached_appid == steam_game_id:
+        return
+
+    settings["STEAM_APPID"] = steam_game_id
+    save_settings(settings)
+    print(
+        "[ap-bizhelper] Detected Steam launch; cached app id "
+        f"{steam_game_id} for future relaunches."
+    )
+
+
+def _maybe_relaunch_via_steam(argv: list[str], settings: dict) -> None:
     """If not under Steam, try to relaunch through the matching shortcut."""
 
-    settings = load_settings()
-    steam_game_id = os.environ.get("SteamGameId")
-
     if _is_running_under_steam():
-        if steam_game_id and steam_game_id.isdigit():
-            cached_appid = str(settings.get("STEAM_APPID") or "")
-            if cached_appid != steam_game_id:
-                settings["STEAM_APPID"] = steam_game_id
-                save_settings(settings)
-                print(
-                    "[ap-bizhelper] Detected Steam launch; cached app id "
-                    f"{steam_game_id} for future relaunches."
-                )
         return
 
     steam_appid_env = os.environ.get("AP_BIZHELPER_STEAM_APPID")
@@ -974,7 +981,9 @@ def _run_full_flow() -> int:
 
 
 def main(argv: list[str]) -> int:
-    _maybe_relaunch_via_steam(argv)
+    settings = load_settings()
+    _capture_steam_appid_if_present(settings)
+    _maybe_relaunch_via_steam(argv, settings)
 
     if len(argv) >= 2 and argv[1] == "ensure":
         try:
