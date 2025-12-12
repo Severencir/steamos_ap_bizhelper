@@ -26,6 +26,172 @@ _QT_FONT_SCALE = 1.5
 _QT_MIN_POINT_SIZE = 12
 _QT_IMPORT_ERROR: Optional[BaseException] = None
 
+try:
+    from PySide6 import QtCore as _QtCoreBase
+except Exception:  # pragma: no cover - optional at import time
+    _QtCoreBase = None
+
+
+class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object):
+    """Map Qt gamepad input to QFileDialog navigation."""
+
+    AXIS_THRESHOLD = 0.6
+
+    def __init__(self, dialog: "QtWidgets.QFileDialog") -> None:
+        from PySide6 import QtCore, QtGamepad, QtGui, QtWidgets
+
+        if _QtCoreBase is None:
+            self.gamepad = None
+            return
+
+        super().__init__(dialog)
+        self.dialog = dialog
+        self.QtCore = QtCore
+        self.QtGui = QtGui
+        self.QtWidgets = QtWidgets
+        try:
+            self.gamepad = QtGamepad.QGamepad()
+        except Exception:
+            self.gamepad = None
+            return
+
+        self.sidebar_view: Optional[QtWidgets.QWidget] = self._find_sidebar()
+        self.file_view: Optional[QtWidgets.QWidget] = self._find_file_view()
+        self._axis_state: dict[str, bool] = {
+            "up": False,
+            "down": False,
+            "left": False,
+            "right": False,
+        }
+        try:
+            dialog.installEventFilter(self)
+        except Exception:
+            return
+        self._connect_signals()
+
+    def eventFilter(self, obj: "QtCore.QObject", event: "QtCore.QEvent") -> bool:  # type: ignore[override]
+        if obj is self.dialog and event.type() == self.QtCore.QEvent.Show:
+            self.sidebar_view = self._find_sidebar()
+            self.file_view = self._find_file_view()
+        return False
+
+    def _connect_signals(self) -> None:
+        self.gamepad.buttonAChanged.connect(self._on_accept)
+        self.gamepad.buttonBChanged.connect(self._on_cancel)
+        self.gamepad.buttonL1Changed.connect(self._on_back)
+        self.gamepad.buttonR1Changed.connect(self._on_forward)
+        self.gamepad.buttonYChanged.connect(self._on_up)
+        self.gamepad.buttonXChanged.connect(self._on_context_menu)
+        self.gamepad.buttonLeftChanged.connect(self._on_left)
+        self.gamepad.buttonRightChanged.connect(self._on_right)
+        self.gamepad.buttonUpChanged.connect(self._on_up_press)
+        self.gamepad.buttonDownChanged.connect(self._on_down)
+        self.gamepad.axisLeftXChanged.connect(self._on_axis_x)
+        self.gamepad.axisLeftYChanged.connect(self._on_axis_y)
+
+    def _find_sidebar(self) -> Optional["QtWidgets.QWidget"]:
+        return self.dialog.findChild(self.QtWidgets.QWidget, "sidebar")
+
+    def _find_file_view(self) -> Optional["QtWidgets.QWidget"]:
+        for name in ("listView", "treeView"):
+            found = self.dialog.findChild(self.QtWidgets.QWidget, name)
+            if found is not None:
+                return found
+        return None
+
+    def _focus_widget(self, widget: Optional["QtWidgets.QWidget"]) -> None:
+        if widget is None:
+            return
+        widget.setFocus(self.QtCore.Qt.FocusReason.OtherFocusReason)
+
+    def _send_key(self, key: int, *, modifiers: "QtCore.Qt.KeyboardModifiers" = None) -> None:
+        if modifiers is None:
+            modifiers = self.QtCore.Qt.KeyboardModifier.NoModifier
+        target = self.dialog.focusWidget() or self.dialog
+        press = self.QtGui.QKeyEvent(self.QtCore.QEvent.KeyPress, key, modifiers)
+        release = self.QtGui.QKeyEvent(self.QtCore.QEvent.KeyRelease, key, modifiers)
+        self.QtWidgets.QApplication.postEvent(target, press)
+        self.QtWidgets.QApplication.postEvent(target, release)
+
+    def _handle_axis(self, value: float, positive: str, negative: str, pos_key: int, neg_key: int) -> None:
+        if value > self.AXIS_THRESHOLD:
+            if not self._axis_state[positive]:
+                self._axis_state[positive] = True
+                self._axis_state[negative] = False
+                self._send_key(pos_key)
+        elif value < -self.AXIS_THRESHOLD:
+            if not self._axis_state[negative]:
+                self._axis_state[negative] = True
+                self._axis_state[positive] = False
+                self._send_key(neg_key)
+        else:
+            self._axis_state[positive] = False
+            self._axis_state[negative] = False
+
+    def _on_accept(self, pressed: bool) -> None:
+        if pressed:
+            self._send_key(self.QtCore.Qt.Key_Return)
+
+    def _on_cancel(self, pressed: bool) -> None:
+        if pressed:
+            self._send_key(self.QtCore.Qt.Key_Escape)
+
+    def _on_back(self, pressed: bool) -> None:
+        if pressed:
+            self._send_key(self.QtCore.Qt.Key_Left, modifiers=self.QtCore.Qt.KeyboardModifier.AltModifier)
+
+    def _on_forward(self, pressed: bool) -> None:
+        if pressed:
+            self._send_key(self.QtCore.Qt.Key_Right, modifiers=self.QtCore.Qt.KeyboardModifier.AltModifier)
+
+    def _on_up(self, pressed: bool) -> None:
+        if pressed:
+            self._send_key(self.QtCore.Qt.Key_Up, modifiers=self.QtCore.Qt.KeyboardModifier.AltModifier)
+
+    def _on_context_menu(self, pressed: bool) -> None:
+        if pressed:
+            self._send_key(self.QtCore.Qt.Key_Menu)
+
+    def _on_left(self, pressed: bool) -> None:
+        if pressed:
+            if self.dialog.focusWidget() is not self.sidebar_view:
+                self._focus_widget(self.sidebar_view)
+            else:
+                self._send_key(self.QtCore.Qt.Key_Left)
+
+    def _on_right(self, pressed: bool) -> None:
+        if pressed:
+            if self.dialog.focusWidget() is not self.file_view:
+                self._focus_widget(self.file_view)
+            else:
+                self._send_key(self.QtCore.Qt.Key_Right)
+
+    def _on_up_press(self, pressed: bool) -> None:
+        if pressed:
+            self._send_key(self.QtCore.Qt.Key_Up)
+
+    def _on_down(self, pressed: bool) -> None:
+        if pressed:
+            self._send_key(self.QtCore.Qt.Key_Down)
+
+    def _on_axis_x(self, value: float) -> None:
+        self._handle_axis(
+            value,
+            positive="right",
+            negative="left",
+            pos_key=self.QtCore.Qt.Key_Right,
+            neg_key=self.QtCore.Qt.Key_Left,
+        )
+
+    def _on_axis_y(self, value: float) -> None:
+        self._handle_axis(
+            -value,
+            positive="down",
+            negative="up",
+            pos_key=self.QtCore.Qt.Key_Down,
+            neg_key=self.QtCore.Qt.Key_Up,
+        )
+
 
 def _ensure_dirs() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -216,6 +382,10 @@ def _qt_file_dialog(
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+    try:
+        GamepadFileDialogController(dialog)
+    except Exception:
+        pass
     if dialog.exec() == QtWidgets.QDialog.Accepted:
         selected_files = dialog.selectedFiles()
         if selected_files:
