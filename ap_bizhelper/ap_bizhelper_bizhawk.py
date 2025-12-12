@@ -53,8 +53,10 @@ def _load_settings() -> Dict[str, Any]:
 def _save_settings(settings: Dict[str, Any]) -> None:
     _ensure_dirs()
     tmp = SETTINGS_FILE.with_suffix(SETTINGS_FILE.suffix + ".tmp")
+    existing_settings = _load_settings()
+    merged_settings = {**existing_settings, **settings}
     with tmp.open("w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2, sort_keys=True)
+        json.dump(merged_settings, f, indent=2, sort_keys=True)
         f.write("\n")
     tmp.replace(SETTINGS_FILE)
 
