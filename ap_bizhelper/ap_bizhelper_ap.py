@@ -25,6 +25,7 @@ _QT_APP: Optional["QtWidgets.QApplication"] = None
 _QT_FONT_SCALE = 1.5
 _QT_MIN_POINT_SIZE = 12
 _QT_IMPORT_ERROR: Optional[BaseException] = None
+_DEFAULT_SETTINGS = {"ENABLE_GAMEPAD_FILE_DIALOG": True}
 
 try:
     from PySide6 import QtCore as _QtCoreBase
@@ -200,21 +201,22 @@ def _ensure_dirs() -> None:
 
 def _load_settings() -> Dict[str, Any]:
     if not SETTINGS_FILE.exists():
-        return {}
+        return dict(_DEFAULT_SETTINGS)
     try:
         with SETTINGS_FILE.open("r", encoding="utf-8") as f:
-            return json.load(f)
+            return {**_DEFAULT_SETTINGS, **json.load(f)}
     except Exception:
         # On any error, treat as empty and let the caller repopulate.
-        return {}
+        return dict(_DEFAULT_SETTINGS)
 
 
 def _save_settings(settings: Dict[str, Any]) -> None:
     _ensure_dirs()
     tmp = SETTINGS_FILE.with_suffix(SETTINGS_FILE.suffix + ".tmp")
+    merged_settings = {**_DEFAULT_SETTINGS, **settings}
     with tmp.open("w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2, sort_keys=True)
-        f.write("\\n")
+        json.dump(merged_settings, f, indent=2, sort_keys=True)
+        f.write("\n")
     tmp.replace(SETTINGS_FILE)
 
 
@@ -228,6 +230,12 @@ def _has_qt_dialogs() -> bool:
         return False
 
     return True
+
+
+def _has_qt_gamepad() -> bool:
+    import importlib.util
+
+    return importlib.util.find_spec("PySide6.QtGamepad") is not None
 
 
 def _ensure_qt_app() -> "QtWidgets.QApplication":
@@ -354,7 +362,11 @@ def _sidebar_urls() -> list["QtCore.QUrl"]:
 
 
 def _qt_file_dialog(
-    *, title: str, start_dir: Path, file_filter: Optional[str] = None
+    *,
+    title: str,
+    start_dir: Path,
+    file_filter: Optional[str] = None,
+    settings: Optional[Dict[str, Any]] = None,
 ) -> Optional[Path]:
     from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -382,10 +394,13 @@ def _qt_file_dialog(
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-    try:
-        GamepadFileDialogController(dialog)
-    except Exception:
-        pass
+    settings_obj = {**_DEFAULT_SETTINGS, **(settings or {})}
+    enable_gamepad = bool(settings_obj.get("ENABLE_GAMEPAD_FILE_DIALOG", True))
+    if enable_gamepad and _has_qt_gamepad():
+        try:
+            GamepadFileDialogController(dialog)
+        except Exception:
+            pass
     if dialog.exec() == QtWidgets.QDialog.Accepted:
         selected_files = dialog.selectedFiles()
         if selected_files:
@@ -416,7 +431,9 @@ def _select_file_dialog(
     start_dir = _preferred_start_dir(initial, settings_obj)
 
     try:
-        selection = _qt_file_dialog(title=title, start_dir=start_dir, file_filter=file_filter)
+        selection = _qt_file_dialog(
+            title=title, start_dir=start_dir, file_filter=file_filter, settings=settings_obj
+        )
     except Exception as exc:  # pragma: no cover - GUI/runtime issues
         _zenity_error_dialog(f"PySide6 file selection failed: {exc}")
         return None
