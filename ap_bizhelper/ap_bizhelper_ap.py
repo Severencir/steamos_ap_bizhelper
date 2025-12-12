@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
@@ -23,6 +22,7 @@ GITHUB_API_LATEST = "https://api.github.com/repos/ArchipelagoMW/Archipelago/rele
 
 _QT_APP: Optional["QtWidgets.QApplication"] = None
 _QT_MIN_POINT_SIZE = 12
+_QT_IMPORT_ERROR: Optional[BaseException] = None
 
 
 def _ensure_dirs() -> None:
@@ -51,7 +51,15 @@ def _save_settings(settings: Dict[str, Any]) -> None:
 
 
 def _has_qt_dialogs() -> bool:
-    return importlib.util.find_spec("PySide6") is not None
+    global _QT_IMPORT_ERROR
+
+    try:
+        from PySide6 import QtWidgets  # noqa: F401
+    except Exception as exc:
+        _QT_IMPORT_ERROR = exc
+        return False
+
+    return True
 
 
 def _ensure_qt_app() -> "QtWidgets.QApplication":
@@ -154,9 +162,14 @@ def _select_file_dialog(
     *, title: str, initial: Optional[Path] = None, file_filter: Optional[str] = None
 ) -> Optional[Path]:
     if not _has_qt_dialogs():
+        details = ""
+        if _QT_IMPORT_ERROR is not None:
+            details = f"\nDetails: {_QT_IMPORT_ERROR}"
+
         _zenity_error_dialog(
-            "PySide6 is required for file selection but is not installed.\n"
+            "PySide6 is required for file selection but is not installed or failed to load.\n"
             "Please install PySide6 (e.g. `pip install PySide6`) and try again."
+            f"{details}"
         )
         return None
 
