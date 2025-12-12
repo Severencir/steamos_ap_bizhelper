@@ -26,10 +26,15 @@ from .ap_bizhelper_ap import (
 )
 from .ap_bizhelper_bizhawk import ensure_bizhawk_and_proton
 from .ap_bizhelper_config import (
+    get_all_associations,
+    get_association_mode,
     get_ext_behavior,
+    get_ext_association,
     load_settings,
     save_settings,
+    set_association_mode,
     set_ext_behavior,
+    set_ext_association,
 )
 from .ap_bizhelper_worlds import ensure_apworld_for_patch
 
@@ -478,6 +483,238 @@ def _ensure_apworld_for_extension(ext: str) -> None:
             error_dialog(f"Failed to copy {apworld_path.name}: {exc}")
     else:
         error_dialog("Selected .apworld file does not exist.")
+
+
+def _association_exec_command() -> str:
+    """Return the Exec command for desktop entries."""
+
+    try:
+        candidate = Path(sys.argv[0]).resolve()
+        if candidate.is_file():
+            return f"{candidate} %u"
+    except Exception:
+        pass
+
+    return f"{sys.executable} -m ap_bizhelper %u"
+
+
+def _registered_association_exts() -> list[str]:
+    if get_association_mode() == "disabled":
+        return []
+
+    return sorted(
+        ext
+        for ext, state in get_all_associations().items()
+        if str(state).lower() == "registered"
+    )
+
+
+def _apply_association_files(associated_exts: list[str]) -> None:
+    """Write or remove desktop/mime association files based on ``associated_exts``."""
+
+    if sys.platform != "linux":
+        return
+
+    applications_dir = Path.home() / ".local/share/applications"
+    mime_packages_dir = Path.home() / ".local/share/mime/packages"
+    desktop_path = applications_dir / "ap-bizhelper.desktop"
+
+    # Remove stale xml files first
+    if mime_packages_dir.is_dir():
+        for xml_file in mime_packages_dir.glob("ap-bizhelper-*.xml"):
+            ext = xml_file.stem.replace("ap-bizhelper-", "", 1)
+            if ext not in associated_exts:
+                try:
+                    xml_file.unlink()
+                except Exception:
+                    pass
+
+    if not associated_exts:
+        if desktop_path.exists():
+            try:
+                desktop_path.unlink()
+            except Exception:
+                pass
+
+        update_mime = shutil.which("update-mime-database")
+        if update_mime:
+            try:
+                subprocess.run(
+                    [update_mime, str(mime_packages_dir.parent)],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                pass
+
+        update_desktop = shutil.which("update-desktop-database")
+        if update_desktop:
+            try:
+                subprocess.run(
+                    [update_desktop, str(applications_dir)],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                pass
+
+        return
+
+    mime_types: list[str] = []
+
+    mime_packages_dir.mkdir(parents=True, exist_ok=True)
+    for ext in associated_exts:
+        mime_type = f"application/x-ap-bizhelper-{ext}"
+        mime_types.append(mime_type)
+        xml_path = mime_packages_dir / f"ap-bizhelper-{ext}.xml"
+        content = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\">\n"
+            f"  <mime-type type=\"{mime_type}\">\n"
+            f"    <comment>Archipelago patch ({ext})</comment>\n"
+            f"    <glob pattern=\"*.{ext}\"/>\n"
+            "  </mime-type>\n"
+            "</mime-info>\n"
+        )
+        try:
+            xml_path.write_text(content, encoding="utf-8")
+        except Exception:
+            pass
+
+    applications_dir.mkdir(parents=True, exist_ok=True)
+    exec_cmd = _association_exec_command()
+    desktop_content = (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=ap-bizhelper\n"
+        "Comment=Launch Archipelago patches with ap-bizhelper\n"
+        f"Exec={exec_cmd}\n"
+        "Terminal=false\n"
+        "Categories=Game;Utility;\n"
+        f"MimeType={';'.join(mime_types)};\n"
+    )
+
+    try:
+        desktop_path.write_text(desktop_content, encoding="utf-8")
+        desktop_path.chmod(0o755)
+    except Exception:
+        pass
+
+    update_mime = shutil.which("update-mime-database")
+    if update_mime:
+        try:
+            subprocess.run(
+                [update_mime, str(mime_packages_dir.parent)],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+
+    update_desktop = shutil.which("update-desktop-database")
+    if update_desktop:
+        try:
+            subprocess.run(
+                [update_desktop, str(applications_dir)],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+
+    xdg_mime = shutil.which("xdg-mime")
+    if xdg_mime and desktop_path.exists():
+        for mime_type in mime_types:
+            try:
+                subprocess.run(
+                    [xdg_mime, "default", desktop_path.name, mime_type],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                continue
+
+
+def _handle_extension_association(ext: str) -> None:
+    ext = ext.strip().lower()
+    if not ext:
+        return
+
+    association = get_ext_association(ext)
+    mode = get_association_mode()
+
+    if mode == "disabled" or association == "declined":
+        return
+
+    if mode == "enabled" and association != "registered":
+        set_ext_association(ext, "registered")
+        _apply_association_files(_registered_association_exts())
+        return
+
+    if association == "registered":
+        _apply_association_files(_registered_association_exts())
+        return
+
+    if mode != "prompt":
+        return
+
+    if not (_has_qt_dialogs() or _has_zenity()):
+        print(
+            f"[ap-bizhelper] No dialog backend available; skipping association prompt for .{ext}."
+        )
+        return
+
+    prompt_text = (
+        f"ap-bizhelper can handle .{ext} files automatically.\n\n"
+        "Do you want to register ap-bizhelper as the default handler? If you accept,\n"
+        "future new patch extensions will be associated automatically."
+    )
+
+    choice: Optional[str] = None
+    if _has_qt_dialogs():
+        choice = _qt_question_dialog(
+            title=f"Handle .{ext} with ap-bizhelper",
+            text=prompt_text,
+            ok_label="Register handler",
+            cancel_label="Not now",
+            extra_label="Disable prompts",
+        )
+    else:
+        code, out = _run_zenity(
+            [
+                "--question",
+                f"--title=Handle .{ext} with ap-bizhelper",
+                f"--text={prompt_text}",
+                "--ok-label=Register handler",
+                "--cancel-label=Not now",
+                "--extra-button=Disable prompts",
+            ]
+        )
+        if code == 0:
+            choice = "ok"
+        elif code == 1:
+            choice = "cancel"
+        elif code == 5:
+            choice = "extra"
+
+    if choice == "ok":
+        set_association_mode("enabled")
+        set_ext_association(ext, "registered")
+        _apply_association_files(_registered_association_exts())
+        return
+
+    if choice == "extra":
+        set_association_mode("disabled")
+        set_ext_association(ext, "declined")
+        _apply_association_files(_registered_association_exts())
+        return
+
+    set_ext_association(ext, "declined")
 def _list_bizhawk_pids() -> Set[int]:
     try:
         proc = subprocess.run(
@@ -712,11 +949,15 @@ def _run_full_flow() -> int:
 
     baseline_pids = _list_bizhawk_pids()
 
+    _apply_association_files(_registered_association_exts())
+
     try:
         patch = _select_patch_file()
     except RuntimeError as exc:
         error_dialog(str(exc))
         return 1
+
+    _handle_extension_association(patch.suffix.lstrip("."))
 
     ensure_apworld_for_patch(patch)
 

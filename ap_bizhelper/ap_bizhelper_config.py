@@ -38,6 +38,7 @@ from typing import Dict, Any, Optional
 CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 EXT_BEHAVIOR_FILE = CONFIG_DIR / "ext_behavior.json"
+EXT_ASSOCIATION_FILE = CONFIG_DIR / "ext_associations.json"
 
 # Keys we expose back to Bash as shell variables.
 SETTINGS_KEYS = [
@@ -89,6 +90,85 @@ def set_ext_behavior(ext: str, value: str) -> None:
     behaviors = _load_json(EXT_BEHAVIOR_FILE)
     behaviors[ext] = value
     _save_json(EXT_BEHAVIOR_FILE, behaviors)
+
+
+def get_association_mode() -> str:
+    """Return the persisted association mode (``prompt`` by default)."""
+
+    data = _load_json(EXT_ASSOCIATION_FILE)
+    mode = str(data.get("mode") or "prompt").lower()
+    if mode not in {"prompt", "enabled", "disabled"}:
+        return "prompt"
+    return mode
+
+
+def set_association_mode(mode: str) -> None:
+    """Persist the association mode (``prompt``, ``enabled``, or ``disabled``)."""
+
+    mode = str(mode or "").strip().lower()
+    if mode not in {"prompt", "enabled", "disabled"}:
+        return
+
+    data = _load_json(EXT_ASSOCIATION_FILE)
+    data["mode"] = mode
+    _save_json(EXT_ASSOCIATION_FILE, data)
+
+
+def _load_association_map() -> Dict[str, str]:
+    data = _load_json(EXT_ASSOCIATION_FILE)
+    associations = data.get("extensions")
+    if not isinstance(associations, dict):
+        return {}
+    return {str(k).strip().lower(): str(v) for k, v in associations.items() if str(k).strip()}
+
+
+def get_ext_association(ext: str) -> Optional[str]:
+    """Return the persisted association state for ``ext`` or ``None``."""
+
+    ext = ext.strip().lower()
+    if not ext:
+        return None
+    return _load_association_map().get(ext)
+
+
+def set_ext_association(ext: str, value: str) -> None:
+    """Persist the association state for ``ext`` (case-insensitive)."""
+
+    ext = ext.strip().lower()
+    if not ext:
+        return
+
+    data = _load_json(EXT_ASSOCIATION_FILE)
+    associations = data.get("extensions")
+    if not isinstance(associations, dict):
+        associations = {}
+
+    associations[ext] = value
+    data["extensions"] = associations
+    _save_json(EXT_ASSOCIATION_FILE, data)
+
+
+def clear_ext_association(ext: str) -> None:
+    """Remove the stored association for ``ext`` if present."""
+
+    ext = ext.strip().lower()
+    if not ext:
+        return
+
+    data = _load_json(EXT_ASSOCIATION_FILE)
+    associations = data.get("extensions")
+    if not isinstance(associations, dict):
+        return
+
+    associations.pop(ext, None)
+    data["extensions"] = associations
+    _save_json(EXT_ASSOCIATION_FILE, data)
+
+
+def get_all_associations() -> Dict[str, str]:
+    """Return the full mapping of stored extension associations."""
+
+    return _load_association_map()
 
 
 def _ensure_config_dir() -> None:
@@ -192,7 +272,10 @@ def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(
             "Usage: ap_bizhelper_config.py <command> [args...]\n"
-            "Commands: export-shell, save-from-env, get-ext EXT, set-ext EXT VALUE",
+            "Commands: export-shell, save-from-env, get-ext EXT, set-ext EXT VALUE,\n"
+            "          get-association-mode, set-association-mode MODE,\n"
+            "          get-ext-association EXT, set-ext-association EXT VALUE,\n"
+            "          clear-ext-association EXT",
             file=sys.stderr,
         )
         return 1
@@ -212,10 +295,43 @@ def main(argv: list[str]) -> int:
             print("Usage: set-ext <extension> <value>", file=sys.stderr)
             return 1
         return cmd_set_ext(argv[2], argv[3])
+    if cmd == "get-association-mode":
+        print(get_association_mode())
+        return 0
+    if cmd == "set-association-mode":
+        if len(argv) != 3:
+            print("Usage: set-association-mode <prompt|enabled|disabled>", file=sys.stderr)
+            return 1
+        set_association_mode(argv[2])
+        return 0
+    if cmd == "get-ext-association":
+        if len(argv) != 3:
+            print("Usage: get-ext-association <extension>", file=sys.stderr)
+            return 1
+        assoc = get_ext_association(argv[2])
+        if assoc is None:
+            return 1
+        print(assoc)
+        return 0
+    if cmd == "set-ext-association":
+        if len(argv) != 4:
+            print("Usage: set-ext-association <extension> <value>", file=sys.stderr)
+            return 1
+        set_ext_association(argv[2], argv[3])
+        return 0
+    if cmd == "clear-ext-association":
+        if len(argv) != 3:
+            print("Usage: clear-ext-association <extension>", file=sys.stderr)
+            return 1
+        clear_ext_association(argv[2])
+        return 0
 
     print(
         f"Unknown command: {cmd}\n"
-        "Commands: export-shell, save-from-env, get-ext EXT, set-ext EXT VALUE",
+        "Commands: export-shell, save-from-env, get-ext EXT, set-ext EXT VALUE,\n"
+        "          get-association-mode, set-association-mode MODE,\n"
+        "          get-ext-association EXT, set-ext-association EXT VALUE,\n"
+        "          clear-ext-association EXT",
         file=sys.stderr,
     )
     return 1

@@ -20,3 +20,17 @@ python tools/build_appimage.py
 ```
 
 The script writes the wheel and `dist/ap-bizhelper.AppImage`. The AppImage can be double-clicked on a SteamOS system to launch the full flow without command-line arguments.
+
+## File associations
+
+* When ap-bizhelper sees a new patch file extension, it prompts to register itself as the handler.
+* Accepting the prompt creates a per-user desktop entry and MIME globs under `~/.local/share/applications/ap-bizhelper.desktop` and `~/.local/share/mime/packages/ap-bizhelper-*.xml`. New extensions are added automatically after you opt in once.
+* Decisions are stored in `~/.config/ap_bizhelper_test/ext_associations.json` (mode plus per-extension choices) so the prompt is not repeated for the same extension.
+* Disable or revoke associations with the config helper, for example:
+
+```bash
+python -m ap_bizhelper.ap_bizhelper_config set-association-mode disabled
+python -m ap_bizhelper.ap_bizhelper_config clear-ext-association apbp
+```
+
+Setting the mode to `disabled` stops future prompts and removes the handler entries on the next run; changing back to `prompt` or `enabled` will recreate them for stored extensions.
