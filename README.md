@@ -13,8 +13,8 @@ python -m ap_bizhelper
 ## Building a one-file release
 
 1. Ensure `build` is available (e.g., `python -m pip install build`).
-2. Build the wheel and zipapp artifact (dependencies, including PySide6, are bundled into the zipapp so the target system does not need
-   to download anything at runtime):
+2. Build the wheel and zipapp artifact (dependencies, including PySide6, are bundled alongside the zipapp in `dist/ap-bizhelper.deps`
+   so the target system does not need to download anything at runtime):
 
 ```bash
 python tools/build_zipapp.py
