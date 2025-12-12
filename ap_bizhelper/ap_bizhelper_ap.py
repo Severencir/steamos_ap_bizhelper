@@ -17,10 +17,12 @@ SETTINGS_FILE = CONFIG_DIR / "settings.json"
 DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper_test"))
 AP_APPIMAGE_DEFAULT = DATA_DIR / "Archipelago.AppImage"
 DESKTOP_DIR = Path(os.path.expanduser("~/Desktop"))
+DOWNLOADS_DIR = Path(os.path.expanduser("~/Downloads"))
 
 GITHUB_API_LATEST = "https://api.github.com/repos/ArchipelagoMW/Archipelago/releases/latest"
 
 _QT_APP: Optional["QtWidgets.QApplication"] = None
+_QT_FONT_SCALE = 1.5
 _QT_MIN_POINT_SIZE = 12
 _QT_IMPORT_ERROR: Optional[BaseException] = None
 
@@ -75,10 +77,15 @@ def _ensure_qt_app() -> "QtWidgets.QApplication":
         app = QtWidgets.QApplication(sys.argv[:1] or ["ap-bizhelper"])
 
     font: QtGui.QFont = app.font()
-    if font.pointSize() > 0 and font.pointSize() < _QT_MIN_POINT_SIZE:
-        font.setPointSize(_QT_MIN_POINT_SIZE)
+    min_scaled_point_size = int(_QT_MIN_POINT_SIZE * _QT_FONT_SCALE)
+    if font.pointSize() > 0:
+        scaled = max(int(font.pointSize() * _QT_FONT_SCALE), min_scaled_point_size)
+        font.setPointSize(scaled)
     elif font.pixelSize() > 0:
-        font.setPixelSize(max(font.pixelSize(), int(_QT_MIN_POINT_SIZE * 1.5)))
+        scaled = max(int(font.pixelSize() * _QT_FONT_SCALE), min_scaled_point_size)
+        font.setPixelSize(scaled)
+    else:
+        font.setPointSize(min_scaled_point_size)
     app.setFont(font)
 
     _QT_APP = app
@@ -144,22 +151,77 @@ def _qt_question_dialog(
     return "cancel"
 
 
+def _preferred_start_dir(initial: Optional[Path], settings: Dict[str, Any]) -> Path:
+    last_dir_setting = str(settings.get("LAST_FILE_DIALOG_DIR", "") or "")
+    candidates = [
+        initial,
+        Path(last_dir_setting) if last_dir_setting else None,
+        DOWNLOADS_DIR if DOWNLOADS_DIR.exists() else None,
+        Path.home(),
+    ]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        candidate_path = candidate.expanduser()
+        if candidate_path.is_file():
+            candidate_path = candidate_path.parent
+        if candidate_path.exists():
+            return candidate_path
+    return Path.home()
+
+
+def _sidebar_urls() -> list["QtCore.QUrl"]:
+    from PySide6 import QtCore
+
+    common_dirs = [
+        Path.home(),
+        DOWNLOADS_DIR,
+        Path(os.path.expanduser("~/Documents")),
+        Path(os.path.expanduser("~/Desktop")),
+        Path(os.path.expanduser("~/Music")),
+        Path(os.path.expanduser("~/Pictures")),
+        Path(os.path.expanduser("~/Videos")),
+    ]
+    return [
+        QtCore.QUrl.fromLocalFile(str(path)) for path in common_dirs if path.expanduser().exists()
+    ]
+
+
 def _qt_file_dialog(
-    *, title: str, initial: Optional[Path] = None, file_filter: Optional[str] = None
+    *, title: str, start_dir: Path, file_filter: Optional[str] = None
 ) -> Optional[Path]:
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 
     _ensure_qt_app()
-    start_dir = str(initial) if initial is not None else str(Path.home())
     filter_text = file_filter or "All Files (*)"
-    selected, _ = QtWidgets.QFileDialog.getOpenFileName(
-        None, title, start_dir, filter_text, options=QtWidgets.QFileDialog.Options()
-    )
-    return Path(selected) if selected else None
+    dialog = QtWidgets.QFileDialog()
+    dialog.setWindowTitle(title)
+    dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptOpen)
+    dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+    dialog.setDirectory(str(start_dir))
+    dialog.setNameFilter(filter_text)
+    dialog.setViewMode(QtWidgets.QFileDialog.Detail)
+    dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
+    dialog.setOption(QtWidgets.QFileDialog.ReadOnly, False)
+    sidebar_urls = _sidebar_urls()
+    if sidebar_urls:
+        dialog.setSidebarUrls(sidebar_urls)
+    dialog.activateWindow()
+    dialog.raise_()
+    dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+    if dialog.exec() == QtWidgets.QDialog.Accepted:
+        selected_files = dialog.selectedFiles()
+        if selected_files:
+            return Path(selected_files[0])
+    return None
 
 
 def _select_file_dialog(
-    *, title: str, initial: Optional[Path] = None, file_filter: Optional[str] = None
+    *,
+    title: str,
+    initial: Optional[Path] = None,
+    file_filter: Optional[str] = None,
+    settings: Optional[Dict[str, Any]] = None,
 ) -> Optional[Path]:
     if not _has_qt_dialogs():
         details = ""
@@ -173,11 +235,19 @@ def _select_file_dialog(
         )
         return None
 
+    settings_obj = settings if settings is not None else _load_settings()
+    start_dir = _preferred_start_dir(initial, settings_obj)
+
     try:
-        selection = _qt_file_dialog(title=title, initial=initial, file_filter=file_filter)
+        selection = _qt_file_dialog(title=title, start_dir=start_dir, file_filter=file_filter)
     except Exception as exc:  # pragma: no cover - GUI/runtime issues
         _zenity_error_dialog(f"PySide6 file selection failed: {exc}")
         return None
+
+    if selection:
+        settings_obj["LAST_FILE_DIALOG_DIR"] = str(selection.parent)
+        if settings is None:
+            _save_settings(settings_obj)
 
     return selection
 
@@ -262,8 +332,12 @@ def choose_install_action(title: str, text: str, select_label: str = "Select") -
     return "Cancel"
 
 
-def select_appimage(initial: Optional[Path] = None) -> Optional[Path]:
-    selection = _select_file_dialog(title="Select Archipelago AppImage", initial=initial)
+def select_appimage(
+    initial: Optional[Path] = None, *, settings: Optional[Dict[str, Any]] = None
+) -> Optional[Path]:
+    selection = _select_file_dialog(
+        title="Select Archipelago AppImage", initial=initial, settings=settings
+    )
     if selection is None:
         return None
     p = selection
@@ -277,7 +351,7 @@ def select_appimage(initial: Optional[Path] = None) -> Optional[Path]:
     return p
 
 
-def _prompt_select_existing_appimage(initial: Path) -> Path:
+def _prompt_select_existing_appimage(initial: Path, *, settings: Dict[str, Any]) -> Path:
     """Prompt the user to select an existing AppImage without offering download."""
 
     if _has_qt_dialogs():
@@ -304,7 +378,7 @@ def _prompt_select_existing_appimage(initial: Path) -> Path:
         if code != 0:
             raise RuntimeError("User cancelled Archipelago AppImage selection")
 
-    chosen = select_appimage(initial)
+    chosen = select_appimage(initial, settings=settings)
     if not chosen:
         raise RuntimeError("User cancelled Archipelago AppImage selection")
 
@@ -620,7 +694,9 @@ def ensure_appimage(
             _save_settings(settings)
             downloaded = True
         else:
-            app_path = _prompt_select_existing_appimage(Path(os.path.expanduser("~")))
+            app_path = _prompt_select_existing_appimage(
+                Path(os.path.expanduser("~")), settings=settings
+            )
             settings["AP_APPIMAGE"] = str(app_path)
             # No version information when manually selected.
             _save_settings(settings)
