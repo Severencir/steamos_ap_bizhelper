@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 import time
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlparse
 from pathlib import Path
 from typing import Iterable, Optional, Set, Tuple
 
@@ -487,6 +487,12 @@ def _ensure_apworld_for_extension(ext: str) -> None:
 def _association_exec_command() -> str:
     """Return the Exec command for desktop entries."""
 
+    appimage_env = os.environ.get("APPIMAGE")
+    if appimage_env:
+        appimage_path = Path(appimage_env)
+        if appimage_path.is_file():
+            return f"{appimage_path} %u"
+
     try:
         candidate = Path(sys.argv[0]).resolve()
         if candidate.is_file():
@@ -637,6 +643,31 @@ def _apply_association_files(associated_exts: list[str]) -> None:
                 )
             except Exception:
                 continue
+
+
+def _parse_patch_arg(arg: str) -> Path:
+    """Return a filesystem path from a CLI argument or ``file://`` URI."""
+
+    candidate: Path
+    parsed = urlparse(arg)
+    if parsed.scheme == "file":
+        path_part = unquote(parsed.path)
+        if parsed.netloc and parsed.netloc not in ("", "localhost"):
+            path_part = f"//{parsed.netloc}{parsed.path}"
+        candidate = Path(path_part)
+    else:
+        candidate = Path(arg)
+
+    candidate = candidate.expanduser()
+    try:
+        candidate = candidate.resolve()
+    except Exception:
+        pass
+
+    if not candidate.is_file():
+        raise RuntimeError(f"Patch file does not exist: {candidate}")
+
+    return candidate
 
 
 def _handle_extension_association(ext: str) -> None:
@@ -934,7 +965,7 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
     return appimage, runner
 
 
-def _run_full_flow(settings: dict) -> int:
+def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
     try:
         appimage, runner = _run_prereqs(settings)
     except RuntimeError as exc:
@@ -950,7 +981,7 @@ def _run_full_flow(settings: dict) -> int:
     _apply_association_files(_registered_association_exts())
 
     try:
-        patch = _select_patch_file()
+        patch = _parse_patch_arg(patch_arg) if patch_arg else _select_patch_file()
     except RuntimeError as exc:
         error_dialog(str(exc))
         return 1
@@ -976,18 +1007,26 @@ def main(argv: list[str]) -> int:
     _capture_steam_appid_if_present(settings)
     _maybe_relaunch_via_steam(argv, settings)
 
-    if len(argv) >= 2 and argv[1] == "ensure":
-        try:
-            _run_prereqs(settings, allow_archipelago_skip=True)
-        except RuntimeError:
-            return 1
-        return 0
+    patch_arg: Optional[str] = None
 
     if len(argv) >= 2:
-        print("Usage: ap_bizhelper.py [ensure]", file=sys.stderr)
-        return 1
+        if argv[1] == "ensure":
+            if len(argv) > 2:
+                print("Usage: ap_bizhelper.py [ensure]", file=sys.stderr)
+                return 1
+            try:
+                _run_prereqs(settings, allow_archipelago_skip=True)
+            except RuntimeError:
+                return 1
+            return 0
 
-    return _run_full_flow(settings)
+        if len(argv) > 2:
+            print("Usage: ap_bizhelper.py [patch-file]", file=sys.stderr)
+            return 1
+
+        patch_arg = argv[1]
+
+    return _run_full_flow(settings, patch_arg)
 
 
 if __name__ == "__main__":  # pragma: no cover
