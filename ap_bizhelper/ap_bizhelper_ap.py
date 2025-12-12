@@ -43,6 +43,9 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
 
         if _QtCoreBase is None:
             self.gamepad = None
+            self._warn_gamepad_unavailable(
+                "Qt could not be imported; gamepad navigation is disabled."
+            )
             return
 
         super().__init__(dialog)
@@ -52,8 +55,13 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         self.QtWidgets = QtWidgets
         try:
             self.gamepad = QtGamepad.QGamepad()
-        except Exception:
+        except Exception as exc:
             self.gamepad = None
+            self._warn_gamepad_unavailable(
+                "Qt Gamepad backend or plugins are missing; falling back to keyboard navigation."
+                f" Details: {exc}"
+            )
+            self._fallback_to_keyboard_navigation()
             return
 
         self.sidebar_view: Optional[QtWidgets.QWidget] = self._find_sidebar()
@@ -89,6 +97,22 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         self.gamepad.buttonDownChanged.connect(self._on_down)
         self.gamepad.axisLeftXChanged.connect(self._on_axis_x)
         self.gamepad.axisLeftYChanged.connect(self._on_axis_y)
+
+    def _fallback_to_keyboard_navigation(self) -> None:
+        try:
+            self.dialog.setFocus(self.QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+        except Exception:
+            pass
+
+    def _warn_gamepad_unavailable(self, message: str) -> None:
+        try:
+            sys.stderr.write(f"[ap-bizhelper] {message}\n")
+        except Exception:
+            pass
+        try:
+            self.QtWidgets.QMessageBox.warning(self.dialog, "Gamepad unavailable", message)
+        except Exception:
+            pass
 
     def _find_sidebar(self) -> Optional["QtWidgets.QWidget"]:
         return self.dialog.findChild(self.QtWidgets.QWidget, "sidebar")
