@@ -34,3 +34,17 @@ python -m ap_bizhelper.ap_bizhelper_config clear-ext-association apbp
 ```
 
 Setting the mode to `disabled` stops future prompts and removes the handler entries on the next run; changing back to `prompt` or `enabled` will recreate them for stored extensions.
+
+## Steam gamepad navigation in the file picker
+
+When launched through Steam (for overlay/controller support), the PySide6 file picker supports direct gamepad navigation. Default button mappings:
+
+* **A**: select/accept
+* **B**: cancel/back out of the dialog
+* **L1 / R1**: go back or forward in history
+* **Y**: move up a directory
+* **X**: open the context menu
+* **D-pad Up/Down/Left/Right** or left stick: move the selection
+* **D-pad Left**: toggle focus to the sidebar; **D-pad Right**: toggle focus back to the file list
+
+To disable gamepad control, set `"ENABLE_GAMEPAD_FILE_DIALOG": false` in `~/.config/ap_bizhelper_test/settings.json` and restart the helper.
