@@ -36,6 +36,7 @@ from .ap_bizhelper_config import (
     set_ext_behavior,
     set_ext_association,
 )
+from .zenity_shim import prepare_zenity_shim_env
 from .logging_utils import RunLogger
 from .ap_bizhelper_worlds import ensure_apworld_for_patch
 
@@ -1043,8 +1044,12 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
     ensure_apworld_for_patch(patch)
 
     print(f"[ap-bizhelper] Launching Archipelago with patch: {patch}")
+    shim_env = prepare_zenity_shim_env()
+    launch_env = os.environ.copy()
+    if shim_env:
+        launch_env.update(shim_env)
     try:
-        subprocess.Popen([str(appimage), str(patch)])
+        subprocess.Popen([str(appimage), str(patch)], env=launch_env)
     except Exception as exc:  # pragma: no cover - runtime launcher safety net
         error_dialog(f"Failed to launch Archipelago: {exc}")
         return 1
