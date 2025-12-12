@@ -24,8 +24,14 @@ GITHUB_API_LATEST = "https://api.github.com/repos/ArchipelagoMW/Archipelago/rele
 _QT_APP: Optional["QtWidgets.QApplication"] = None
 _QT_FONT_SCALE = 1.5
 _QT_MIN_POINT_SIZE = 12
+_QT_FILE_NAME_FONT_SCALE = 1.5
 _QT_IMPORT_ERROR: Optional[BaseException] = None
-_DEFAULT_SETTINGS = {"ENABLE_GAMEPAD_FILE_DIALOG": True}
+_DEFAULT_SETTINGS = {
+    "ENABLE_GAMEPAD_FILE_DIALOG": True,
+    "QT_FONT_SCALE": _QT_FONT_SCALE,
+    "QT_MIN_POINT_SIZE": _QT_MIN_POINT_SIZE,
+    "QT_FILE_NAME_FONT_SCALE": _QT_FILE_NAME_FONT_SCALE,
+}
 
 try:
     from PySide6 import QtCore as _QtCoreBase
@@ -387,29 +393,66 @@ def _has_qt_gamepad() -> bool:
     return True
 
 
-def _ensure_qt_app() -> "QtWidgets.QApplication":
-    global _QT_APP
+def _coerce_font_setting(
+    settings: Dict[str, Any], key: str, default: float, *, minimum: Optional[float] = None
+) -> float:
+    value = settings.get(key, default)
+    try:
+        numeric_value = float(value)
+    except Exception:
+        return default
+    if minimum is not None:
+        numeric_value = max(numeric_value, minimum)
+    return numeric_value
 
-    if _QT_APP is not None:
-        return _QT_APP
+
+def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApplication":
+    global _QT_APP
 
     from PySide6 import QtGui, QtWidgets
 
-    app = QtWidgets.QApplication.instance()
+    def _scaled_font(
+        font: "QtGui.QFont",
+        scale: float,
+        *,
+        min_point_size: Optional[int] = None,
+        min_pixel_size: Optional[int] = None,
+        fallback_point_size: Optional[int] = None,
+    ) -> "QtGui.QFont":
+        scaled_font = QtGui.QFont(font)
+        if font.pointSize() > 0:
+            new_size = int(font.pointSize() * scale)
+            if min_point_size is not None:
+                new_size = max(new_size, min_point_size)
+            scaled_font.setPointSize(new_size)
+        elif font.pixelSize() > 0:
+            new_size = int(font.pixelSize() * scale)
+            if min_pixel_size is not None:
+                new_size = max(new_size, min_pixel_size)
+            scaled_font.setPixelSize(new_size)
+        elif fallback_point_size is not None:
+            scaled_font.setPointSize(fallback_point_size)
+        return scaled_font
+
+    app = _QT_APP or QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication(sys.argv[:1] or ["ap-bizhelper"])
 
+    settings_obj = {**_DEFAULT_SETTINGS, **(settings or _load_settings())}
+    font_scale = _coerce_font_setting(settings_obj, "QT_FONT_SCALE", _QT_FONT_SCALE, minimum=0.1)
+    min_point_size = _coerce_font_setting(
+        settings_obj, "QT_MIN_POINT_SIZE", _QT_MIN_POINT_SIZE, minimum=1
+    )
     font: QtGui.QFont = app.font()
-    min_scaled_point_size = int(_QT_MIN_POINT_SIZE * _QT_FONT_SCALE)
-    if font.pointSize() > 0:
-        scaled = max(int(font.pointSize() * _QT_FONT_SCALE), min_scaled_point_size)
-        font.setPointSize(scaled)
-    elif font.pixelSize() > 0:
-        scaled = max(int(font.pixelSize() * _QT_FONT_SCALE), min_scaled_point_size)
-        font.setPixelSize(scaled)
-    else:
-        font.setPointSize(min_scaled_point_size)
-    app.setFont(font)
+    min_scaled_point_size = int(min_point_size * font_scale)
+    scaled_font = _scaled_font(
+        font,
+        font_scale,
+        min_point_size=min_scaled_point_size,
+        min_pixel_size=min_scaled_point_size,
+        fallback_point_size=min_scaled_point_size,
+    )
+    app.setFont(scaled_font)
 
     _QT_APP = app
     return app
@@ -519,7 +562,8 @@ def _qt_file_dialog(
 ) -> Optional[Path]:
     from PySide6 import QtCore, QtGui, QtWidgets
 
-    _ensure_qt_app()
+    settings_obj = {**_DEFAULT_SETTINGS, **(settings or {})}
+    _ensure_qt_app(settings_obj)
     filter_text = file_filter or "All Files (*)"
     dialog = QtWidgets.QFileDialog()
     dialog.setWindowTitle(title)
@@ -536,6 +580,35 @@ def _qt_file_dialog(
         QtGui.QGuiApplication.setNavigationMode(
             QtCore.Qt.NavigationModeKeypadDirectional
         )
+
+    def _scale_file_name_font(widget: "QtWidgets.QWidget") -> None:
+        base_font = widget.font()
+        scaled_font = QtGui.QFont(base_font)
+        if base_font.pointSize() > 0:
+            scaled_font.setPointSize(
+                int(
+                    base_font.pointSize()
+                    * _coerce_font_setting(
+                        settings_obj, "QT_FILE_NAME_FONT_SCALE", _QT_FILE_NAME_FONT_SCALE, minimum=0.1
+                    )
+                )
+            )
+        elif base_font.pixelSize() > 0:
+            scaled_font.setPixelSize(
+                int(
+                    base_font.pixelSize()
+                    * _coerce_font_setting(
+                        settings_obj, "QT_FILE_NAME_FONT_SCALE", _QT_FILE_NAME_FONT_SCALE, minimum=0.1
+                    )
+                )
+            )
+        widget.setFont(scaled_font)
+
+    for view_name in ("listView", "treeView"):
+        file_view = dialog.findChild(QtWidgets.QWidget, view_name)
+        if file_view is not None:
+            _scale_file_name_font(file_view)
+
     sidebar_urls = _sidebar_urls()
     if sidebar_urls:
         dialog.setSidebarUrls(sidebar_urls)
@@ -543,7 +616,6 @@ def _qt_file_dialog(
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-    settings_obj = {**_DEFAULT_SETTINGS, **(settings or {})}
     steam_launch = bool(os.environ.get("SteamGameId"))
     enable_gamepad = bool(settings_obj.get("ENABLE_GAMEPAD_FILE_DIALOG", True)) or steam_launch
     if enable_gamepad and _has_qt_gamepad():
