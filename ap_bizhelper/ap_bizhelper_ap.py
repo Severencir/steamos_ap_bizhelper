@@ -233,9 +233,12 @@ def _has_qt_dialogs() -> bool:
 
 
 def _has_qt_gamepad() -> bool:
-    import importlib.util
+    try:
+        from PySide6 import QtGamepad  # noqa: F401
+    except Exception:
+        return False
 
-    return importlib.util.find_spec("PySide6.QtGamepad") is not None
+    return True
 
 
 def _ensure_qt_app() -> "QtWidgets.QApplication":
@@ -395,7 +398,8 @@ def _qt_file_dialog(
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
     settings_obj = {**_DEFAULT_SETTINGS, **(settings or {})}
-    enable_gamepad = bool(settings_obj.get("ENABLE_GAMEPAD_FILE_DIALOG", True))
+    steam_launch = bool(os.environ.get("SteamGameId"))
+    enable_gamepad = bool(settings_obj.get("ENABLE_GAMEPAD_FILE_DIALOG", True)) or steam_launch
     if enable_gamepad and _has_qt_gamepad():
         try:
             GamepadFileDialogController(dialog)
