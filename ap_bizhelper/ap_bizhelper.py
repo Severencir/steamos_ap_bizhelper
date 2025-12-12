@@ -175,7 +175,10 @@ def _maybe_relaunch_via_steam(argv: list[str]) -> None:
         with relaunch_log.open("a", encoding="utf-8") as log_file:
             log_file.write(f"[{timestamp}] {message}\n")
 
-    launch_cmd = [steam_binary, "-applaunch", str(appid)]
+    # "steam -applaunch <appid>" does not work for non-Steam shortcuts; use the
+    # universal steam://rungameid URL so Steam can relaunch both workshop apps
+    # and custom shortcuts the user has added manually.
+    launch_cmd = [steam_binary, f"steam://rungameid/{appid}"]
     if len(argv) > 1:
         launch_cmd.append("--")
         launch_cmd.extend(argv[1:])
