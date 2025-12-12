@@ -155,22 +155,29 @@ def _find_shortcut_appid(target: Path) -> Optional[int]:
     return None
 
 
-def _maybe_relaunch_via_steam(argv: list[str]) -> None:
+def _capture_steam_appid_if_present(settings: dict) -> None:
+    """Persist ``SteamGameId`` into settings when available."""
+
+    steam_game_id = os.environ.get("SteamGameId")
+    if not (steam_game_id and steam_game_id.isdigit()):
+        return
+
+    cached_appid = str(settings.get("STEAM_APPID") or "")
+    if cached_appid == steam_game_id:
+        return
+
+    settings["STEAM_APPID"] = steam_game_id
+    save_settings(settings)
+    print(
+        "[ap-bizhelper] Detected Steam launch; cached app id "
+        f"{steam_game_id} for future relaunches."
+    )
+
+
+def _maybe_relaunch_via_steam(argv: list[str], settings: dict) -> None:
     """If not under Steam, try to relaunch through the matching shortcut."""
 
-    settings = load_settings()
-    steam_game_id = os.environ.get("SteamGameId")
-
     if _is_running_under_steam():
-        if steam_game_id and steam_game_id.isdigit():
-            cached_appid = str(settings.get("STEAM_APPID") or "")
-            if cached_appid != steam_game_id:
-                settings["STEAM_APPID"] = steam_game_id
-                save_settings(settings)
-                print(
-                    "[ap-bizhelper] Detected Steam launch; cached app id "
-                    f"{steam_game_id} for future relaunches."
-                )
         return
 
     steam_appid_env = os.environ.get("AP_BIZHELPER_STEAM_APPID")
@@ -888,8 +895,7 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids
     _launch_bizhawk(runner, rom)
 
 
-def _run_prereqs(*, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path], Optional[Path]]:
-    settings = load_settings()
+def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path], Optional[Path]]:
     need_arch = _needs_archipelago_download(settings)
     need_bizhawk = _needs_bizhawk_download(settings)
 
@@ -936,9 +942,9 @@ def _run_prereqs(*, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path
     return appimage, runner
 
 
-def _run_full_flow() -> int:
+def _run_full_flow(settings: dict) -> int:
     try:
-        appimage, runner = _run_prereqs()
+        appimage, runner = _run_prereqs(settings)
     except RuntimeError as exc:
         error_dialog(str(exc))
         return 1
@@ -974,11 +980,13 @@ def _run_full_flow() -> int:
 
 
 def main(argv: list[str]) -> int:
-    _maybe_relaunch_via_steam(argv)
+    settings = load_settings()
+    _capture_steam_appid_if_present(settings)
+    _maybe_relaunch_via_steam(argv, settings)
 
     if len(argv) >= 2 and argv[1] == "ensure":
         try:
-            _run_prereqs(allow_archipelago_skip=True)
+            _run_prereqs(settings, allow_archipelago_skip=True)
         except RuntimeError:
             return 1
         return 0
@@ -987,7 +995,7 @@ def main(argv: list[str]) -> int:
         print("Usage: ap_bizhelper.py [ensure]", file=sys.stderr)
         return 1
 
-    return _run_full_flow()
+    return _run_full_flow(settings)
 
 
 if __name__ == "__main__":  # pragma: no cover
