@@ -65,8 +65,14 @@ def _write_apprun(appdir: Path) -> None:
             if [ -d "$site/PySide6/Qt/plugins" ]; then
                 QT_PLUGIN_PATH="$site/PySide6/Qt/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
             fi
+            if [ -d "$site/PySide6_Addons/Qt/plugins" ]; then
+                QT_PLUGIN_PATH="$site/PySide6_Addons/Qt/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
+            fi
             if [ -d "$site/PySide6/qml" ]; then
                 QML2_IMPORT_PATH="$site/PySide6/qml${QML2_IMPORT_PATH:+:$QML2_IMPORT_PATH}"
+            fi
+            if [ -d "$site/PySide6_Addons/qml" ]; then
+                QML2_IMPORT_PATH="$site/PySide6_Addons/qml${QML2_IMPORT_PATH:+:$QML2_IMPORT_PATH}"
             fi
         done
         export QT_PLUGIN_PATH
