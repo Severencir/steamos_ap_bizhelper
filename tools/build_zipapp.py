@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -49,14 +50,22 @@ def _install_wheel_with_dependencies(wheel: Path, target: Path) -> None:
     )
 
 
+def _copy_bundled_site(source: Path, target: Path) -> None:
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(source, target)
+
+
 def build_zipapp() -> Path:
     wheel = _build_wheel()
     pyz_path = DIST_DIR / "ap-bizhelper.pyz"
+    deps_dir = DIST_DIR / "ap-bizhelper.deps"
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
         _install_wheel_with_dependencies(wheel, tmp_path)
         _create_zipapp(tmp_path, pyz_path)
+        _copy_bundled_site(tmp_path, deps_dir)
 
     return pyz_path
 
