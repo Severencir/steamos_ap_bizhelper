@@ -175,6 +175,20 @@ def _capture_steam_appid_if_present(settings: dict) -> None:
     )
 
 
+def _get_known_steam_appid(settings: dict) -> Optional[str]:
+    """Return the active or cached Steam app id when available."""
+
+    steam_game_id = os.environ.get("SteamGameId")
+    if steam_game_id and steam_game_id.isdigit():
+        return steam_game_id
+
+    cached_appid = str(settings.get("STEAM_APPID") or "")
+    if cached_appid.isdigit():
+        return cached_appid
+
+    return None
+
+
 def _maybe_relaunch_via_steam(argv: list[str], settings: dict) -> None:
     """If not under Steam, try to relaunch through the matching shortcut."""
 
@@ -817,6 +831,44 @@ def _wait_for_archipelago_ready(appimage: Path, *, timeout: int = 30) -> bool:
     return False
 
 
+def _wait_for_launched_apps_to_close(appimage: Path, baseline_bizhawk_pids: Set[int]) -> None:
+    """Block until Archipelago/AppImage and launched BizHawk exit."""
+
+    # Only wait when apps actually launched; the archipelago AppImage is always required
+    # for the main flow so appimage is expected to exist.
+    print("[ap-bizhelper] Waiting for Archipelago/BizHawk to close before ending Steam session...")
+    while True:
+        archipelago_running = _is_archipelago_running() or _is_appimage_mounted(appimage)
+        bizhawk_running = any(
+            pid not in baseline_bizhawk_pids for pid in _list_bizhawk_pids()
+        )
+
+        if not archipelago_running and not bizhawk_running:
+            print("[ap-bizhelper] Archipelago and BizHawk have closed; continuing shutdown.")
+            return
+
+        time.sleep(2)
+
+
+def _notify_steam_game_exit(appid: str) -> None:
+    """Ask Steam to clear the running state for this app id."""
+
+    steam_binary = shutil.which("steam") or shutil.which("/usr/bin/steam")
+    if not steam_binary:
+        return
+
+    try:
+        subprocess.Popen(
+            [steam_binary, f"steam://appquit/{appid}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print(f"[ap-bizhelper] Requested Steam to end session for app id {appid}.")
+    except Exception:
+        # Nothing else to do if Steam is unavailable or refusing the command
+        pass
+
+
 def _find_matching_rom(patch: Path) -> Optional[Path]:
     if patch.suffix.lower() == ".sfc" and patch.is_file():
         return patch
@@ -999,6 +1051,13 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
 
     if _wait_for_archipelago_ready(appimage):
         _handle_bizhawk_for_patch(patch, runner, baseline_pids)
+
+    if _is_running_under_steam():
+        _wait_for_launched_apps_to_close(appimage, baseline_pids)
+        steam_appid = _get_known_steam_appid(settings)
+        if steam_appid:
+            _notify_steam_game_exit(steam_appid)
+
     return 0
 
 
