@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import time
+from urllib.parse import quote
 from pathlib import Path
 from typing import Iterable, Optional, Set, Tuple
 
@@ -177,59 +178,68 @@ def _maybe_relaunch_via_steam(argv: list[str]) -> None:
 
     # "steam -applaunch <appid>" does not work for non-Steam shortcuts; use the
     # universal steam://rungameid URL so Steam can relaunch both workshop apps
-    # and custom shortcuts the user has added manually.
-    launch_cmd = [steam_binary, f"steam://rungameid/{appid}"]
+    # and custom shortcuts the user has added manually. When arguments are
+    # present, pass them via the URL payload instead of command-line "--" which
+    # Steam ignores for rungameid.
+    steam_uri = f"steam://rungameid/{appid}"
     if len(argv) > 1:
-        launch_cmd.append("--")
-        launch_cmd.extend(argv[1:])
+        encoded_args = quote(" ".join(argv[1:]))
+        steam_uri = f"{steam_uri}//{encoded_args}"
+
+    xdg_open = shutil.which("xdg-open")
+    launch_attempts: list[tuple[str, list[str]]] = []
+    if xdg_open:
+        launch_attempts.append(("xdg-open", [xdg_open, steam_uri]))
+    launch_attempts.append(("steam", [steam_binary, steam_uri]))
 
     try:
         print(
             f"[ap-bizhelper] Relaunching via Steam for overlay/controller support (appid {appid})."
         )
-        run_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        log_size_before = relaunch_log.stat().st_size if relaunch_log.exists() else 0
-        with relaunch_log.open("a", encoding="utf-8") as log_file:
-            log_file.write(
-                f"[{run_timestamp}] Running: {' '.join(launch_cmd)} (cwd={os.getcwd()})\n"
-            )
-            log_file.flush()
-            size_after_header = log_file.tell()
-            proc = subprocess.run(
-                launch_cmd,
-                stdout=log_file,
-                stderr=log_file,
-                env=os.environ,
-                check=False,
+        for launcher_name, launch_cmd in launch_attempts:
+            run_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            with relaunch_log.open("a", encoding="utf-8") as log_file:
+                log_file.write(
+                    f"[{run_timestamp}] Running via {launcher_name}: {' '.join(launch_cmd)} (cwd={os.getcwd()})\n"
+                )
+                log_file.flush()
+                size_after_header = log_file.tell()
+                proc = subprocess.run(
+                    launch_cmd,
+                    stdout=log_file,
+                    stderr=log_file,
+                    env=os.environ,
+                    check=False,
+                )
+
+            log_size_after = relaunch_log.stat().st_size
+            steam_output_bytes = log_size_after - size_after_header
+            if proc.returncode == 0:
+                if steam_output_bytes <= 0:
+                    _log_line(
+                        f"{launcher_name} command produced no output; treating as success ("
+                        "Steam often launches silently)."
+                    )
+                else:
+                    _log_line(
+                        f"{launcher_name} command reported exit code 0; exiting current process."
+                    )
+                print(
+                    f"[ap-bizhelper] Steam relaunch command completed (see {relaunch_log})."
+                    " Exiting so Steam can launch the managed shortcut."
+                )
+                sys.exit(0)
+
+            _log_line(
+                f"{launcher_name} command exited with code {proc.returncode}; trying next fallback"
             )
 
-        log_size_after = relaunch_log.stat().st_size
-        steam_output_bytes = log_size_after - size_after_header
-        if proc.returncode == 0 and steam_output_bytes <= 0:
-            msg = (
-                "Steam relaunch command produced no output; assuming relaunch failed. "
-                f"See {relaunch_log} for details."
-            )
-            _log_line(msg)
-            print(f"[ap-bizhelper] {msg}", file=sys.stderr)
-            _zenity_error_dialog(msg)
-            return
-
-        if proc.returncode == 0:
-            _log_line("Steam relaunch command reported exit code 0; exiting current process.")
-            print(
-                f"[ap-bizhelper] Steam relaunch command completed (see {relaunch_log})."
-                " Exiting so Steam can launch the managed shortcut."
-            )
-            sys.exit(0)
-        else:
-            msg = (
-                "Steam relaunch command exited with code "
-                f"{proc.returncode}. See {relaunch_log} for details."
-            )
-            _log_line(msg)
-            print(f"[ap-bizhelper] {msg}", file=sys.stderr)
-            _zenity_error_dialog(msg)
+        msg = (
+            "Steam relaunch command failed across all launchers. "
+            f"See {relaunch_log} for details."
+        )
+        print(f"[ap-bizhelper] {msg}", file=sys.stderr)
+        _zenity_error_dialog(msg)
     except Exception as exc:
         # If Steam launch fails for any reason, continue normal flow but inform the user so
         # the "relaunching" message is not misleading.
