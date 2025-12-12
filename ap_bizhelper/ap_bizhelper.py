@@ -153,17 +153,49 @@ def _find_shortcut_appid(target: Path) -> Optional[int]:
 def _maybe_relaunch_via_steam(argv: list[str]) -> None:
     """If not under Steam, try to relaunch through the matching shortcut."""
 
+    settings = load_settings()
+    steam_game_id = os.environ.get("SteamGameId")
+
     if _is_running_under_steam():
+        if steam_game_id and steam_game_id.isdigit():
+            cached_appid = str(settings.get("STEAM_APPID") or "")
+            if cached_appid != steam_game_id:
+                settings["STEAM_APPID"] = steam_game_id
+                save_settings(settings)
+                print(
+                    "[ap-bizhelper] Detected Steam launch; cached app id "
+                    f"{steam_game_id} for future relaunches."
+                )
         return
 
-    steam_appid = os.environ.get("AP_BIZHELPER_STEAM_APPID")
-    if steam_appid and steam_appid.isdigit():
-        appid = int(steam_appid)
+    steam_appid_env = os.environ.get("AP_BIZHELPER_STEAM_APPID")
+    cached_appid = str(settings.get("STEAM_APPID") or "")
+
+    appid: Optional[int]
+    appid_source: str
+    if steam_appid_env and steam_appid_env.isdigit():
+        appid = int(steam_appid_env)
+        appid_source = "AP_BIZHELPER_STEAM_APPID environment variable"
+    elif cached_appid.isdigit():
+        appid = int(cached_appid)
+        appid_source = "cached Steam launch"
     else:
-        appid = _find_shortcut_appid(Path(argv[0]))
+        message = (
+            "Steam relaunch needs the recorded app id. "
+            "Launch ap-bizhelper from your Steam library once so it can capture it, "
+            "then start it outside Steam again."
+        )
+        print(f"[ap-bizhelper] {message}", file=sys.stderr)
+        _zenity_error_dialog(message)
+        sys.exit(1)
 
-    if appid is None:
-        return
+    if str(settings.get("STEAM_APPID")) != str(appid):
+        settings["STEAM_APPID"] = str(appid)
+        save_settings(settings)
+        print(
+            "[ap-bizhelper] Stored Steam app id "
+            f"{appid} ({appid_source}) for future relaunches."
+        )
 
     steam_binary = shutil.which("steam") or shutil.which("/usr/bin/steam")
     if not steam_binary:
