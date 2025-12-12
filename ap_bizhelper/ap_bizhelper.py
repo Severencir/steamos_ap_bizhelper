@@ -188,11 +188,13 @@ def _maybe_relaunch_via_steam(argv: list[str]) -> None:
             f"[ap-bizhelper] Relaunching via Steam for overlay/controller support (appid {appid})."
         )
         run_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        log_size_before = relaunch_log.stat().st_size if relaunch_log.exists() else 0
         with relaunch_log.open("a", encoding="utf-8") as log_file:
             log_file.write(
                 f"[{run_timestamp}] Running: {' '.join(launch_cmd)} (cwd={os.getcwd()})\n"
             )
             log_file.flush()
+            size_after_header = log_file.tell()
             proc = subprocess.run(
                 launch_cmd,
                 stdout=log_file,
@@ -200,6 +202,19 @@ def _maybe_relaunch_via_steam(argv: list[str]) -> None:
                 env=os.environ,
                 check=False,
             )
+
+        log_size_after = relaunch_log.stat().st_size
+        steam_output_bytes = log_size_after - size_after_header
+        if proc.returncode == 0 and steam_output_bytes <= 0:
+            msg = (
+                "Steam relaunch command produced no output; assuming relaunch failed. "
+                f"See {relaunch_log} for details."
+            )
+            _log_line(msg)
+            print(f"[ap-bizhelper] {msg}", file=sys.stderr)
+            _zenity_error_dialog(msg)
+            return
+
         if proc.returncode == 0:
             _log_line("Steam relaunch command reported exit code 0; exiting current process.")
             print(
