@@ -124,8 +124,8 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
     def _bind_first_gamepad(self, *, initial: bool = False) -> bool:
         from PySide6 import QtGamepad
 
-        connected = self._gamepad_manager.connectedGamepads()
-        if not connected:
+        device_id = self._first_connected_gamepad_id()
+        if device_id is None:
             if not self._warned_no_gamepad:
                 self._warn_gamepad_unavailable(
                     "No connected gamepads detected; connect a controller to enable navigation."
@@ -135,7 +135,6 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
             self.gamepad = None
             return False
 
-        device_id = connected[0]
         try:
             new_gamepad = QtGamepad.QGamepad(device_id, parent=self)
         except Exception as exc:
@@ -157,6 +156,13 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         self._warned_no_gamepad = False
         self._connect_signals()
         return True
+
+    def _first_connected_gamepad_id(self) -> Optional[int]:
+        try:
+            connected = self._gamepad_manager.connectedGamepads()
+        except Exception:
+            return None
+        return connected[0] if connected else None
 
     def _on_connected_gamepads_changed(self) -> None:
         if not self._bind_first_gamepad():
