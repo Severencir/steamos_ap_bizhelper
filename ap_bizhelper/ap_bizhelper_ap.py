@@ -59,6 +59,8 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         self._warned_no_gamepad = False
         self._gamepad_manager = QtGamepad.QGamepadManager.instance()
 
+        self._start_gamepad_discovery()
+
         self.sidebar_view: Optional[QtWidgets.QWidget] = self._find_sidebar()
         self.file_view: Optional[QtWidgets.QWidget] = self._find_file_view()
         self._axis_state: dict[str, bool] = {
@@ -136,6 +138,26 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         if self._bind_timer is not None:
             self._bind_timer.stop()
 
+    def _start_gamepad_discovery(self) -> None:
+        for method_name in ("startListening", "startDiscovery"):
+            method = getattr(self._gamepad_manager, method_name, None)
+            if callable(method):
+                try:
+                    method()
+                except Exception:
+                    pass
+                return
+
+    def _stop_gamepad_discovery(self) -> None:
+        for method_name in ("stopListening", "stopDiscovery"):
+            method = getattr(self._gamepad_manager, method_name, None)
+            if callable(method):
+                try:
+                    method()
+                except Exception:
+                    pass
+                return
+
     def _on_bind_timer_timeout(self) -> None:
         if self._bind_first_gamepad():
             self._stop_bind_timer()
@@ -145,6 +167,7 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
 
         device_id = self._first_connected_gamepad_id()
         if device_id is None:
+            self._start_gamepad_discovery()
             if not self._warned_no_gamepad:
                 self._warn_gamepad_unavailable(
                     "No connected gamepads detected; connect a controller to enable navigation."
@@ -176,6 +199,7 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         self.gamepad = new_gamepad
         self._warned_no_gamepad = False
         self._connect_signals()
+        self._stop_gamepad_discovery()
         self._stop_bind_timer()
         return True
 
