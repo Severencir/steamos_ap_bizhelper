@@ -168,12 +168,59 @@ def _maybe_relaunch_via_steam(argv: list[str]) -> None:
     if not steam_binary:
         return
 
+    relaunch_log = Path.home() / ".local/share/ap-bizhelper/steam-relaunch.log"
+    relaunch_log.parent.mkdir(parents=True, exist_ok=True)
+    def _log_line(message: str) -> None:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with relaunch_log.open("a", encoding="utf-8") as log_file:
+            log_file.write(f"[{timestamp}] {message}\n")
+
+    launch_cmd = [steam_binary, "-applaunch", str(appid)]
+    if len(argv) > 1:
+        launch_cmd.append("--")
+        launch_cmd.extend(argv[1:])
+
     try:
-        print(f"[ap-bizhelper] Relaunching via Steam for overlay/controller support (appid {appid}).")
-        os.execvpe(steam_binary, [steam_binary, f"steam://rungameid/{appid}"] + argv[1:], os.environ)
-    except Exception:
-        # If Steam launch fails for any reason, continue normal flow.
-        pass
+        print(
+            f"[ap-bizhelper] Relaunching via Steam for overlay/controller support (appid {appid})."
+        )
+        run_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with relaunch_log.open("a", encoding="utf-8") as log_file:
+            log_file.write(
+                f"[{run_timestamp}] Running: {' '.join(launch_cmd)} (cwd={os.getcwd()})\n"
+            )
+            log_file.flush()
+            proc = subprocess.run(
+                launch_cmd,
+                stdout=log_file,
+                stderr=log_file,
+                env=os.environ,
+                check=False,
+            )
+        if proc.returncode == 0:
+            _log_line("Steam relaunch command reported exit code 0; exiting current process.")
+            print(
+                f"[ap-bizhelper] Steam relaunch command completed (see {relaunch_log})."
+                " Exiting so Steam can launch the managed shortcut."
+            )
+            sys.exit(0)
+        else:
+            msg = (
+                "Steam relaunch command exited with code "
+                f"{proc.returncode}. See {relaunch_log} for details."
+            )
+            _log_line(msg)
+            print(f"[ap-bizhelper] {msg}", file=sys.stderr)
+            _zenity_error_dialog(msg)
+    except Exception as exc:
+        # If Steam launch fails for any reason, continue normal flow but inform the user so
+        # the "relaunching" message is not misleading.
+        _log_line(f"Failed to relaunch via Steam: {exc}")
+        print(f"[ap-bizhelper] Failed to relaunch via Steam: {exc}", file=sys.stderr)
+        _zenity_error_dialog(
+            "Steam relaunch failed. Please check the console output "
+            f"or log at {relaunch_log} to troubleshoot."
+        )
 
 
 def _select_patch_file() -> Path:
