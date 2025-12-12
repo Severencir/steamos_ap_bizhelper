@@ -895,8 +895,7 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids
     _launch_bizhawk(runner, rom)
 
 
-def _run_prereqs(*, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path], Optional[Path]]:
-    settings = load_settings()
+def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path], Optional[Path]]:
     need_arch = _needs_archipelago_download(settings)
     need_bizhawk = _needs_bizhawk_download(settings)
 
@@ -943,9 +942,9 @@ def _run_prereqs(*, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path
     return appimage, runner
 
 
-def _run_full_flow() -> int:
+def _run_full_flow(settings: dict) -> int:
     try:
-        appimage, runner = _run_prereqs()
+        appimage, runner = _run_prereqs(settings)
     except RuntimeError as exc:
         error_dialog(str(exc))
         return 1
@@ -987,7 +986,7 @@ def main(argv: list[str]) -> int:
 
     if len(argv) >= 2 and argv[1] == "ensure":
         try:
-            _run_prereqs(allow_archipelago_skip=True)
+            _run_prereqs(settings, allow_archipelago_skip=True)
         except RuntimeError:
             return 1
         return 0
@@ -996,7 +995,7 @@ def main(argv: list[str]) -> int:
         print("Usage: ap_bizhelper.py [ensure]", file=sys.stderr)
         return 1
 
-    return _run_full_flow()
+    return _run_full_flow(settings)
 
 
 if __name__ == "__main__":  # pragma: no cover
