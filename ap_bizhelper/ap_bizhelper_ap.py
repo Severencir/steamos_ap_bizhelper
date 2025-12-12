@@ -43,6 +43,7 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
 
         if _QtCoreBase is None:
             self.gamepad = None
+            self._bind_timer = None
             self._warn_gamepad_unavailable(
                 "Qt could not be imported; gamepad navigation is disabled."
             )
@@ -54,6 +55,7 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         self.QtGui = QtGui
         self.QtWidgets = QtWidgets
         self.gamepad: Optional[QtGamepad.QGamepad] = None
+        self._bind_timer: Optional[QtCore.QTimer] = None
         self._warned_no_gamepad = False
         self._gamepad_manager = QtGamepad.QGamepadManager.instance()
 
@@ -70,6 +72,10 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         except Exception:
             return
 
+        self._bind_timer = self.QtCore.QTimer(self)
+        self._bind_timer.setInterval(250)
+        self._bind_timer.timeout.connect(self._on_bind_timer_timeout)
+
         try:
             self._gamepad_manager.connectedGamepadsChanged.connect(
                 self._on_connected_gamepads_changed
@@ -78,6 +84,7 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
             return
 
         if not self._bind_first_gamepad(initial=True):
+            self._restart_bind_timer()
             self._fallback_to_keyboard_navigation()
 
     def eventFilter(self, obj: "QtCore.QObject", event: "QtCore.QEvent") -> bool:  # type: ignore[override]
@@ -121,6 +128,18 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         except Exception:
             pass
 
+    def _restart_bind_timer(self) -> None:
+        if self._bind_timer is not None:
+            self._bind_timer.start()
+
+    def _stop_bind_timer(self) -> None:
+        if self._bind_timer is not None:
+            self._bind_timer.stop()
+
+    def _on_bind_timer_timeout(self) -> None:
+        if self._bind_first_gamepad():
+            self._stop_bind_timer()
+
     def _bind_first_gamepad(self, *, initial: bool = False) -> bool:
         from PySide6 import QtGamepad
 
@@ -133,6 +152,7 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
                 self._warned_no_gamepad = True
             self._disconnect_signals()
             self.gamepad = None
+            self._restart_bind_timer()
             return False
 
         try:
@@ -144,6 +164,7 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
             )
             self._disconnect_signals()
             self.gamepad = None
+            self._restart_bind_timer()
             return False
 
         self._disconnect_signals()
@@ -155,6 +176,7 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
         self.gamepad = new_gamepad
         self._warned_no_gamepad = False
         self._connect_signals()
+        self._stop_bind_timer()
         return True
 
     def _first_connected_gamepad_id(self) -> Optional[int]:
@@ -166,6 +188,7 @@ class GamepadFileDialogController(_QtCoreBase.QObject if _QtCoreBase else object
 
     def _on_connected_gamepads_changed(self) -> None:
         if not self._bind_first_gamepad():
+            self._restart_bind_timer()
             self._fallback_to_keyboard_navigation()
 
     def _fallback_to_keyboard_navigation(self) -> None:
