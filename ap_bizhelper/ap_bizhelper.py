@@ -33,6 +33,149 @@ from .ap_bizhelper_config import (
 from .ap_bizhelper_worlds import ensure_apworld_for_patch
 
 
+def _is_running_under_steam() -> bool:
+    """Return ``True`` when launched by Steam (Steam overlay/controller env set)."""
+
+    return bool(os.environ.get("SteamGameId"))
+
+
+def _shortcut_vdf_paths() -> Iterable[Path]:
+    """Yield plausible ``shortcuts.vdf`` locations for the current user."""
+
+    home = Path.home()
+    bases = [home / ".steam/steam", home / ".local/share/Steam"]
+    for base in bases:
+        userdata = base / "userdata"
+        if not userdata.is_dir():
+            continue
+        for userdir in userdata.iterdir():
+            config = userdir / "config/shortcuts.vdf"
+            if config.is_file():
+                yield config
+
+
+def _read_cstring(data: bytes, idx: int) -> Tuple[str, int]:
+    end = data.find(b"\x00", idx)
+    if end == -1:
+        raise ValueError("Unterminated string in shortcuts.vdf")
+    return data[idx:end].decode("utf-8", errors="ignore"), end + 1
+
+
+def _parse_binary_kv(data: bytes, idx: int = 0) -> Tuple[dict, int]:
+    """Parse a binary VDF-style key/value object starting at ``idx``."""
+
+    obj = {}
+    while idx < len(data):
+        value_type = data[idx]
+        idx += 1
+
+        if value_type == 0x08:
+            return obj, idx
+
+        key, idx = _read_cstring(data, idx)
+
+        if value_type == 0x00:  # nested object
+            value, idx = _parse_binary_kv(data, idx)
+        elif value_type == 0x01:  # string
+            value, idx = _read_cstring(data, idx)
+        elif value_type == 0x02:  # int32
+            if idx + 4 > len(data):
+                raise ValueError("Unexpected end of int32 in shortcuts.vdf")
+            value = int.from_bytes(data[idx : idx + 4], "little", signed=True)
+            idx += 4
+        elif value_type == 0x07:  # uint64
+            if idx + 8 > len(data):
+                raise ValueError("Unexpected end of int64 in shortcuts.vdf")
+            value = int.from_bytes(data[idx : idx + 8], "little", signed=False)
+            idx += 8
+        else:
+            raise ValueError(f"Unsupported VDF field type: {value_type}")
+
+        obj[key] = value
+
+    raise ValueError("Unexpected end of shortcuts.vdf")
+
+
+def _load_shortcuts(path: Path) -> list[dict]:
+    """Return a list of shortcut dicts from a binary ``shortcuts.vdf`` file."""
+
+    try:
+        data = path.read_bytes()
+        root, _ = _parse_binary_kv(data)
+    except Exception:
+        return []
+
+    shortcuts_obj = root.get("shortcuts")
+    if not isinstance(shortcuts_obj, dict):
+        return []
+
+    shortcuts: list[dict] = []
+    for entry in shortcuts_obj.values():
+        if isinstance(entry, dict):
+            shortcuts.append(entry)
+
+    return shortcuts
+
+
+def _normalize_exe_field(value: str | None) -> Optional[Path]:
+    if not value:
+        return None
+    cleaned = value.strip().strip("\"")
+    first = cleaned.split(" ", 1)[0]
+    try:
+        return Path(first).expanduser().resolve()
+    except Exception:
+        return None
+
+
+def _find_shortcut_appid(target: Path) -> Optional[int]:
+    target = target.resolve()
+    for shortcuts_path in _shortcut_vdf_paths():
+        for entry in _load_shortcuts(shortcuts_path):
+            exe_value = entry.get("exe") or entry.get("Exe")
+            exe_path = _normalize_exe_field(str(exe_value)) if exe_value is not None else None
+            if exe_path is None:
+                continue
+            if exe_path == target or str(target) in str(exe_path):
+                appid = entry.get("appid") or entry.get("AppId")
+                if isinstance(appid, int):
+                    return appid
+
+            app_name = str(entry.get("appname") or entry.get("AppName") or "")
+            if app_name.lower().startswith("ap-bizhelper") or "bizhelper" in app_name.lower():
+                appid = entry.get("appid") or entry.get("AppId")
+                if isinstance(appid, int):
+                    return appid
+    return None
+
+
+def _maybe_relaunch_via_steam(argv: list[str]) -> None:
+    """If not under Steam, try to relaunch through the matching shortcut."""
+
+    if _is_running_under_steam():
+        return
+
+    steam_appid = os.environ.get("AP_BIZHELPER_STEAM_APPID")
+    if steam_appid and steam_appid.isdigit():
+        appid = int(steam_appid)
+    else:
+        appid = _find_shortcut_appid(Path(argv[0]))
+
+    if appid is None:
+        return
+
+    steam_binary = shutil.which("steam") or shutil.which("/usr/bin/steam")
+    if not steam_binary:
+        return
+
+    try:
+        print(f"[ap-bizhelper] Relaunching via Steam for overlay/controller support (appid {appid}).")
+        os.execvpe(steam_binary, [steam_binary, f"steam://rungameid/{appid}"] + argv[1:], os.environ)
+    except Exception:
+        # If Steam launch fails for any reason, continue normal flow.
+        pass
+
+
 def _select_patch_file() -> Path:
     patch = _select_file_dialog(
         title="Select Archipelago patch file",
@@ -483,6 +626,8 @@ def _run_full_flow() -> int:
 
 
 def main(argv: list[str]) -> int:
+    _maybe_relaunch_via_steam(argv)
+
     if len(argv) >= 2 and argv[1] == "ensure":
         try:
             _run_prereqs(allow_archipelago_skip=True)
