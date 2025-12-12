@@ -190,7 +190,7 @@ def _sidebar_urls() -> list["QtCore.QUrl"]:
 def _qt_file_dialog(
     *, title: str, start_dir: Path, file_filter: Optional[str] = None
 ) -> Optional[Path]:
-    from PySide6 import QtCore, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
 
     _ensure_qt_app()
     filter_text = file_filter or "All Files (*)"
@@ -203,9 +203,16 @@ def _qt_file_dialog(
     dialog.setViewMode(QtWidgets.QFileDialog.Detail)
     dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
     dialog.setOption(QtWidgets.QFileDialog.ReadOnly, False)
+    if hasattr(QtGui.QGuiApplication, "setNavigationMode") and hasattr(
+        QtCore.Qt, "NavigationModeKeypadDirectional"
+    ):
+        QtGui.QGuiApplication.setNavigationMode(
+            QtCore.Qt.NavigationModeKeypadDirectional
+        )
     sidebar_urls = _sidebar_urls()
     if sidebar_urls:
         dialog.setSidebarUrls(sidebar_urls)
+    dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
