@@ -735,10 +735,6 @@ def _handle_extension_association(ext: str) -> None:
         _apply_association_files(registered_exts)
         return
 
-    if ext not in registered_exts:
-        registered_exts.append(ext)
-    _apply_association_files(registered_exts)
-
     if mode != "prompt":
         return
 
@@ -797,6 +793,7 @@ def _handle_extension_association(ext: str) -> None:
 
     if choice == "cancel":
         set_ext_association(ext, "declined")
+        _apply_association_files(_registered_association_exts())
 
 
 def _list_bizhawk_pids() -> Set[int]:
