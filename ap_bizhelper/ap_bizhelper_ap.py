@@ -30,6 +30,11 @@ _QT_FILE_NAME_FONT_SCALE = 1.5
 _QT_FILE_DIALOG_WIDTH = 1280
 _QT_FILE_DIALOG_HEIGHT = 800
 _QT_FILE_DIALOG_MAXIMIZE = True
+_QT_FILE_DIALOG_NAME_WIDTH = 0
+_QT_FILE_DIALOG_TYPE_WIDTH = 0
+_QT_FILE_DIALOG_SIZE_WIDTH = 0
+_QT_FILE_DIALOG_DATE_WIDTH = 0
+_QT_FILE_DIALOG_COLUMN_SCALE = 1.8
 _QT_IMPORT_ERROR: Optional[BaseException] = None
 _DEFAULT_SETTINGS = {
     "ENABLE_GAMEPAD_FILE_DIALOG": True,
@@ -39,6 +44,10 @@ _DEFAULT_SETTINGS = {
     "QT_FILE_DIALOG_WIDTH": _QT_FILE_DIALOG_WIDTH,
     "QT_FILE_DIALOG_HEIGHT": _QT_FILE_DIALOG_HEIGHT,
     "QT_FILE_DIALOG_MAXIMIZE": _QT_FILE_DIALOG_MAXIMIZE,
+    "QT_FILE_DIALOG_NAME_WIDTH": _QT_FILE_DIALOG_NAME_WIDTH,
+    "QT_FILE_DIALOG_TYPE_WIDTH": _QT_FILE_DIALOG_TYPE_WIDTH,
+    "QT_FILE_DIALOG_SIZE_WIDTH": _QT_FILE_DIALOG_SIZE_WIDTH,
+    "QT_FILE_DIALOG_DATE_WIDTH": _QT_FILE_DIALOG_DATE_WIDTH,
 }
 
 try:
@@ -430,6 +439,38 @@ def _coerce_bool_setting(settings: Dict[str, Any], key: str, default: bool) -> b
     return default
 
 
+def _detect_global_scale() -> float:
+    try:
+        from PySide6 import QtGui
+    except Exception:
+        return 1.0
+
+    try:
+        screen = QtGui.QGuiApplication.primaryScreen()
+    except Exception:
+        return 1.0
+
+    if screen is None:
+        return 1.0
+
+    dpi_scale = 1.0
+    try:
+        logical_dpi = float(screen.logicalDotsPerInch())
+        if logical_dpi > 0:
+            dpi_scale = logical_dpi / 96.0
+    except Exception:
+        dpi_scale = 1.0
+
+    try:
+        pixel_ratio = float(screen.devicePixelRatio())
+        if pixel_ratio > 0:
+            dpi_scale = max(dpi_scale, pixel_ratio)
+    except Exception:
+        pass
+
+    return max(dpi_scale, 0.1)
+
+
 def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApplication":
     global _QT_APP
 
@@ -464,14 +505,16 @@ def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApp
 
     settings_obj = {**_DEFAULT_SETTINGS, **(settings or _load_settings())}
     font_scale = _coerce_font_setting(settings_obj, "QT_FONT_SCALE", _QT_FONT_SCALE, minimum=0.1)
+    global_scale = _detect_global_scale()
+    normalized_font_scale = font_scale / global_scale
     min_point_size = _coerce_font_setting(
         settings_obj, "QT_MIN_POINT_SIZE", _QT_MIN_POINT_SIZE, minimum=1
     )
     font: QtGui.QFont = app.font()
-    min_scaled_point_size = int(min_point_size * font_scale)
+    min_scaled_point_size = int(min_point_size * normalized_font_scale)
     scaled_font = _scaled_font(
         font,
-        font_scale,
+        normalized_font_scale,
         min_point_size=min_scaled_point_size,
         min_pixel_size=min_scaled_point_size,
         fallback_point_size=min_scaled_point_size,
@@ -577,6 +620,65 @@ def _sidebar_urls() -> list["QtCore.QUrl"]:
     ]
 
 
+def _configure_file_view_columns(
+    dialog: "QtWidgets.QFileDialog", settings_obj: Dict[str, Any]
+) -> None:
+    from PySide6 import QtCore, QtWidgets
+
+    tree_view = dialog.findChild(QtWidgets.QTreeView, "treeView")
+    if tree_view is None:
+        return
+
+    model = tree_view.model()
+    header = tree_view.header()
+    if model is None or header is None:
+        return
+
+    column_count = model.columnCount()
+    if column_count <= 0:
+        return
+
+    label_to_index: dict[str, int] = {}
+    for idx in range(column_count):
+        try:
+            label = str(
+                model.headerData(idx, QtCore.Qt.Horizontal, QtCore.Qt.DisplayRole) or ""
+            ).strip()
+        except Exception:
+            label = ""
+        if label:
+            label_to_index[label.lower()] = idx
+
+    desired_columns = [
+        ("name", "QT_FILE_DIALOG_NAME_WIDTH"),
+        ("size", "QT_FILE_DIALOG_SIZE_WIDTH"),
+        ("type", "QT_FILE_DIALOG_TYPE_WIDTH"),
+        ("date modified", "QT_FILE_DIALOG_DATE_WIDTH"),
+    ]
+    fallback_indices = {"name": 0, "size": 1, "type": 2, "date modified": 3}
+
+    for label, setting_key in desired_columns:
+        index = label_to_index.get(label, fallback_indices.get(label))
+        if index is None or index >= column_count:
+            continue
+        base_width = header.sectionSize(index)
+        if base_width <= 0:
+            try:
+                base_width = tree_view.sizeHintForColumn(index)
+            except Exception:
+                base_width = 0
+        configured_width = _coerce_int_setting(
+            settings_obj, setting_key, 0, minimum=0
+        )
+        target_width = configured_width or int(base_width * _QT_FILE_DIALOG_COLUMN_SCALE)
+        if target_width > 0:
+            try:
+                header.setSectionResizeMode(index, QtWidgets.QHeaderView.Interactive)
+            except Exception:
+                pass
+            header.resizeSection(index, target_width)
+
+
 def _qt_file_dialog(
     *,
     title: str,
@@ -588,6 +690,7 @@ def _qt_file_dialog(
 
     settings_obj = {**_DEFAULT_SETTINGS, **(settings or {})}
     _ensure_qt_app(settings_obj)
+    global_scale = _detect_global_scale()
     filter_text = file_filter or "All Files (*)"
     dialog = QtWidgets.QFileDialog()
     dialog.setWindowTitle(title)
@@ -616,22 +719,22 @@ def _qt_file_dialog(
     def _scale_file_name_font(widget: "QtWidgets.QWidget") -> None:
         base_font = widget.font()
         scaled_font = QtGui.QFont(base_font)
+        name_font_scale = _coerce_font_setting(
+            settings_obj, "QT_FILE_NAME_FONT_SCALE", _QT_FILE_NAME_FONT_SCALE, minimum=0.1
+        )
+        effective_name_font_scale = name_font_scale / global_scale
         if base_font.pointSize() > 0:
             scaled_font.setPointSize(
                 int(
                     base_font.pointSize()
-                    * _coerce_font_setting(
-                        settings_obj, "QT_FILE_NAME_FONT_SCALE", _QT_FILE_NAME_FONT_SCALE, minimum=0.1
-                    )
+                    * effective_name_font_scale
                 )
             )
         elif base_font.pixelSize() > 0:
             scaled_font.setPixelSize(
                 int(
                     base_font.pixelSize()
-                    * _coerce_font_setting(
-                        settings_obj, "QT_FILE_NAME_FONT_SCALE", _QT_FILE_NAME_FONT_SCALE, minimum=0.1
-                    )
+                    * effective_name_font_scale
                 )
             )
         widget.setFont(scaled_font)
@@ -648,6 +751,7 @@ def _qt_file_dialog(
         settings_obj, "QT_FILE_DIALOG_MAXIMIZE", _QT_FILE_DIALOG_MAXIMIZE
     ):
         dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
+    _configure_file_view_columns(dialog, settings_obj)
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)

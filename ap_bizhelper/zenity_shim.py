@@ -6,7 +6,9 @@ This module provides two entry points:
 * ``prepare_zenity_shim_env``: helper to build an environment pointing ``PATH``
   at the shim so launched applications use it instead of the system zenity.
 
-Unsupported commands fall back to the real ``zenity`` binary if available.
+Unsupported commands surface an error dialog instead of falling back to the
+real ``zenity`` binary. This is temporary so that failures are visible while
+the shim is hardened.
 """
 from __future__ import annotations
 
@@ -42,14 +44,20 @@ class ZenityShim:
 
     def handle(self, argv: Sequence[str]) -> int:
         if not argv:
-            return self._fallback(argv)
+            return self._fallback(argv, "No zenity arguments were provided.")
 
         mode = self._detect_mode(argv)
         if mode is None:
-            return self._fallback(argv)
+            return self._fallback(
+                argv,
+                "The zenity shim could not recognize the requested dialog type.",
+            )
 
         if not self._qt_available():
-            return self._fallback(argv)
+            return self._fallback(
+                argv,
+                "PySide6 is unavailable, so the shim cannot render the requested dialog.",
+            )
 
         if mode == "question":
             return self._handle_question(argv)
@@ -62,7 +70,7 @@ class ZenityShim:
         if mode == "progress":
             return self._handle_progress(argv)
 
-        return self._fallback(argv)
+        return self._fallback(argv, "The requested zenity mode is not yet supported.")
 
     def _detect_mode(self, argv: Sequence[str]) -> Optional[str]:
         if "--question" in argv:
@@ -80,12 +88,48 @@ class ZenityShim:
     def _qt_available(self) -> bool:
         return importlib.util.find_spec("PySide6") is not None
 
-    def _fallback(self, argv: Sequence[str]) -> int:
-        if not self.real_zenity:
-            sys.stderr.write("zenity shim: zenity not available for unsupported command\n")
-            return 127
-        os.execv(self.real_zenity, [self.real_zenity, *argv])
+    def _fallback(self, argv: Sequence[str], reason: str) -> int:
+        cmd = " ".join(argv) if argv else "(no arguments)"
+        details = [
+            "The Archipelago zenity shim could not handle the request.",
+            f"Reason: {reason}",
+        ]
+        if self.real_zenity:
+            details.append(
+                "The system zenity is installed, but the shim failsafe is temporarily disabled."
+            )
+        details.append(f"Command: {cmd}")
+        self._show_error_dialog("\n".join(details))
         return 127
+
+    def _show_error_dialog(self, message: str) -> None:
+        if self._qt_available():
+            try:
+                from PySide6 import QtWidgets  # type: ignore
+                from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app
+
+                _ensure_qt_app()
+                box = QtWidgets.QMessageBox()
+                box.setIcon(QtWidgets.QMessageBox.Critical)
+                box.setWindowTitle("Zenity Shim Error")
+                box.setText(message)
+                box.exec()
+                return
+            except Exception:
+                pass
+
+        if self.real_zenity:
+            try:
+                subprocess.call(
+                    [self.real_zenity, "--error", f"--text={message}"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                return
+            except Exception:
+                pass
+
+        sys.stderr.write(message + "\n")
 
     def _extract_option(self, argv: Sequence[str], prefix: str) -> Optional[str]:
         for arg in argv:
@@ -154,7 +198,7 @@ class ZenityShim:
 
         items = self._parse_checklist_items(argv)
         if items is None:
-            return self._fallback(argv)
+            return self._fallback(argv, "The checklist arguments could not be parsed.")
 
         _ensure_qt_app()
         dialog = QtWidgets.QDialog()
