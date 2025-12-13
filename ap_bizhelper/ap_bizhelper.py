@@ -1097,6 +1097,12 @@ def main(argv: list[str]) -> int:
         and _is_running_under_steam()
     ):
         user_args = [str(arg) for arg in cached_relaunch_args if str(arg).strip()]
+
+        # Clear the relaunch cache once it is consumed so we do not keep
+        # reusing the patch when no argument is provided in future launches.
+        cached_relaunch_args = []
+        allow_cached_relaunch_args = False
+        save_settings(settings)
     patch_arg: Optional[str] = user_args[0] if user_args else None
 
     if patch_arg == "ensure":
