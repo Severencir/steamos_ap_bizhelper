@@ -450,6 +450,38 @@ def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApp
 
     from PySide6 import QtGui, QtWidgets
 
+    def _parse_env_scale(value: Optional[str]) -> Optional[float]:
+        if not value:
+            return None
+        try:
+            parsed = float(value.strip())
+        except Exception:
+            return None
+        if parsed <= 0:
+            return None
+        return parsed
+
+    def _detect_environment_scale() -> float:
+        # Prefer explicit Qt scaling variables if present.
+        env_scale = _parse_env_scale(os.environ.get("QT_SCALE_FACTOR"))
+        if env_scale:
+            return env_scale
+
+        screen_scales = os.environ.get("QT_SCREEN_SCALE_FACTORS")
+        if screen_scales:
+            for token in re.split(r"[;,:\\s]+", screen_scales):
+                env_scale = _parse_env_scale(token)
+                if env_scale:
+                    return env_scale
+
+        # Fall back to the primary screen device pixel ratio if available.
+        primary_screen = QtGui.QGuiApplication.primaryScreen()
+        try:
+            ratio = float(primary_screen.devicePixelRatio() or 1.0)
+        except Exception:
+            ratio = 1.0
+        return max(ratio, 0.5)
+
     def _scaled_font(
         font: "QtGui.QFont",
         scale: float,
@@ -479,14 +511,18 @@ def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApp
 
     settings_obj = {**_DEFAULT_SETTINGS, **(settings or _load_settings())}
     font_scale = _coerce_font_setting(settings_obj, "QT_FONT_SCALE", _QT_FONT_SCALE, minimum=0.1)
+    environment_scale = _detect_environment_scale()
+    effective_scale = max(font_scale / environment_scale, 0.1)
     min_point_size = _coerce_font_setting(
         settings_obj, "QT_MIN_POINT_SIZE", _QT_MIN_POINT_SIZE, minimum=1
     )
     font: QtGui.QFont = app.font()
-    min_scaled_point_size = int(min_point_size * font_scale)
+    min_scaled_point_size = int(min_point_size * effective_scale)
+    if min_scaled_point_size < 1:
+        min_scaled_point_size = 1
     scaled_font = _scaled_font(
         font,
-        font_scale,
+        effective_scale,
         min_point_size=min_scaled_point_size,
         min_pixel_size=min_scaled_point_size,
         fallback_point_size=min_scaled_point_size,
