@@ -1119,7 +1119,7 @@ def main(argv: list[str]) -> int:
             settings_dirty = True
 
         had_cached_relaunch_flag = "USE_CACHED_RELAUNCH_ARGS" in settings
-        allow_cached_relaunch_args = bool(settings.pop("USE_CACHED_RELAUNCH_ARGS", False))
+        settings.pop("USE_CACHED_RELAUNCH_ARGS", None)
         if had_cached_relaunch_flag:
             settings_dirty = True
 
@@ -1134,24 +1134,25 @@ def main(argv: list[str]) -> int:
         if running_under_steam:
             if user_args:
                 cached_relaunch_args = []
-                allow_cached_relaunch_args = False
                 _clear_relaunch_cache(
                     settings,
                     force_save=(had_cached_relaunch_flag or settings_dirty),
                 )
-            elif cached_relaunch_args and allow_cached_relaunch_args:
+            elif cached_relaunch_args:
                 user_args = [str(arg) for arg in cached_relaunch_args if str(arg).strip()]
                 cached_relaunch_args = []
-                allow_cached_relaunch_args = False
                 _clear_relaunch_cache(settings, force_save=True)
         else:
             if user_args:
+                settings["PENDING_RELAUNCH_ARGS"] = user_args
+                settings["USE_CACHED_RELAUNCH_ARGS"] = True
+                save_settings(settings)
                 skip_final_cache_clear = True
                 _maybe_relaunch_via_steam(argv, settings)
                 skip_final_cache_clear = False
+                _clear_relaunch_cache(settings, force_save=True)
             else:
                 cached_relaunch_args = []
-                allow_cached_relaunch_args = False
                 _clear_relaunch_cache(
                     settings,
                     force_save=(had_cached_relaunch_flag or settings_dirty),
