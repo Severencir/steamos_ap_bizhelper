@@ -777,23 +777,23 @@ def _handle_extension_association(ext: str) -> None:
         elif code == 5:
             choice = "extra"
 
+    apply_associations = False
     if choice == "ok":
+        set_association_mode("enabled")
         set_ext_association(ext, "registered")
-        registered_exts = _registered_association_exts()
         if ext not in registered_exts:
             registered_exts.append(ext)
-        _apply_association_files(registered_exts)
-        return
+        apply_associations = True
 
     if choice == "extra":
         set_association_mode("disabled")
         set_ext_association(ext, "declined")
-        _apply_association_files(_registered_association_exts())
-        return
 
     if choice == "cancel":
         set_ext_association(ext, "declined")
-        _apply_association_files(_registered_association_exts())
+
+    if apply_associations:
+        _apply_association_files(registered_exts)
 
 
 def _list_bizhawk_pids() -> Set[int]:
