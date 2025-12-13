@@ -24,9 +24,9 @@ DOWNLOADS_DIR = Path(os.path.expanduser("~/Downloads"))
 GITHUB_API_LATEST = "https://api.github.com/repos/ArchipelagoMW/Archipelago/releases/latest"
 
 _QT_APP: Optional["QtWidgets.QApplication"] = None
-_QT_FONT_SCALE = 1.5
+_QT_FONT_SCALE = 1.0
 _QT_MIN_POINT_SIZE = 12
-_QT_FILE_NAME_FONT_SCALE = 1.5
+_QT_FILE_NAME_FONT_SCALE = 1.0
 _QT_FILE_DIALOG_WIDTH = 1280
 _QT_FILE_DIALOG_HEIGHT = 800
 _QT_FILE_DIALOG_MAXIMIZE = True
