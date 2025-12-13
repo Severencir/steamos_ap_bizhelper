@@ -1079,26 +1079,25 @@ def main(argv: list[str]) -> int:
     _capture_steam_appid_if_present(settings)
     _maybe_relaunch_via_steam(argv, settings)
 
-    patch_arg: Optional[str] = None
+    user_args = [arg for arg in argv[1:] if not arg.startswith("--appimage")]
+    patch_arg: Optional[str] = user_args[0] if user_args else None
 
-    if len(argv) >= 2:
-        if argv[1] == "ensure":
-            if len(argv) > 2:
-                print("Usage: ap_bizhelper.py [ensure]", file=sys.stderr)
-                return 1
-            try:
-                _run_prereqs(settings, allow_archipelago_skip=True)
-            except RuntimeError:
-                return 1
-            return 0
+    if patch_arg == "ensure":
+        if len(user_args) > 1:
+            print("Usage: ap_bizhelper.py [ensure]", file=sys.stderr)
+            return 1
+        try:
+            _run_prereqs(settings, allow_archipelago_skip=True)
+        except RuntimeError:
+            return 1
+        return 0
 
-        patch_arg = argv[1]
-        if len(argv) > 2:
-            print(
-                "[ap-bizhelper] Extra launcher arguments detected; "
-                "treating the first argument as the patch and ignoring the rest.",
-                file=sys.stderr,
-            )
+    if len(user_args) > 1:
+        print(
+            "[ap-bizhelper] Extra launcher arguments detected; treating the first "
+            "argument as the patch and ignoring the rest.",
+            file=sys.stderr,
+        )
 
     return _run_full_flow(settings, patch_arg)
 
