@@ -706,11 +706,12 @@ def _handle_extension_association(ext: str) -> None:
 
     if mode == "enabled" and association != "registered":
         set_ext_association(ext, "registered")
-        _apply_association_files(_registered_association_exts())
-        return
 
-    if association == "registered":
-        _apply_association_files(_registered_association_exts())
+    if association == "registered" or mode == "enabled":
+        registered_exts = _registered_association_exts()
+        if ext not in registered_exts:
+            registered_exts.append(ext)
+        _apply_association_files(registered_exts)
         return
 
     if mode != "prompt":
