@@ -48,6 +48,22 @@ def _is_running_under_steam() -> bool:
     return bool(os.environ.get("SteamGameId"))
 
 
+def _clear_relaunch_cache(settings: dict) -> bool:
+    """Remove cached relaunch arguments when they are no longer needed.
+
+    Returns ``True`` when the settings object was modified.
+    """
+
+    changed = False
+    for key in ("PENDING_RELAUNCH_ARGS", "USE_CACHED_RELAUNCH_ARGS"):
+        if key in settings:
+            settings.pop(key, None)
+            changed = True
+    if changed:
+        save_settings(settings)
+    return changed
+
+
 def _shortcut_vdf_paths() -> Iterable[Path]:
     """Yield plausible ``shortcuts.vdf`` locations for the current user."""
 
@@ -282,6 +298,7 @@ def _maybe_relaunch_via_steam(argv: list[str], settings: dict) -> None:
             if proc.returncode == 0:
                 if len(argv) > 1:
                     settings["PENDING_RELAUNCH_ARGS"] = argv[1:]
+                    settings["USE_CACHED_RELAUNCH_ARGS"] = True
                     save_settings(settings)
                 relaunch_logger.log(
                     f"{launcher_name} command reported exit code 0; exiting current process."
@@ -1080,15 +1097,13 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
 
 def main(argv: list[str]) -> int:
     settings = load_settings()
-    cached_relaunch_args = settings.pop("PENDING_RELAUNCH_ARGS", []) or []
-    if cached_relaunch_args:
-        save_settings(settings)
+    if settings.get("PENDING_RELAUNCH_ARGS") or "USE_CACHED_RELAUNCH_ARGS" in settings:
+        _clear_relaunch_cache(settings)
+
     _capture_steam_appid_if_present(settings)
     _maybe_relaunch_via_steam(argv, settings)
 
     user_args = [arg for arg in argv[1:] if not arg.startswith("--appimage")]
-    if not user_args and cached_relaunch_args:
-        user_args = [str(arg) for arg in cached_relaunch_args if str(arg).strip()]
     patch_arg: Optional[str] = user_args[0] if user_args else None
 
     if patch_arg == "ensure":
