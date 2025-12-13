@@ -5,13 +5,20 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .ap_bizhelper_config import load_settings as _load_shared_settings, save_settings as _save_shared_settings
+from .ap_bizhelper_config import (
+    DEBUG_CACHE_ENABLED,
+    cache_debug_component,
+    get_debug_cache_entry,
+    load_settings as _load_shared_settings,
+    save_settings as _save_shared_settings,
+)
 
 # Paths mirror the bash script and the config helper.
 CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
@@ -992,7 +999,15 @@ def _github_latest_appimage() -> Tuple[str, str]:
     raise RuntimeError("Could not find Archipelago Linux AppImage asset in latest release.")
 
 
-def download_with_progress(url: str, dest: Path, *, title: str, text: str) -> None:
+def download_with_progress(
+    url: str,
+    dest: Path,
+    *,
+    title: str,
+    text: str,
+    cache_key: Optional[str] = None,
+    cache_version: Optional[str] = None,
+) -> None:
     """Download ``url`` to ``dest`` with optional zenity progress UI."""
 
     _ensure_dirs()
@@ -1001,6 +1016,25 @@ def download_with_progress(url: str, dest: Path, *, title: str, text: str) -> No
             dest.unlink()
         except Exception:
             pass
+
+    if cache_key:
+        cached = get_debug_cache_entry(cache_key)
+        if cached:
+            cached_path = cached.get("path")
+            if isinstance(cached_path, Path) and cached_path.is_file():
+                try:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    pass
+                try:
+                    shutil.copy2(cached_path, dest)
+                    try:
+                        dest.chmod(dest.stat().st_mode | 0o111)
+                    except Exception:
+                        pass
+                    return
+                except Exception:
+                    pass
 
     # If zenity is available, show a progress dialog.
     if _has_zenity():
@@ -1081,6 +1115,9 @@ def download_with_progress(url: str, dest: Path, *, title: str, text: str) -> No
     except Exception:
         pass
 
+    if cache_key and dest.is_file():
+        cache_debug_component(cache_key, dest, version=cache_version)
+
 
 def download_appimage(
     url: str, dest: Path, version: str, *, download_messages: Optional[list[str]] = None
@@ -1092,6 +1129,8 @@ def download_appimage(
         dest,
         title="Archipelago download",
         text=f"Downloading Archipelago {version}...",
+        cache_key="archipelago_appimage",
+        cache_version=version,
     )
     if download_messages is not None:
         download_messages.append(f"Downloaded Archipelago {version}")
@@ -1254,6 +1293,26 @@ def ensure_appimage(
             app_path = None
 
     needs_setup = app_path is None or not app_path.is_file() or not os.access(str(app_path), os.X_OK)
+
+    if needs_setup and DEBUG_CACHE_ENABLED:
+        cached_app = get_debug_cache_entry("archipelago_appimage")
+        if cached_app:
+            cached_path = cached_app.get("path")
+            if isinstance(cached_path, Path) and cached_path.is_file():
+                try:
+                    shutil.copy2(cached_path, AP_APPIMAGE_DEFAULT)
+                    AP_APPIMAGE_DEFAULT.chmod(AP_APPIMAGE_DEFAULT.stat().st_mode | 0o111)
+                    app_path = AP_APPIMAGE_DEFAULT
+                    needs_setup = False
+                    downloaded = True
+                    settings["AP_APPIMAGE"] = str(AP_APPIMAGE_DEFAULT)
+                    cached_version = str(cached_app.get("version") or "")
+                    if cached_version:
+                        settings["AP_VERSION"] = cached_version
+                        settings["AP_SKIP_VERSION"] = ""
+                    _save_settings(settings)
+                except Exception:
+                    pass
 
     # 3. If still missing, either download automatically (when selected) or prompt only for selection
     if needs_setup:

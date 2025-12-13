@@ -48,7 +48,7 @@ def _create_appdir_venv() -> Path:
 
 def _install_wheel(python: Path, wheel: Path) -> None:
     subprocess.run([python, "-m", "pip", "install", "--upgrade", "pip"], check=True)
-    subprocess.run([python, "-m", "pip", "install", "--no-cache-dir", str(wheel)], check=True)
+    subprocess.run([python, "-m", "pip", "install", str(wheel)], check=True)
 
 
 def _write_apprun(appdir: Path) -> None:
