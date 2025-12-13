@@ -320,8 +320,12 @@ if __name__ == "__main__":
     shim_path.write_text(content, encoding="utf-8")
     shim_path.chmod(0o755)
 
+    pkg_root = Path(__file__).resolve().parent.parent
+    pythonpath = os.environ.get("PYTHONPATH", "")
     env = {
         "PATH": shim_dir.as_posix() + os.pathsep + os.environ.get("PATH", ""),
+        "PYTHONPATH": pkg_root.as_posix()
+        + (os.pathsep + pythonpath if pythonpath else ""),
         _REAL_ZENITY_ENV: real_zenity or "",
         "AP_BIZHELPER_SHIM_DIR": shim_dir.as_posix(),
     }
