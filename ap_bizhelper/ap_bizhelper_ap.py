@@ -657,16 +657,27 @@ def _configure_file_view_columns(
     ]
     fallback_indices = {"name": 0, "size": 1, "type": 2, "date modified": 3}
 
+    updated_settings = False
     for label, setting_key in desired_columns:
         index = label_to_index.get(label, fallback_indices.get(label))
         if index is None or index >= column_count:
             continue
-        base_width = header.sectionSize(index)
+
+        try:
+            base_width = tree_view.sizeHintForColumn(index)
+        except Exception:
+            base_width = 0
         if base_width <= 0:
             try:
-                base_width = tree_view.sizeHintForColumn(index)
+                base_width = header.sectionSizeHint(index)
             except Exception:
                 base_width = 0
+        if base_width <= 0:
+            try:
+                base_width = header.defaultSectionSize()
+            except Exception:
+                base_width = 0
+
         configured_width = _coerce_int_setting(
             settings_obj, setting_key, 0, minimum=0
         )
@@ -677,6 +688,16 @@ def _configure_file_view_columns(
             except Exception:
                 pass
             header.resizeSection(index, target_width)
+            try:
+                header.setSectionResizeMode(index, QtWidgets.QHeaderView.Interactive)
+            except Exception:
+                pass
+            if configured_width <= 0:
+                settings_obj[setting_key] = target_width
+                updated_settings = True
+
+    if updated_settings:
+        _save_settings(settings_obj)
 
 
 def _qt_file_dialog(
