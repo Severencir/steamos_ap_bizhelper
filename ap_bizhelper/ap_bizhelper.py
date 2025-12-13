@@ -314,6 +314,19 @@ def _maybe_relaunch_via_steam(argv: list[str], settings: dict) -> None:
         )
 
 
+def _clear_relaunch_cache(settings: dict, force_save: bool = False) -> None:
+    """Remove any stored relaunch arguments from the settings file."""
+
+    cache_removed = force_save
+    for cache_key in ("PENDING_RELAUNCH_ARGS", "USE_CACHED_RELAUNCH_ARGS"):
+        if cache_key in settings:
+            settings.pop(cache_key, None)
+            cache_removed = True
+
+    if cache_removed:
+        save_settings(settings)
+
+
 def _select_patch_file() -> Path:
     patch = _select_file_dialog(
         title="Select Archipelago patch file",
@@ -1081,28 +1094,52 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
 
 def main(argv: list[str]) -> int:
     settings = load_settings()
-    cached_relaunch_args = settings.pop("PENDING_RELAUNCH_ARGS", []) or []
+
+    settings_dirty = False
+    cached_relaunch_args = settings.pop("PENDING_RELAUNCH_ARGS", None)
+    if cached_relaunch_args is None:
+        cached_relaunch_args = []
+    else:
+        settings_dirty = True
+
     had_cached_relaunch_flag = "USE_CACHED_RELAUNCH_ARGS" in settings
     allow_cached_relaunch_args = bool(settings.pop("USE_CACHED_RELAUNCH_ARGS", False))
-    if cached_relaunch_args or had_cached_relaunch_flag:
+    if had_cached_relaunch_flag:
+        settings_dirty = True
+
+    if settings_dirty:
         save_settings(settings)
+
     _capture_steam_appid_if_present(settings)
-    _maybe_relaunch_via_steam(argv, settings)
 
     user_args = [arg for arg in argv[1:] if not arg.startswith("--appimage")]
-    if (
-        not user_args
-        and cached_relaunch_args
-        and allow_cached_relaunch_args
-        and _is_running_under_steam()
-    ):
-        user_args = [str(arg) for arg in cached_relaunch_args if str(arg).strip()]
+    running_under_steam = _is_running_under_steam()
 
-        # Clear the relaunch cache once it is consumed so we do not keep
-        # reusing the patch when no argument is provided in future launches.
-        cached_relaunch_args = []
-        allow_cached_relaunch_args = False
-        save_settings(settings)
+    if running_under_steam:
+        if user_args:
+            cached_relaunch_args = []
+            allow_cached_relaunch_args = False
+            _clear_relaunch_cache(
+                settings,
+                force_save=(had_cached_relaunch_flag or settings_dirty),
+            )
+        elif cached_relaunch_args and allow_cached_relaunch_args:
+            user_args = [str(arg) for arg in cached_relaunch_args if str(arg).strip()]
+            cached_relaunch_args = []
+            allow_cached_relaunch_args = False
+            _clear_relaunch_cache(settings, force_save=True)
+    else:
+        if user_args:
+            _maybe_relaunch_via_steam(argv, settings)
+        else:
+            cached_relaunch_args = []
+            allow_cached_relaunch_args = False
+            _clear_relaunch_cache(
+                settings,
+                force_save=(had_cached_relaunch_flag or settings_dirty),
+            )
+            _maybe_relaunch_via_steam(argv, settings)
+
     patch_arg: Optional[str] = user_args[0] if user_args else None
 
     if patch_arg == "ensure":
