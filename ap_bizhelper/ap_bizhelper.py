@@ -718,18 +718,16 @@ def _handle_extension_association(ext: str) -> None:
     association = get_ext_association(ext)
     mode = get_association_mode()
 
-    if mode == "disabled" or association == "declined":
+    if mode == "disabled":
         return
 
     if mode == "enabled" and association != "registered":
         set_ext_association(ext, "registered")
 
-    if association == "registered" or mode == "enabled":
-        registered_exts = _registered_association_exts()
-        if ext not in registered_exts:
-            registered_exts.append(ext)
-        _apply_association_files(registered_exts)
-        return
+    registered_exts = _registered_association_exts()
+    if ext not in registered_exts:
+        registered_exts.append(ext)
+    _apply_association_files(registered_exts)
 
     if mode != "prompt":
         return
@@ -774,9 +772,11 @@ def _handle_extension_association(ext: str) -> None:
             choice = "extra"
 
     if choice == "ok":
-        set_association_mode("enabled")
         set_ext_association(ext, "registered")
-        _apply_association_files(_registered_association_exts())
+        registered_exts = _registered_association_exts()
+        if ext not in registered_exts:
+            registered_exts.append(ext)
+        _apply_association_files(registered_exts)
         return
 
     if choice == "extra":
@@ -784,8 +784,6 @@ def _handle_extension_association(ext: str) -> None:
         set_ext_association(ext, "declined")
         _apply_association_files(_registered_association_exts())
         return
-
-    set_ext_association(ext, "declined")
 def _list_bizhawk_pids() -> Set[int]:
     try:
         proc = subprocess.run(
