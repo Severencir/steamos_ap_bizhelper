@@ -35,6 +35,7 @@ _QT_FILE_DIALOG_TYPE_WIDTH = 0
 _QT_FILE_DIALOG_SIZE_WIDTH = 0
 _QT_FILE_DIALOG_DATE_WIDTH = 0
 _QT_FILE_DIALOG_COLUMN_SCALE = 1.8
+_QT_FILE_DIALOG_DEFAULT_SHRINK = 0.95
 _QT_IMPORT_ERROR: Optional[BaseException] = None
 _DEFAULT_SETTINGS = {
     "ENABLE_GAMEPAD_FILE_DIALOG": True,
@@ -657,26 +658,49 @@ def _configure_file_view_columns(
     ]
     fallback_indices = {"name": 0, "size": 1, "type": 2, "date modified": 3}
 
+    updated_settings = False
     for label, setting_key in desired_columns:
         index = label_to_index.get(label, fallback_indices.get(label))
         if index is None or index >= column_count:
             continue
-        base_width = header.sectionSize(index)
+
+        try:
+            base_width = tree_view.sizeHintForColumn(index)
+        except Exception:
+            base_width = 0
         if base_width <= 0:
             try:
-                base_width = tree_view.sizeHintForColumn(index)
+                base_width = header.sectionSizeHint(index)
             except Exception:
                 base_width = 0
+        if base_width <= 0:
+            try:
+                base_width = header.defaultSectionSize()
+            except Exception:
+                base_width = 0
+
         configured_width = _coerce_int_setting(
             settings_obj, setting_key, 0, minimum=0
         )
-        target_width = configured_width or int(base_width * _QT_FILE_DIALOG_COLUMN_SCALE)
+        target_width = configured_width or int(
+            base_width * _QT_FILE_DIALOG_COLUMN_SCALE * _QT_FILE_DIALOG_DEFAULT_SHRINK
+        )
         if target_width > 0:
             try:
                 header.setSectionResizeMode(index, QtWidgets.QHeaderView.Interactive)
             except Exception:
                 pass
             header.resizeSection(index, target_width)
+            try:
+                header.setSectionResizeMode(index, QtWidgets.QHeaderView.Interactive)
+            except Exception:
+                pass
+            if configured_width <= 0:
+                settings_obj[setting_key] = target_width
+                updated_settings = True
+
+    if updated_settings:
+        _save_settings(settings_obj)
 
 
 def _qt_file_dialog(
