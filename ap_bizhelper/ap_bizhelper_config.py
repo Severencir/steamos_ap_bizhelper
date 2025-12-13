@@ -194,19 +194,13 @@ def save_settings(settings: Dict[str, Any]) -> None:
     installation paths/versions can be managed independently.
     """
 
-    existing_settings = _load_json(SETTINGS_FILE)
-    existing_install_state = _load_install_state()
+    general_settings = {k: v for k, v in settings.items() if k not in INSTALL_STATE_KEYS}
+    install_state = {k: v for k, v in settings.items() if k in INSTALL_STATE_KEYS}
 
-    general_updates = {k: v for k, v in settings.items() if k not in INSTALL_STATE_KEYS}
-    install_updates = {k: v for k, v in settings.items() if k in INSTALL_STATE_KEYS}
-
-    if general_updates:
-        merged_settings = {**existing_settings, **general_updates}
-        _save_json(SETTINGS_FILE, merged_settings)
-
-    if install_updates:
-        merged_install_state = {**existing_install_state, **install_updates}
-        _save_json(INSTALL_STATE_FILE, merged_install_state)
+    # Persist the filtered mappings directly so keys removed from ``settings``
+    # are also removed from disk.
+    _save_json(SETTINGS_FILE, general_settings)
+    _save_json(INSTALL_STATE_FILE, install_state)
 
 
 def save_apworld_cache(cache: Dict[str, Any]) -> None:
