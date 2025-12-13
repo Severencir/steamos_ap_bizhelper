@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -513,16 +514,16 @@ def _association_exec_command() -> str:
     if appimage_env:
         appimage_path = Path(appimage_env)
         if appimage_path.is_file():
-            return f"{appimage_path} %u"
+            return f"{shlex.quote(str(appimage_path))} %u"
 
     try:
         candidate = Path(sys.argv[0]).resolve()
         if candidate.is_file():
-            return f"{candidate} %u"
+            return f"{shlex.quote(str(candidate))} %u"
     except Exception:
         pass
 
-    return f"{sys.executable} -m ap_bizhelper %u"
+    return f"{shlex.quote(sys.executable)} -m ap_bizhelper %u"
 
 
 def _registered_association_exts() -> list[str]:

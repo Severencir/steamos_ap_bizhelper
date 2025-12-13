@@ -40,6 +40,7 @@ SETTINGS_FILE = CONFIG_DIR / "settings.json"
 INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
 EXT_BEHAVIOR_FILE = CONFIG_DIR / "ext_behavior.json"
 EXT_ASSOCIATION_FILE = CONFIG_DIR / "ext_associations.json"
+APWORLD_CACHE_FILE = CONFIG_DIR / "apworld_cache.json"
 
 # Keys we expose back to Bash as shell variables.
 INSTALL_STATE_KEYS = {
@@ -93,6 +94,12 @@ def load_settings() -> Dict[str, Any]:
     return settings
 
 
+def load_apworld_cache() -> Dict[str, Any]:
+    """Return the persisted APWorld cache mapping."""
+
+    return _load_json(APWORLD_CACHE_FILE)
+
+
 def save_settings(settings: Dict[str, Any]) -> None:
     """Persist the given settings mapping to disk.
 
@@ -113,6 +120,12 @@ def save_settings(settings: Dict[str, Any]) -> None:
     if install_updates:
         merged_install_state = {**existing_install_state, **install_updates}
         _save_json(INSTALL_STATE_FILE, merged_install_state)
+
+
+def save_apworld_cache(cache: Dict[str, Any]) -> None:
+    """Persist the APWorld cache mapping."""
+
+    _save_json(APWORLD_CACHE_FILE, cache)
 
 
 def get_ext_behavior(ext: str) -> Optional[str]:

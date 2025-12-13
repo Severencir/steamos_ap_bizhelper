@@ -23,7 +23,7 @@ from .ap_bizhelper_ap import (
     error_dialog,
     info_dialog,
 )
-from .ap_bizhelper_config import load_settings, save_settings
+from .ap_bizhelper_config import load_apworld_cache, save_apworld_cache
 
 SPREADSHEET_ID = "1iuzDTOAvdoNe8Ne8i461qGNucg5OuEoF-Ikqs8aUQZw"
 CORE_SHEET_NAME = "Core-Verified Worlds"
@@ -148,7 +148,6 @@ def _download_apworld(url: str, dest_name: Optional[str]) -> Optional[Path]:
 
 
 def _update_playable_cache(
-    settings: Dict[str, Any],
     cache: Dict[str, Any],
     playable_cache: Dict[str, Any],
     normalized: str,
@@ -162,14 +161,12 @@ def _update_playable_cache(
         "source": source,
     }
     cache["playable_worlds"] = playable_cache
-    settings[CACHE_KEY] = cache
-    save_settings(settings)
+    save_apworld_cache(cache)
 
 
 def _select_custom_apworld(
     title: str,
     normalized: str,
-    settings: Dict[str, Any],
     cache: Dict[str, Any],
     playable_cache: Dict[str, Any],
 ) -> bool:
@@ -191,7 +188,6 @@ def _select_custom_apworld(
             if normalized:
                 existing = playable_cache.get(normalized, {})
                 _update_playable_cache(
-                    settings,
                     cache,
                     playable_cache,
                     normalized,
@@ -213,8 +209,7 @@ def ensure_apworld_for_patch(patch: Path) -> None:
     normalized = _normalize_game(game) if game else ""
     display_name = game or (f".{patch.suffix.lstrip('.')} extension" if patch.suffix else "this game")
 
-    settings = load_settings()
-    cache = settings.get(CACHE_KEY, {})
+    cache = load_apworld_cache()
     core_cached = set(cache.get("core_verified", []))
     playable_cache = cache.get("playable_worlds", {})
 
@@ -235,8 +230,7 @@ def ensure_apworld_for_patch(patch: Path) -> None:
     if normalized and core_games is not None and normalized in core_games:
         core_cached.add(normalized)
         cache["core_verified"] = sorted(core_cached)
-        settings[CACHE_KEY] = cache
-        save_settings(settings)
+        save_apworld_cache(cache)
         return
 
     playable_map = _get_playable_map()
@@ -250,14 +244,14 @@ def ensure_apworld_for_patch(patch: Path) -> None:
                 download_url, version_tag, asset_name = latest
                 filename = asset_name
                 if cached_version == version_tag and (WORLD_DIR / asset_name).is_file():
-                    _update_playable_cache(settings, cache, playable_cache, normalized, asset_name, version_tag, link)
+                    _update_playable_cache(cache, playable_cache, normalized, asset_name, version_tag, link)
                     return
                 download_candidate = (download_url, version_tag, asset_name, link)
         else:
             filename = cached_name or Path(urllib.parse.urlparse(link).path).name or "world.apworld"
             candidate_name = filename if filename.lower().endswith(".apworld") else f"{filename}.apworld"
             if (WORLD_DIR / candidate_name).is_file():
-                _update_playable_cache(settings, cache, playable_cache, normalized, candidate_name, cached_version, link)
+                _update_playable_cache(cache, playable_cache, normalized, candidate_name, cached_version, link)
                 return
             download_candidate = (link, "", candidate_name, link)
 
@@ -277,10 +271,10 @@ def ensure_apworld_for_patch(patch: Path) -> None:
             if dest is None:
                 return
             if normalized:
-                _update_playable_cache(settings, cache, playable_cache, normalized, dest.name, version_tag, source)
+                _update_playable_cache(cache, playable_cache, normalized, dest.name, version_tag, source)
             info_dialog(f"Installed APWorld for {display_name}: {dest.name}")
         elif action == "Select":
-            _select_custom_apworld(display_name, normalized, settings, cache, playable_cache)
+            _select_custom_apworld(display_name, normalized, cache, playable_cache)
         return
 
     if _has_qt_dialogs():
@@ -294,7 +288,7 @@ def ensure_apworld_for_patch(patch: Path) -> None:
             cancel_label="Cancel",
         )
         if choice == "ok":
-            _select_custom_apworld(display_name, normalized, settings, cache, playable_cache)
+            _select_custom_apworld(display_name, normalized, cache, playable_cache)
         return
 
     if _has_zenity():
@@ -311,7 +305,7 @@ def ensure_apworld_for_patch(patch: Path) -> None:
             ]
         )
         if code == 0:
-            _select_custom_apworld(display_name, normalized, settings, cache, playable_cache)
+            _select_custom_apworld(display_name, normalized, cache, playable_cache)
         return
 
     print("[ap-bizhelper] No dialog backend available; skipping APWorld selection.")
