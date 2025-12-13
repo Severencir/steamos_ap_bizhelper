@@ -1105,80 +1105,55 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
 def main(argv: list[str]) -> int:
     settings = load_settings()
 
-    skip_final_cache_clear = False
+    settings_dirty = False
 
-    try:
-        settings_dirty = False
-        cached_relaunch_args = settings.pop("PENDING_RELAUNCH_ARGS", None)
-        if cached_relaunch_args is None:
-            cached_relaunch_args = []
-        else:
-            settings_dirty = True
+    cached_relaunch_args = settings.pop("PENDING_RELAUNCH_ARGS", [])
+    if cached_relaunch_args:
+        settings_dirty = True
 
-        had_cached_relaunch_flag = "USE_CACHED_RELAUNCH_ARGS" in settings
+    if "USE_CACHED_RELAUNCH_ARGS" in settings:
+        settings_dirty = True
         settings.pop("USE_CACHED_RELAUNCH_ARGS", None)
-        if had_cached_relaunch_flag:
-            settings_dirty = True
 
-        if settings_dirty:
-            save_settings(settings)
+    if settings_dirty:
+        save_settings(settings)
 
-        _capture_steam_appid_if_present(settings)
+    _capture_steam_appid_if_present(settings)
 
-        user_args = [arg for arg in argv[1:] if not arg.startswith("--appimage")]
-        running_under_steam = _is_running_under_steam()
+    user_args = [arg for arg in argv[1:] if not arg.startswith("--appimage")]
+    running_under_steam = _is_running_under_steam()
 
-        if running_under_steam:
-            if user_args:
-                cached_relaunch_args = []
-                _clear_relaunch_cache(
-                    settings,
-                    force_save=(had_cached_relaunch_flag or settings_dirty),
-                )
-            elif cached_relaunch_args:
-                user_args = [str(arg) for arg in cached_relaunch_args if str(arg).strip()]
-                cached_relaunch_args = []
-                _clear_relaunch_cache(settings, force_save=True)
-        else:
-            if user_args:
-                settings["PENDING_RELAUNCH_ARGS"] = user_args
-                settings["USE_CACHED_RELAUNCH_ARGS"] = True
-                save_settings(settings)
-                skip_final_cache_clear = True
-                _maybe_relaunch_via_steam(argv, settings)
-                skip_final_cache_clear = False
-                _clear_relaunch_cache(settings, force_save=True)
-            else:
-                cached_relaunch_args = []
-                _clear_relaunch_cache(
-                    settings,
-                    force_save=(had_cached_relaunch_flag or settings_dirty),
-                )
-                _maybe_relaunch_via_steam(argv, settings)
-
-        patch_arg: Optional[str] = user_args[0] if user_args else None
-
-        if patch_arg == "ensure":
-            if len(user_args) > 1:
-                print("Usage: ap_bizhelper.py [ensure]", file=sys.stderr)
-                return 1
-            try:
-                _run_prereqs(settings, allow_archipelago_skip=True)
-            except RuntimeError:
-                return 1
-            return 0
-
-        if len(user_args) > 1:
-            print(
-                "[ap-bizhelper] Extra launcher arguments detected; treating the first "
-                "argument as the patch and ignoring the rest.",
-                file=sys.stderr,
-            )
-
-        return _run_full_flow(settings, patch_arg)
-    finally:
-        if not skip_final_cache_clear:
+    if running_under_steam:
+        if user_args:
             _clear_relaunch_cache(settings, force_save=True)
+        else:
+            user_args = [str(arg) for arg in cached_relaunch_args if str(arg).strip()]
+            _clear_relaunch_cache(settings, force_save=True)
+    else:
+        settings["PENDING_RELAUNCH_ARGS"] = user_args
+        save_settings(settings)
+        _maybe_relaunch_via_steam(argv, settings)
+
+    patch_arg: Optional[str] = user_args[0] if user_args else None
+
+    if patch_arg == "ensure":
+        if len(user_args) > 1:
+            print("Usage: ap_bizhelper.py [ensure]", file=sys.stderr)
+            return 1
+        try:
+            _run_prereqs(settings, allow_archipelago_skip=True)
+        except RuntimeError:
+            return 1
+        return 0
+
+    if len(user_args) > 1:
+        print(
+            "[ap-bizhelper] Extra launcher arguments detected; treating the first "
+            "argument as the patch and ignoring the rest.",
+            file=sys.stderr,
+        )
+
+    return _run_full_flow(settings, patch_arg)
 
 
 if __name__ == "__main__":  # pragma: no cover
