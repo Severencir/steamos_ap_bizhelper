@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import sys
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -41,6 +42,9 @@ INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
 EXT_BEHAVIOR_FILE = CONFIG_DIR / "ext_behavior.json"
 EXT_ASSOCIATION_FILE = CONFIG_DIR / "ext_associations.json"
 APWORLD_CACHE_FILE = CONFIG_DIR / "apworld_cache.json"
+DEBUG_CACHE_ENABLED = True
+DEBUG_CACHE_DIR = Path(os.path.expanduser("~/.local/ap_bizhelper_debug_cache"))
+DEBUG_CACHE_CONFIG = DEBUG_CACHE_DIR / "cache.json"
 
 # Keys we expose back to Bash as shell variables.
 INSTALL_STATE_KEYS = {
@@ -84,6 +88,89 @@ SETTINGS_KEYS = [
 
 def _load_install_state() -> Dict[str, Any]:
     return _load_json(INSTALL_STATE_FILE)
+
+
+def _load_debug_cache_config() -> Dict[str, Any]:
+    if not DEBUG_CACHE_ENABLED or not DEBUG_CACHE_CONFIG.exists():
+        return {}
+    try:
+        with DEBUG_CACHE_CONFIG.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_debug_cache_config(data: Dict[str, Any]) -> None:
+    if not DEBUG_CACHE_ENABLED:
+        return
+    try:
+        DEBUG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return
+
+    tmp = DEBUG_CACHE_CONFIG.with_suffix(DEBUG_CACHE_CONFIG.suffix + ".tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+            f.write("\n")
+        tmp.replace(DEBUG_CACHE_CONFIG)
+    except Exception:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+
+
+def cache_debug_component(key: str, source: Path, *, version: Optional[str] = None) -> Optional[Path]:
+    """Copy ``source`` into the debug cache and record its location."""
+
+    if not DEBUG_CACHE_ENABLED or not source.is_file():
+        return None
+
+    try:
+        DEBUG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return None
+
+    destination = DEBUG_CACHE_DIR / source.name
+    try:
+        if source.resolve() != destination.resolve():
+            shutil.copy2(source, destination)
+        else:
+            destination = source
+    except Exception:
+        return None
+
+    config = _load_debug_cache_config()
+    config[key] = {"path": str(destination)}
+    if version is not None:
+        config[key]["version"] = version
+    _save_debug_cache_config(config)
+    return destination
+
+
+def get_debug_cache_entry(key: str) -> Optional[Dict[str, Any]]:
+    """Return cached component metadata when debug caching is enabled."""
+
+    if not DEBUG_CACHE_ENABLED:
+        return None
+
+    entry = _load_debug_cache_config().get(key)
+    if not isinstance(entry, dict):
+        return None
+
+    path_str = entry.get("path")
+    if not path_str:
+        return None
+
+    path = Path(path_str)
+    if not path.is_file():
+        return None
+
+    result: Dict[str, Any] = {"path": path}
+    if "version" in entry:
+        result["version"] = entry.get("version")
+    return result
 
 
 def load_settings() -> Dict[str, Any]:

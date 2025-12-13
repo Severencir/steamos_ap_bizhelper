@@ -141,7 +141,14 @@ def _download_apworld(url: str, dest_name: Optional[str]) -> Optional[Path]:
         filename = f"{filename}.apworld"
     dest = WORLD_DIR / filename
     try:
-        download_with_progress(url, dest, title="Downloading APWorld", text=filename)
+        download_with_progress(
+            url,
+            dest,
+            title="Downloading APWorld",
+            text=filename,
+            cache_key=f"apworld:{filename}",
+            cache_version=dest_name,
+        )
     except Exception:
         return None
     return dest if dest.is_file() else None
