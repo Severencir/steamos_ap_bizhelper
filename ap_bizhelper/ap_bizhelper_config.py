@@ -37,16 +37,38 @@ from typing import Dict, Any, Optional
 # These match the paths used by the original Bash script.
 CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
+INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
 EXT_BEHAVIOR_FILE = CONFIG_DIR / "ext_behavior.json"
 EXT_ASSOCIATION_FILE = CONFIG_DIR / "ext_associations.json"
 
 # Keys we expose back to Bash as shell variables.
+INSTALL_STATE_KEYS = {
+    "AP_APPIMAGE",
+    "AP_VERSION",
+    "AP_SKIP_VERSION",
+    "BIZHAWK_EXE",
+    "BIZHAWK_VERSION",
+    "BIZHAWK_SKIP_VERSION",
+    "BIZHAWK_RUNNER",
+    "PROTON_BIN",
+    "BIZHAWK_AP_CONNECTOR_VERSION",
+    "BIZHAWK_SNI_VERSION",
+}
+
 SETTINGS_KEYS = [
     "AP_APPIMAGE",
     "BIZHAWK_EXE",
     "PROTON_BIN",
     "BIZHAWK_RUNNER",
     "SFC_LUA_PATH",
+    "ENABLE_GAMEPAD_FILE_DIALOG",
+    "QT_FONT_SCALE",
+    "QT_MIN_POINT_SIZE",
+    "QT_FILE_NAME_FONT_SCALE",
+    "QT_FILE_DIALOG_WIDTH",
+    "QT_FILE_DIALOG_HEIGHT",
+    "QT_FILE_DIALOG_MAXIMIZE",
+    "QT_FILE_DIALOG_COLUMN_SCALE",
     "AP_VERSION",
     "AP_SKIP_VERSION",
     "BIZHAWK_VERSION",
@@ -56,17 +78,38 @@ SETTINGS_KEYS = [
 ]
 
 
-def load_settings() -> Dict[str, Any]:
-    """Return the persisted settings dictionary (empty on failure)."""
+def _load_install_state() -> Dict[str, Any]:
+    return _load_json(INSTALL_STATE_FILE)
 
-    return _load_json(SETTINGS_FILE)
+
+def load_settings() -> Dict[str, Any]:
+    """Return the persisted settings and install state as one mapping."""
+
+    settings = _load_json(SETTINGS_FILE)
+    settings.update(_load_install_state())
+    return settings
 
 
 def save_settings(settings: Dict[str, Any]) -> None:
-    """Persist the given settings mapping to disk."""
-    existing = _load_json(SETTINGS_FILE)
-    merged = {**existing, **settings}
-    _save_json(SETTINGS_FILE, merged)
+    """Persist the given settings mapping to disk.
+
+    Settings are split between general parameters and installation state so that
+    installation paths/versions can be managed independently.
+    """
+
+    existing_settings = _load_json(SETTINGS_FILE)
+    existing_install_state = _load_install_state()
+
+    general_updates = {k: v for k, v in settings.items() if k not in INSTALL_STATE_KEYS}
+    install_updates = {k: v for k, v in settings.items() if k in INSTALL_STATE_KEYS}
+
+    if general_updates:
+        merged_settings = {**existing_settings, **general_updates}
+        _save_json(SETTINGS_FILE, merged_settings)
+
+    if install_updates:
+        merged_install_state = {**existing_install_state, **install_updates}
+        _save_json(INSTALL_STATE_FILE, merged_install_state)
 
 
 def get_ext_behavior(ext: str) -> Optional[str]:
@@ -231,10 +274,17 @@ def cmd_save_from_env() -> int:
     are unset.
     """
     settings = _load_json(SETTINGS_FILE)
+    install_state = _load_install_state()
+
     for key in SETTINGS_KEYS:
         if key in os.environ and os.environ.get(key, "") != "":
-            settings[key] = os.environ[key]
+            if key in INSTALL_STATE_KEYS:
+                install_state[key] = os.environ[key]
+            else:
+                settings[key] = os.environ[key]
+
     _save_json(SETTINGS_FILE, settings)
+    _save_json(INSTALL_STATE_FILE, install_state)
     return 0
 
 

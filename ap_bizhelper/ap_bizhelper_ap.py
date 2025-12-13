@@ -11,6 +11,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from .ap_bizhelper_config import load_settings as _load_shared_settings, save_settings as _save_shared_settings
+
 # Paths mirror the bash script and the config helper.
 CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
@@ -25,12 +27,20 @@ _QT_APP: Optional["QtWidgets.QApplication"] = None
 _QT_FONT_SCALE = 1.5
 _QT_MIN_POINT_SIZE = 12
 _QT_FILE_NAME_FONT_SCALE = 1.5
+_QT_FILE_DIALOG_WIDTH = 1280
+_QT_FILE_DIALOG_HEIGHT = 800
+_QT_FILE_DIALOG_MAXIMIZE = True
+_QT_FILE_DIALOG_COLUMN_SCALE = 1.8
 _QT_IMPORT_ERROR: Optional[BaseException] = None
 _DEFAULT_SETTINGS = {
     "ENABLE_GAMEPAD_FILE_DIALOG": True,
     "QT_FONT_SCALE": _QT_FONT_SCALE,
     "QT_MIN_POINT_SIZE": _QT_MIN_POINT_SIZE,
     "QT_FILE_NAME_FONT_SCALE": _QT_FILE_NAME_FONT_SCALE,
+    "QT_FILE_DIALOG_WIDTH": _QT_FILE_DIALOG_WIDTH,
+    "QT_FILE_DIALOG_HEIGHT": _QT_FILE_DIALOG_HEIGHT,
+    "QT_FILE_DIALOG_MAXIMIZE": _QT_FILE_DIALOG_MAXIMIZE,
+    "QT_FILE_DIALOG_COLUMN_SCALE": _QT_FILE_DIALOG_COLUMN_SCALE,
 }
 
 try:
@@ -351,25 +361,13 @@ def _ensure_dirs() -> None:
 
 
 def _load_settings() -> Dict[str, Any]:
-    if not SETTINGS_FILE.exists():
-        return dict(_DEFAULT_SETTINGS)
-    try:
-        with SETTINGS_FILE.open("r", encoding="utf-8") as f:
-            return {**_DEFAULT_SETTINGS, **json.load(f)}
-    except Exception:
-        # On any error, treat as empty and let the caller repopulate.
-        return dict(_DEFAULT_SETTINGS)
+    return {**_DEFAULT_SETTINGS, **_load_shared_settings()}
 
 
 def _save_settings(settings: Dict[str, Any]) -> None:
     _ensure_dirs()
-    tmp = SETTINGS_FILE.with_suffix(SETTINGS_FILE.suffix + ".tmp")
-    existing_settings = _load_settings()
-    merged_settings = {**_DEFAULT_SETTINGS, **existing_settings, **settings}
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(merged_settings, f, indent=2, sort_keys=True)
-        f.write("\n")
-    tmp.replace(SETTINGS_FILE)
+    merged_settings = {**_DEFAULT_SETTINGS, **settings}
+    _save_shared_settings(merged_settings)
 
 
 def _has_qt_dialogs() -> bool:
@@ -394,6 +392,47 @@ def _has_qt_gamepad() -> bool:
 
 
 def _coerce_font_setting(
+    settings: Dict[str, Any], key: str, default: float, *, minimum: Optional[float] = None
+) -> float:
+    value = settings.get(key, default)
+    try:
+        numeric_value = float(value)
+    except Exception:
+        return default
+    if minimum is not None:
+        numeric_value = max(numeric_value, minimum)
+    return numeric_value
+
+
+def _coerce_int_setting(
+    settings: Dict[str, Any], key: str, default: int, *, minimum: Optional[int] = None
+) -> int:
+    value = settings.get(key, default)
+    try:
+        numeric_value = int(value)
+    except Exception:
+        return default
+    if minimum is not None:
+        numeric_value = max(numeric_value, minimum)
+    return numeric_value
+
+
+def _coerce_bool_setting(settings: Dict[str, Any], key: str, default: bool) -> bool:
+    value = settings.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def _coerce_float_setting(
     settings: Dict[str, Any], key: str, default: float, *, minimum: Optional[float] = None
 ) -> float:
     value = settings.get(key, default)
@@ -574,6 +613,17 @@ def _qt_file_dialog(
     dialog.setViewMode(QtWidgets.QFileDialog.Detail)
     dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
     dialog.setOption(QtWidgets.QFileDialog.ReadOnly, False)
+    width = _coerce_int_setting(
+        settings_obj, "QT_FILE_DIALOG_WIDTH", _QT_FILE_DIALOG_WIDTH, minimum=0
+    )
+    height = _coerce_int_setting(
+        settings_obj, "QT_FILE_DIALOG_HEIGHT", _QT_FILE_DIALOG_HEIGHT, minimum=0
+    )
+    column_scale = _coerce_float_setting(
+        settings_obj, "QT_FILE_DIALOG_COLUMN_SCALE", _QT_FILE_DIALOG_COLUMN_SCALE, minimum=0.1
+    )
+    if width > 0 and height > 0:
+        dialog.resize(width, height)
     if hasattr(QtGui.QGuiApplication, "setNavigationMode") and hasattr(
         QtCore.Qt, "NavigationModeKeypadDirectional"
     ):
@@ -604,15 +654,35 @@ def _qt_file_dialog(
             )
         widget.setFont(scaled_font)
 
+    def _widen_detail_columns(widget: "QtWidgets.QWidget") -> None:
+        try:
+            header = widget.header()
+        except Exception:
+            return
+        if header is None:
+            return
+        column_count = min(header.count(), 4)
+        for section in range(column_count):
+            base_size = header.sectionSize(section)
+            if base_size <= 0:
+                continue
+            desired_size = int(base_size * column_scale)
+            if desired_size > base_size:
+                header.resizeSection(section, desired_size)
+
     for view_name in ("listView", "treeView"):
         file_view = dialog.findChild(QtWidgets.QWidget, view_name)
         if file_view is not None:
             _scale_file_name_font(file_view)
+            _widen_detail_columns(file_view)
 
     sidebar_urls = _sidebar_urls()
     if sidebar_urls:
         dialog.setSidebarUrls(sidebar_urls)
-    dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
+    if _coerce_bool_setting(
+        settings_obj, "QT_FILE_DIALOG_MAXIMIZE", _QT_FILE_DIALOG_MAXIMIZE
+    ):
+        dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
