@@ -187,6 +187,13 @@ def _get_known_steam_appid(settings: dict) -> Optional[str]:
     if cached_appid.isdigit():
         return cached_appid
 
+    try:
+        shortcut_appid = _find_shortcut_appid(Path(sys.argv[0]))
+    except Exception:
+        shortcut_appid = None
+    if shortcut_appid is not None:
+        return str(shortcut_appid)
+
     return None
 
 
@@ -1057,11 +1064,11 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
     if _wait_for_archipelago_ready(appimage):
         _handle_bizhawk_for_patch(patch, runner, baseline_pids)
 
+    steam_appid = _get_known_steam_appid(settings)
     if _is_running_under_steam():
         _wait_for_launched_apps_to_close(appimage, baseline_pids)
-        steam_appid = _get_known_steam_appid(settings)
-        if steam_appid:
-            _notify_steam_game_exit(steam_appid)
+    if steam_appid:
+        _notify_steam_game_exit(steam_appid)
 
     return 0
 
@@ -1084,11 +1091,13 @@ def main(argv: list[str]) -> int:
                 return 1
             return 0
 
-        if len(argv) > 2:
-            print("Usage: ap_bizhelper.py [patch-file]", file=sys.stderr)
-            return 1
-
         patch_arg = argv[1]
+        if len(argv) > 2:
+            print(
+                "[ap-bizhelper] Extra launcher arguments detected; "
+                "treating the first argument as the patch and ignoring the rest.",
+                file=sys.stderr,
+            )
 
     return _run_full_flow(settings, patch_arg)
 

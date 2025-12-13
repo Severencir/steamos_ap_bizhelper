@@ -6,7 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .ap_bizhelper_config import load_settings as _load_shared_settings
+try:
+    from ap_bizhelper.ap_bizhelper_config import load_settings as _load_shared_settings
+except ImportError:  # pragma: no cover - fallback when executed outside the package
+    from .ap_bizhelper_config import load_settings as _load_shared_settings
 
 
 def _load_settings():
