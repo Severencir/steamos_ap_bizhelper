@@ -24,6 +24,7 @@ DOWNLOADS_DIR = Path(os.path.expanduser("~/Downloads"))
 GITHUB_API_LATEST = "https://api.github.com/repos/ArchipelagoMW/Archipelago/releases/latest"
 
 _QT_APP: Optional["QtWidgets.QApplication"] = None
+_QT_BASE_FONT: Optional["QtGui.QFont"] = None
 _QT_FONT_SCALE = 1.5
 _QT_MIN_POINT_SIZE = 12
 _QT_FILE_NAME_FONT_SCALE = 1.8
@@ -473,7 +474,7 @@ def _detect_global_scale() -> float:
 
 
 def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApplication":
-    global _QT_APP
+    global _QT_APP, _QT_BASE_FONT
 
     from PySide6 import QtGui, QtWidgets
 
@@ -503,6 +504,9 @@ def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApp
     app = _QT_APP or QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication(sys.argv[:1] or ["ap-bizhelper"])
+        _QT_BASE_FONT = app.font()
+    elif _QT_BASE_FONT is None:
+        _QT_BASE_FONT = app.font()
 
     settings_obj = {**_DEFAULT_SETTINGS, **(settings or _load_settings())}
     font_scale = _coerce_font_setting(settings_obj, "QT_FONT_SCALE", _QT_FONT_SCALE, minimum=0.1)
@@ -511,7 +515,7 @@ def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApp
     min_point_size = _coerce_font_setting(
         settings_obj, "QT_MIN_POINT_SIZE", _QT_MIN_POINT_SIZE, minimum=1
     )
-    font: QtGui.QFont = app.font()
+    font: QtGui.QFont = QtGui.QFont(_QT_BASE_FONT) if _QT_BASE_FONT else app.font()
     min_scaled_point_size = int(min_point_size * normalized_font_scale)
     scaled_font = _scaled_font(
         font,
