@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from .ap_bizhelper_ap import _select_file_dialog, download_with_progress
+from .ap_bizhelper_config import load_settings as _load_shared_settings, save_settings as _save_shared_settings
 
 CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
@@ -41,24 +42,12 @@ def _ensure_dirs() -> None:
 
 
 def _load_settings() -> Dict[str, Any]:
-    if not SETTINGS_FILE.exists():
-        return {}
-    try:
-        with SETTINGS_FILE.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    return _load_shared_settings()
 
 
 def _save_settings(settings: Dict[str, Any]) -> None:
     _ensure_dirs()
-    tmp = SETTINGS_FILE.with_suffix(SETTINGS_FILE.suffix + ".tmp")
-    existing_settings = _load_settings()
-    merged_settings = {**existing_settings, **settings}
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(merged_settings, f, indent=2, sort_keys=True)
-        f.write("\n")
-    tmp.replace(SETTINGS_FILE)
+    _save_shared_settings(settings)
 
 
 def _has_zenity() -> bool:

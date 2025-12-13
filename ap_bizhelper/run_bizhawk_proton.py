@@ -1,23 +1,16 @@
 #!/usr/bin/env python3
-import os
-import sys
 import json
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
-CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
-SETTINGS_FILE = CONFIG_DIR / "settings.json"
+from .ap_bizhelper_config import load_settings as _load_shared_settings
 
 
 def _load_settings():
-    if not SETTINGS_FILE.exists():
-        return {}
-    try:
-        with SETTINGS_FILE.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    return _load_shared_settings()
 
 
 def error_dialog(msg: str) -> None:
