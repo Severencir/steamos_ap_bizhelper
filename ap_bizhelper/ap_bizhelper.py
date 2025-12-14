@@ -42,17 +42,27 @@ from .logging_utils import RunLogger
 from .ap_bizhelper_worlds import ensure_apworld_for_patch
 
 
+def _steam_game_id_from_env() -> Optional[str]:
+    """Return the Steam game id from common environment keys, if available."""
+
+    for key in ("SteamGameId", "SteamGameID", "SteamAppId", "SteamAppID"):
+        value = os.environ.get(key)
+        if value and str(value).isdigit():
+            return str(value)
+    return None
+
+
 def _is_running_under_steam() -> bool:
     """Return ``True`` when launched by Steam (Steam overlay/controller env set)."""
 
-    return bool(os.environ.get("SteamGameId"))
+    return bool(_steam_game_id_from_env())
 
 
 def _capture_steam_appid_if_present(settings: dict) -> None:
     """Persist ``SteamGameId`` into settings when available."""
 
-    steam_game_id = os.environ.get("SteamGameId")
-    if not (steam_game_id and steam_game_id.isdigit()):
+    steam_game_id = _steam_game_id_from_env()
+    if not steam_game_id:
         return
 
     cached_appid = str(settings.get("STEAM_APPID") or "")
@@ -70,8 +80,8 @@ def _capture_steam_appid_if_present(settings: dict) -> None:
 def _get_known_steam_appid(settings: dict) -> Optional[str]:
     """Return the active or cached Steam app id when available."""
 
-    steam_game_id = os.environ.get("SteamGameId")
-    if steam_game_id and steam_game_id.isdigit():
+    steam_game_id = _steam_game_id_from_env()
+    if steam_game_id:
         return steam_game_id
 
     cached_appid = str(settings.get("STEAM_APPID") or "")
