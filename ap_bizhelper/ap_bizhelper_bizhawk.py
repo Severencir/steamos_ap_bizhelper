@@ -643,6 +643,7 @@ def ensure_bizhawk_and_proton(
     download_selected: bool = True,
     create_shortcut: bool = False,
     download_messages: Optional[list[str]] = None,
+    settings: Optional[Dict[str, Any]] = None,
 ) -> Optional[Tuple[Path, Path, bool]]:
     """
     Ensure BizHawk (Windows) and Proton are configured and runnable.
@@ -653,7 +654,19 @@ def ensure_bizhawk_and_proton(
     On failure or user cancellation, returns None.
     """
     _ensure_dirs()
-    settings = _load_settings()
+    provided_settings = settings
+    settings = settings if settings is not None else _load_settings()
+
+    def _merge_and_save_settings() -> None:
+        nonlocal settings
+
+        if provided_settings is not None and settings is not provided_settings:
+            merged = {**provided_settings, **settings}
+            provided_settings.clear()
+            provided_settings.update(merged)
+            settings = provided_settings
+
+        _save_settings(settings)
     downloaded = False
 
     # Existing config?
@@ -670,8 +683,6 @@ def ensure_bizhawk_and_proton(
             settings, exe, download_messages=download_messages
         )
         downloaded = downloaded or updated
-        # Settings may have changed; reload
-        settings = _load_settings()
         runner_str = str(settings.get("BIZHAWK_RUNNER", "") or "")
         exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
         if runner_str and exe_str:
@@ -703,11 +714,10 @@ def ensure_bizhawk_and_proton(
             except Exception as e:
                 error_dialog(f"BizHawk download failed or was cancelled: {e}")
                 return None
-            settings = _load_settings()
             settings["BIZHAWK_EXE"] = str(exe)
             settings["BIZHAWK_VERSION"] = ver
             settings["BIZHAWK_SKIP_VERSION"] = ""
-            _save_settings(settings)
+            _merge_and_save_settings()
             downloaded = True
             if download_messages is not None:
                 download_messages.append(f"Downloaded BizHawk {ver}")
@@ -727,11 +737,10 @@ def ensure_bizhawk_and_proton(
             exe = select_bizhawk_exe(Path(os.path.expanduser("~")))
             if not exe:
                 return None
-            settings = _load_settings()
             settings["BIZHAWK_EXE"] = str(exe)
             settings["BIZHAWK_VERSION"] = ""
             settings["BIZHAWK_SKIP_VERSION"] = ""
-            _save_settings(settings)
+            _merge_and_save_settings()
 
     # Ensure Proton
     proton_bin = auto_detect_proton(settings)
@@ -741,9 +750,8 @@ def ensure_bizhawk_and_proton(
         if not chosen:
             return None
         proton_bin = chosen
-        settings = _load_settings()
         settings["PROTON_BIN"] = str(proton_bin)
-        _save_settings(settings)
+        _merge_and_save_settings()
 
     # Build runner
     runner = build_runner(settings, exe, proton_bin)

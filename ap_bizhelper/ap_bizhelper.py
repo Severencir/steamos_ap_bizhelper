@@ -927,6 +927,7 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
             download_selected=arch,
             create_shortcut=shortcuts,
             download_messages=download_messages,
+            settings=settings,
         )
 
     bizhawk_result: Optional[Tuple[Path, Path, bool]] = None
@@ -934,6 +935,7 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
         download_selected=bizhawk,
         create_shortcut=shortcuts,
         download_messages=download_messages,
+        settings=settings,
     )
     if bizhawk:
         if bizhawk_result is None:
