@@ -190,7 +190,11 @@ class ZenityShim:
 
 
     def _extract_option(self, argv: Sequence[str], prefix: str) -> Optional[str]:
-        for arg in argv:
+        base = prefix[:-1] if prefix.endswith("=") else prefix
+
+        for idx, arg in enumerate(argv):
+            if arg == base and idx + 1 < len(argv):
+                return argv[idx + 1]
             if arg.startswith(prefix):
                 return arg.split("=", 1)[-1]
         return None
