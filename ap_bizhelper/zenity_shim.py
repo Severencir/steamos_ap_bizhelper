@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 _REAL_ZENITY_ENV = "AP_BIZHELPER_REAL_ZENITY"
+_REAL_KDIALOG_ENV = "AP_BIZHELPER_REAL_KDIALOG"
+_REAL_PORTAL_ENV = "AP_BIZHELPER_REAL_XDG_DESKTOP_PORTAL"
 
 
 class ZenityShim:
@@ -130,6 +132,7 @@ class ZenityShim:
                 pass
 
         sys.stderr.write(message + "\n")
+
 
     def _extract_option(self, argv: Sequence[str], prefix: str) -> Optional[str]:
         for arg in argv:
@@ -297,6 +300,170 @@ class ZenityShim:
         return 0
 
 
+class KDialogShim:
+    """Lightweight kdialog-compatible shim that proxies to PySide6 dialogs."""
+
+    def __init__(self, real_kdialog: Optional[str] = None) -> None:
+        self.real_kdialog = real_kdialog or self._discover_real_kdialog()
+
+    def _discover_real_kdialog(self) -> Optional[str]:
+        shim_dir = os.environ.get("AP_BIZHELPER_SHIM_DIR", "")
+        search_path = os.environ.get("PATH", "")
+        if shim_dir:
+            cleaned = os.pathsep.join(
+                [p for p in search_path.split(os.pathsep) if p and Path(p) != Path(shim_dir)]
+            )
+        else:
+            cleaned = search_path
+        return shutil.which("kdialog", path=cleaned) or None
+
+    def _qt_available(self) -> bool:
+        return importlib.util.find_spec("PySide6") is not None
+
+    def _extract_value(self, argv: Sequence[str], flag: str) -> Optional[str]:
+        if flag in argv:
+            idx = argv.index(flag)
+            if idx + 1 < len(argv):
+                return argv[idx + 1]
+        for arg in argv:
+            if arg.startswith(flag + "="):
+                return arg.split("=", 1)[1]
+        return None
+
+    def handle(self, argv: Sequence[str]) -> int:
+        if not argv:
+            return self._fallback(argv, "No kdialog arguments were provided.")
+
+        if not self._qt_available():
+            return self._fallback(argv, "PySide6 is unavailable for kdialog shimming.")
+
+        if "--yesno" in argv or "--warningyesno" in argv:
+            return self._handle_yesno(argv)
+        if "--msgbox" in argv or "--sorry" in argv or "--error" in argv:
+            return self._handle_message(argv)
+        if "--getopenfilename" in argv:
+            return self._handle_getopenfilename(argv)
+
+        return self._fallback(argv, "The requested kdialog mode is not supported by the shim.")
+
+    def _handle_yesno(self, argv: Sequence[str]) -> int:
+        from PySide6 import QtWidgets  # type: ignore
+        from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app, _qt_question_dialog
+
+        _ensure_qt_app()
+        text = self._extract_value(argv, "--yesno") or self._extract_value(
+            argv, "--warningyesno"
+        )
+        title = self._extract_value(argv, "--title") or "Question"
+        QtWidgets.QApplication.instance()
+        choice = _qt_question_dialog(
+            title=title, text=text or "", ok_label="Yes", cancel_label="No"
+        )
+        return 0 if choice == "ok" else 1
+
+    def _handle_message(self, argv: Sequence[str]) -> int:
+        from PySide6 import QtWidgets  # type: ignore
+        from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app
+
+        _ensure_qt_app()
+        box = QtWidgets.QMessageBox()
+        box.setWindowTitle(self._extract_value(argv, "--title") or "Message")
+        if "--error" in argv:
+            box.setIcon(QtWidgets.QMessageBox.Critical)
+        elif "--sorry" in argv:
+            box.setIcon(QtWidgets.QMessageBox.Warning)
+        else:
+            box.setIcon(QtWidgets.QMessageBox.Information)
+        box.setText(
+            self._extract_value(argv, "--msgbox")
+            or self._extract_value(argv, "--error")
+            or self._extract_value(argv, "--sorry")
+            or ""
+        )
+        box.exec()
+        return 0
+
+    def _handle_getopenfilename(self, argv: Sequence[str]) -> int:
+        from ap_bizhelper.ap_bizhelper_ap import _qt_file_dialog
+
+        try:
+            start_index = argv.index("--getopenfilename") + 1
+            start_dir = Path(argv[start_index]) if start_index < len(argv) else Path.cwd()
+        except ValueError:
+            start_dir = Path.cwd()
+        file_filter = None
+        try:
+            filter_index = argv.index("--getopenfilename") + 2
+            if filter_index < len(argv):
+                file_filter = argv[filter_index]
+        except ValueError:
+            pass
+
+        selection = _qt_file_dialog(
+            title=self._extract_value(argv, "--title") or "Select file",
+            start_dir=start_dir,
+            file_filter=file_filter,
+        )
+        if selection:
+            sys.stdout.write(str(selection) + "\n")
+            return 0
+        return 1
+
+    def _fallback(self, argv: Sequence[str], reason: str) -> int:
+        if self.real_kdialog:
+            try:
+                return subprocess.call([self.real_kdialog, *argv])
+            except Exception:
+                pass
+        sys.stderr.write(reason + "\n")
+        return 127
+
+
+class PortalShim:
+    """Minimal xdg-desktop-portal shim focused on FileChooser."""
+
+    def __init__(self, real_portal: Optional[str] = None) -> None:
+        self.real_portal = real_portal
+
+    def _qt_available(self) -> bool:
+        return importlib.util.find_spec("PySide6") is not None
+
+    def handle(self, argv: Sequence[str]) -> int:
+        if argv and argv[0] in {"--help", "-h"}:
+            sys.stdout.write("ap-bizhelper portal shim (FileChooser only)\n")
+            return 0
+
+        if self._qt_available():
+            if argv and argv[0] in {"--choose-file", "--choose-multiple"}:
+                return self._handle_choose_file(argv)
+
+        return self._fallback(argv)
+
+    def _handle_choose_file(self, argv: Sequence[str]) -> int:
+        from ap_bizhelper.ap_bizhelper_ap import _qt_file_dialog
+
+        start_dir = Path(argv[1]) if len(argv) > 1 else Path.cwd()
+        selection = _qt_file_dialog(
+            title="Select file",
+            start_dir=start_dir,
+            file_filter=None,
+        )
+        if selection:
+            sys.stdout.write(str(selection) + "\n")
+            return 0
+        return 1
+
+    def _fallback(self, argv: Sequence[str]) -> int:
+        if self.real_portal:
+            try:
+                return subprocess.call([self.real_portal, *argv])
+            except Exception:
+                pass
+        sys.stderr.write(
+            "xdg-desktop-portal shim could not handle the request and no real portal was found.\n"
+        )
+        return 127
+
 def prepare_zenity_shim_env() -> Optional[Dict[str, str]]:
     """Create a temporary zenity shim script and return environment overrides.
 
@@ -310,15 +477,41 @@ def prepare_zenity_shim_env() -> Optional[Dict[str, str]]:
     except Exception:
         return None
 
-    real_zenity = shutil.which("zenity")
-    shim_path = shim_dir / "zenity"
-    content = """#!/usr/bin/env python3
+    search_path = os.environ.get("PATH", "")
+    cleaned_path = os.pathsep.join(
+        [p for p in search_path.split(os.pathsep) if p and Path(p) != shim_dir]
+    )
+
+    real_zenity = shutil.which("zenity", path=cleaned_path)
+    real_kdialog = shutil.which("kdialog", path=cleaned_path)
+    real_portal = shutil.which("xdg-desktop-portal", path=cleaned_path)
+
+    zenity_path = shim_dir / "zenity"
+    zenity_content = """#!/usr/bin/env python3
 from ap_bizhelper.zenity_shim import shim_main
 if __name__ == "__main__":
     shim_main()
 """
-    shim_path.write_text(content, encoding="utf-8")
-    shim_path.chmod(0o755)
+    zenity_path.write_text(zenity_content, encoding="utf-8")
+    zenity_path.chmod(0o755)
+
+    kdialog_path = shim_dir / "kdialog"
+    kdialog_content = """#!/usr/bin/env python3
+from ap_bizhelper.zenity_shim import kdialog_main
+if __name__ == "__main__":
+    kdialog_main()
+"""
+    kdialog_path.write_text(kdialog_content, encoding="utf-8")
+    kdialog_path.chmod(0o755)
+
+    portal_path = shim_dir / "xdg-desktop-portal"
+    portal_content = """#!/usr/bin/env python3
+from ap_bizhelper.zenity_shim import portal_file_chooser_main
+if __name__ == "__main__":
+    portal_file_chooser_main()
+"""
+    portal_path.write_text(portal_content, encoding="utf-8")
+    portal_path.chmod(0o755)
 
     pkg_root = Path(__file__).resolve().parent.parent
     pythonpath = os.environ.get("PYTHONPATH", "")
@@ -327,6 +520,8 @@ if __name__ == "__main__":
         "PYTHONPATH": pkg_root.as_posix()
         + (os.pathsep + pythonpath if pythonpath else ""),
         _REAL_ZENITY_ENV: real_zenity or "",
+        _REAL_KDIALOG_ENV: real_kdialog or "",
+        _REAL_PORTAL_ENV: real_portal or "",
         "AP_BIZHELPER_SHIM_DIR": shim_dir.as_posix(),
     }
     return env
@@ -334,6 +529,16 @@ if __name__ == "__main__":
 
 def shim_main() -> None:
     shim = ZenityShim(real_zenity=os.environ.get(_REAL_ZENITY_ENV) or None)
+    sys.exit(shim.handle(sys.argv[1:]))
+
+
+def kdialog_main() -> None:
+    shim = KDialogShim(real_kdialog=os.environ.get(_REAL_KDIALOG_ENV) or None)
+    sys.exit(shim.handle(sys.argv[1:]))
+
+
+def portal_file_chooser_main() -> None:
+    shim = PortalShim(real_portal=os.environ.get(_REAL_PORTAL_ENV) or None)
     sys.exit(shim.handle(sys.argv[1:]))
 
 
