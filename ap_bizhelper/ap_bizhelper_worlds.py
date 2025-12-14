@@ -181,6 +181,7 @@ def _select_custom_apworld(
         title=f"Select .apworld file for {title}",
         initial=Path.home(),
         file_filter="*.apworld",
+        dialog_key="apworld",
     )
     if selection is None:
         return False

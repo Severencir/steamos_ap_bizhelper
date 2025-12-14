@@ -521,7 +521,9 @@ def auto_detect_proton(settings: Dict[str, Any]) -> Optional[Path]:
 
 
 def select_proton_bin(initial: Optional[Path] = None) -> Optional[Path]:
-    p = _select_file_dialog(title="Select Proton binary", initial=initial)
+    p = _select_file_dialog(
+        title="Select Proton binary", initial=initial, dialog_key="proton_bin"
+    )
     if p is None:
         return None
     if not p.is_file():
@@ -532,7 +534,10 @@ def select_proton_bin(initial: Optional[Path] = None) -> Optional[Path]:
 
 def select_bizhawk_exe(initial: Optional[Path] = None) -> Optional[Path]:
     p = _select_file_dialog(
-        title="Select EmuHawk.exe", initial=initial, file_filter="*.exe"
+        title="Select EmuHawk.exe",
+        initial=initial,
+        file_filter="*.exe",
+        dialog_key="bizhawk_exe",
     )
     if p is None:
         return None

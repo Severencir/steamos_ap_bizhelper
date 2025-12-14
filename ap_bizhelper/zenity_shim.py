@@ -6,9 +6,8 @@ This module provides two entry points:
 * ``prepare_zenity_shim_env``: helper to build an environment pointing ``PATH``
   at the shim so launched applications use it instead of the system zenity.
 
-Unsupported commands surface an error dialog instead of falling back to the
-real ``zenity`` binary. This is temporary so that failures are visible while
-the shim is hardened.
+Unsupported commands fall back to the real ``zenity`` binary when present so
+the shim stays transparent during gaps in coverage.
 """
 from __future__ import annotations
 
@@ -47,6 +46,10 @@ class ZenityShim:
     def handle(self, argv: Sequence[str]) -> int:
         if not argv:
             return self._fallback(argv, "No zenity arguments were provided.")
+
+        auto_answer = self._auto_answer_emuhawk(argv)
+        if auto_answer is not None:
+            return auto_answer
 
         mode = self._detect_mode(argv)
         if mode is None:
@@ -87,22 +90,68 @@ class ZenityShim:
             return "checklist"
         return None
 
+    def _auto_answer_emuhawk(self, argv: Sequence[str]) -> Optional[int]:
+        title = self._extract_option(argv, "--title=")
+        if not title:
+            return None
+        if title.strip().lower() != "select emuhawk executable".lower():
+            return None
+
+        runner = self._locate_bizhawk_runner()
+        if runner is None:
+            return None
+        sys.stdout.write(str(runner) + "\n")
+        return 0
+
+    def _locate_bizhawk_runner(self) -> Optional[Path]:
+        try:
+            from ap_bizhelper.ap_bizhelper_ap import _load_settings as _load_ap_settings
+        except Exception:
+            return None
+
+        settings = _load_ap_settings()
+        runner_str = str(settings.get("BIZHAWK_RUNNER", "") or "")
+        exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+
+        candidates = []
+        if runner_str:
+            candidates.append(Path(runner_str))
+        if exe_str:
+            candidates.append(Path(exe_str).parent / "run_bizhawk_proton.py")
+        candidates.append(Path(__file__).resolve().parent / "run_bizhawk_proton.py")
+
+        for candidate in candidates:
+            try:
+                if candidate.is_file():
+                    return candidate
+            except Exception:
+                continue
+        return None
+
     def _qt_available(self) -> bool:
         return importlib.util.find_spec("PySide6") is not None
 
     def _fallback(self, argv: Sequence[str], reason: str) -> int:
+        real_result = self._maybe_run_real_zenity(argv)
+        if real_result is not None:
+            return real_result
+
         cmd = " ".join(argv) if argv else "(no arguments)"
         details = [
             "The Archipelago zenity shim could not handle the request.",
             f"Reason: {reason}",
         ]
-        if self.real_zenity:
-            details.append(
-                "The system zenity is installed, but the shim failsafe is temporarily disabled."
-            )
         details.append(f"Command: {cmd}")
         self._show_error_dialog("\n".join(details))
         return 127
+
+    def _maybe_run_real_zenity(self, argv: Sequence[str]) -> Optional[int]:
+        if not self.real_zenity:
+            return None
+        try:
+            return subprocess.call([self.real_zenity, *argv])
+        except Exception:
+            return None
 
     def _show_error_dialog(self, message: str) -> None:
         if self._qt_available():
@@ -384,7 +433,13 @@ class KDialogShim:
         return 0
 
     def _handle_getopenfilename(self, argv: Sequence[str]) -> int:
-        from ap_bizhelper.ap_bizhelper_ap import _qt_file_dialog
+        from ap_bizhelper.ap_bizhelper_ap import (
+            _load_settings,
+            _preferred_start_dir,
+            _qt_file_dialog,
+            _remember_file_dialog_dir,
+            _save_settings,
+        )
 
         try:
             start_index = argv.index("--getopenfilename") + 1
@@ -399,12 +454,18 @@ class KDialogShim:
         except ValueError:
             pass
 
+        settings = _load_settings()
+        start_dir = _preferred_start_dir(start_dir, settings, "shim")
+
         selection = _qt_file_dialog(
             title=self._extract_value(argv, "--title") or "Select file",
             start_dir=start_dir,
             file_filter=file_filter,
+            settings=settings,
         )
         if selection:
+            _remember_file_dialog_dir(settings, selection, "shim")
+            _save_settings(settings)
             sys.stdout.write(str(selection) + "\n")
             return 0
         return 1
@@ -440,15 +501,26 @@ class PortalShim:
         return self._fallback(argv)
 
     def _handle_choose_file(self, argv: Sequence[str]) -> int:
-        from ap_bizhelper.ap_bizhelper_ap import _qt_file_dialog
+        from ap_bizhelper.ap_bizhelper_ap import (
+            _load_settings,
+            _preferred_start_dir,
+            _qt_file_dialog,
+            _remember_file_dialog_dir,
+            _save_settings,
+        )
 
         start_dir = Path(argv[1]) if len(argv) > 1 else Path.cwd()
+        settings = _load_settings()
+        start_dir = _preferred_start_dir(start_dir, settings, "shim")
         selection = _qt_file_dialog(
             title="Select file",
             start_dir=start_dir,
             file_filter=None,
+            settings=settings,
         )
         if selection:
+            _remember_file_dialog_dir(settings, selection, "shim")
+            _save_settings(settings)
             sys.stdout.write(str(selection) + "\n")
             return 0
         return 1

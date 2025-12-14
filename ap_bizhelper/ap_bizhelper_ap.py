@@ -596,12 +596,23 @@ def _qt_question_dialog(
     return "cancel"
 
 
-def _preferred_start_dir(initial: Optional[Path], settings: Dict[str, Any]) -> Path:
+def _dialog_dir_map(settings: Dict[str, Any]) -> Dict[str, str]:
+    stored = settings.get("LAST_FILE_DIALOG_DIRS", {})
+    if isinstance(stored, dict):
+        return stored
+    return {}
+
+
+def _preferred_start_dir(initial: Optional[Path], settings: Dict[str, Any], dialog_key: str) -> Path:
     last_dir_setting = str(settings.get("LAST_FILE_DIALOG_DIR", "") or "")
+    per_dialog_dir = str(_dialog_dir_map(settings).get(dialog_key, "") or "")
+
     candidates = [
-        initial,
+        initial if initial and initial.expanduser() != Path.home() else None,
+        Path(per_dialog_dir) if per_dialog_dir else None,
         Path(last_dir_setting) if last_dir_setting else None,
         DOWNLOADS_DIR if DOWNLOADS_DIR.exists() else None,
+        initial if initial else None,
         Path.home(),
     ]
     for candidate in candidates:
@@ -613,6 +624,14 @@ def _preferred_start_dir(initial: Optional[Path], settings: Dict[str, Any]) -> P
         if candidate_path.exists():
             return candidate_path
     return Path.home()
+
+
+def _remember_file_dialog_dir(settings: Dict[str, Any], selection: Path, dialog_key: str) -> None:
+    parent = selection.parent if selection.is_file() else selection
+    dialog_dirs = _dialog_dir_map(settings)
+    dialog_dirs[dialog_key] = str(parent)
+    settings["LAST_FILE_DIALOG_DIRS"] = dialog_dirs
+    settings["LAST_FILE_DIALOG_DIR"] = str(parent)
 
 
 def _sidebar_urls() -> list["QtCore.QUrl"]:
@@ -630,6 +649,27 @@ def _sidebar_urls() -> list["QtCore.QUrl"]:
     return [
         QtCore.QUrl.fromLocalFile(str(path)) for path in common_dirs if path.expanduser().exists()
     ]
+
+
+def _widen_file_dialog_sidebar(dialog: "QtWidgets.QFileDialog") -> None:
+    from PySide6 import QtWidgets
+
+    splitter = dialog.findChild(QtWidgets.QSplitter)
+    if splitter is None:
+        return
+    try:
+        sizes = splitter.sizes()
+    except Exception:
+        return
+    if not sizes or len(sizes) < 2:
+        return
+
+    new_sizes = list(sizes)
+    new_sizes[0] = max(1, int(new_sizes[0] * 1.3))
+    try:
+        splitter.setSizes(new_sizes)
+    except Exception:
+        return
 
 
 def _configure_file_view_columns(
@@ -782,6 +822,7 @@ def _qt_file_dialog(
     sidebar_urls = _sidebar_urls()
     if sidebar_urls:
         dialog.setSidebarUrls(sidebar_urls)
+    _widen_file_dialog_sidebar(dialog)
     if _coerce_bool_setting(
         settings_obj, "QT_FILE_DIALOG_MAXIMIZE", _QT_FILE_DIALOG_MAXIMIZE
     ):
@@ -810,6 +851,7 @@ def _select_file_dialog(
     initial: Optional[Path] = None,
     file_filter: Optional[str] = None,
     settings: Optional[Dict[str, Any]] = None,
+    dialog_key: str = "default",
 ) -> Optional[Path]:
     if not _has_qt_dialogs():
         details = ""
@@ -824,7 +866,7 @@ def _select_file_dialog(
         return None
 
     settings_obj = settings if settings is not None else _load_settings()
-    start_dir = _preferred_start_dir(initial, settings_obj)
+    start_dir = _preferred_start_dir(initial, settings_obj, dialog_key)
 
     try:
         selection = _qt_file_dialog(
@@ -835,7 +877,7 @@ def _select_file_dialog(
         return None
 
     if selection:
-        settings_obj["LAST_FILE_DIALOG_DIR"] = str(selection.parent)
+        _remember_file_dialog_dir(settings_obj, selection, dialog_key)
         if settings is None:
             _save_settings(settings_obj)
 
@@ -926,7 +968,10 @@ def select_appimage(
     initial: Optional[Path] = None, *, settings: Optional[Dict[str, Any]] = None
 ) -> Optional[Path]:
     selection = _select_file_dialog(
-        title="Select Archipelago AppImage", initial=initial, settings=settings
+        title="Select Archipelago AppImage",
+        initial=initial,
+        settings=settings,
+        dialog_key="appimage",
     )
     if selection is None:
         return None
