@@ -97,10 +97,7 @@ class ZenityShim:
         title_matches = bool(title and "emuhawk" in title.casefold())
         text_has_hint = bool(text and any(hint in text.casefold() for hint in ("emuhawk", "bizhawk")))
 
-        if title_matches:
-            if text and not text_has_hint:
-                return None
-        elif not text_has_hint:
+        if not title_matches and not text_has_hint:
             return None
 
         runner = self._locate_bizhawk_runner()
