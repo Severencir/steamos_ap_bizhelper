@@ -130,6 +130,13 @@ def _attach_gamepad_dialog_support(
         )
         return
 
+    APP_LOGGER.log(
+        "QtGamepad available; discovering connected controllers.",
+        level="DEBUG",
+        location=context,
+        include_context=True,
+    )
+
     manager = QtGamepad.QGamepadManager.instance()
     connected = list(getattr(manager, "connectedGamepads", lambda: [])())
     APP_LOGGER.log(
