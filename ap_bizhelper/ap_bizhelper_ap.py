@@ -144,6 +144,7 @@ def _attach_gamepad_dialog_support(
             include_context=True,
         )
 
+<<<<<<< main
     APP_LOGGER.log(
         f"QtGamepad available from {qtgamepad_source}; discovering connected controllers.",
         level="DEBUG",
@@ -151,6 +152,8 @@ def _attach_gamepad_dialog_support(
         include_context=True,
     )
 
+=======
+>>>>>>> 335755e Add QtGamepad support to packaged build
     manager = QtGamepad.QGamepadManager.instance()
     connected = list(getattr(manager, "connectedGamepads", lambda: [])())
     APP_LOGGER.log(

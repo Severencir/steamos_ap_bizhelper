@@ -91,6 +91,7 @@ def _install_wheel(python: Path, wheel: Path) -> None:
     subprocess.run([python, "-m", "pip", "install", str(wheel)], check=True)
 
 
+<<<<<<< main
 def _verify_qtgamepad_plugins(appdir: Path) -> None:
     site_packages = _site_packages(appdir)
     plugin_candidates = []
@@ -124,6 +125,8 @@ def _verify_qtgamepad_plugins(appdir: Path) -> None:
         print("QtGamepad Qt plugin not found; relying on stubbed bindings.")
 
 
+=======
+>>>>>>> 335755e Add QtGamepad support to packaged build
 def _write_apprun(appdir: Path) -> None:
     apprun_path = appdir / "AppRun"
     content = textwrap.dedent(
@@ -226,8 +229,11 @@ def build_appimage() -> Path:
     wheel = _build_wheel(target_python)
     python = _create_appdir_venv(target_python)
     _install_wheel(python, wheel)
+<<<<<<< main
     _inject_qtgamepad_stub(APPDIR)
     _verify_qtgamepad_plugins(APPDIR)
+=======
+>>>>>>> 335755e Add QtGamepad support to packaged build
     _write_apprun(APPDIR)
     _write_desktop(APPDIR)
     _write_icon(APPDIR)

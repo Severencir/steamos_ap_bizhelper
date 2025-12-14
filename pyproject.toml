@@ -8,11 +8,15 @@ version = "0.1.0"
 description = "SteamOS Archipelago BizHawk helper"
 requires-python = ">=3.10,<3.12"
 readme = "README.md"
+<<<<<<< main
 dependencies = [
     "PySide6==6.7.3",
     "PySide6-Addons==6.7.3",
     "PySide6-QtGamepad==6.7.3",
 ]
+=======
+dependencies = ["PySide6>=6.7", "PySide6-Addons>=6.7"]
+>>>>>>> 335755e Add QtGamepad support to packaged build
 
 [project.scripts]
 ap-bizhelper = "ap_bizhelper:console_main"
