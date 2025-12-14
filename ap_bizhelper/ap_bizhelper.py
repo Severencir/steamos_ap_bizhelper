@@ -331,6 +331,7 @@ def _select_patch_file() -> Path:
     patch = _select_file_dialog(
         title="Select Archipelago patch file",
         initial=Path.home(),
+        dialog_key="patch",
     )
     if patch is None:
         raise RuntimeError("User cancelled patch selection.")
@@ -502,6 +503,7 @@ def _ensure_apworld_for_extension(ext: str) -> None:
             title=f"Select .apworld file for .{ext}",
             initial=Path.home(),
             file_filter="*.apworld",
+            dialog_key="apworld",
         )
     else:
         _zenity_error_dialog(
