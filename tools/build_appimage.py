@@ -14,6 +14,7 @@ DIST_DIR = PROJECT_ROOT / "dist"
 APPDIR = DIST_DIR / "AppDir"
 APP_NAME = "ap-bizhelper"
 DEFAULT_TARGET_PYTHON = "python3.11"
+# Keep in sync with the interpreter range in pyproject.toml (>=3.10,<3.12).
 SUPPORTED_PYTHON_MIN = (3, 10)
 SUPPORTED_PYTHON_MAX = (3, 11)
 APPIMAGE_TOOL_URL = (
