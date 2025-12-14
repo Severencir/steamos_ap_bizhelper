@@ -43,6 +43,102 @@ def _logger() -> AppLogger:
     return _SHIM_LOGGER
 
 
+def _locate_bizhawk_runner(logger: AppLogger) -> Optional[Path]:
+    try:
+        from ap_bizhelper.ap_bizhelper_ap import _load_settings as _load_ap_settings
+    except Exception as exc:
+        logger.log(
+            f"BizHawk runner discovery aborted: could not import settings loader ({exc}).",
+            level="DEBUG",
+            include_context=True,
+            location="auto-answer",
+        )
+        return None
+
+    settings = _load_ap_settings()
+    runner_str = str(settings.get("BIZHAWK_RUNNER", "") or "")
+    exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+
+    candidates: List[Path] = []
+    candidate_sources = []
+    if runner_str:
+        runner_path = Path(runner_str)
+        candidates.append(runner_path)
+        candidate_sources.append((runner_path, "BIZHAWK_RUNNER"))
+    if exe_str:
+        exe_candidate = Path(exe_str).parent / "run_bizhawk_proton.py"
+        candidates.append(exe_candidate)
+        candidate_sources.append((exe_candidate, "BIZHAWK_EXE"))
+
+    local_candidate = Path(__file__).resolve().parent / "run_bizhawk_proton.py"
+    candidates.append(local_candidate)
+    candidate_sources.append((local_candidate, "local fallback"))
+
+    logger.log(
+        "BizHawk runner search candidates: "
+        + ", ".join(f"{source} -> {path}" for path, source in candidate_sources),
+        level="DEBUG",
+        include_context=True,
+        location="auto-answer",
+    )
+
+    skipped: List[str] = []
+
+    for candidate in candidates:
+        try:
+            if not candidate.exists():
+                skipped.append(f"{candidate} (not found)")
+                logger.log(
+                    f"Skipping BizHawk runner candidate {candidate}: not found.",
+                    level="DEBUG",
+                    include_context=True,
+                    location="auto-answer",
+                )
+                continue
+            if not candidate.is_file():
+                skipped.append(f"{candidate} (not a file)")
+                logger.log(
+                    f"Skipping BizHawk runner candidate {candidate}: not a file.",
+                    level="DEBUG",
+                    include_context=True,
+                    location="auto-answer",
+                )
+                continue
+            if not os.access(candidate, os.R_OK):
+                skipped.append(f"{candidate} (unreadable)")
+                logger.log(
+                    f"Skipping BizHawk runner candidate {candidate}: unreadable.",
+                    level="DEBUG",
+                    include_context=True,
+                    location="auto-answer",
+                )
+                continue
+            logger.log(
+                f"Selected BizHawk runner candidate {candidate}.",
+                level="DEBUG",
+                include_context=True,
+                location="auto-answer",
+            )
+            return candidate
+        except Exception as exc:
+            skipped.append(f"{candidate} (error: {exc})")
+            logger.log(
+                f"Skipping BizHawk runner candidate {candidate}: error {exc}.",
+                level="DEBUG",
+                include_context=True,
+                location="auto-answer",
+            )
+            continue
+
+    logger.log(
+        "No BizHawk runner found; skipped candidates: " + "; ".join(skipped),
+        level="WARNING",
+        include_context=True,
+        location="auto-answer",
+    )
+    return None
+
+
 class ZenityShim:
     """Parse a zenity command and render equivalent PySide6 dialogs."""
 
@@ -124,7 +220,7 @@ class ZenityShim:
         if not title_matches and not text_has_hint:
             return None
 
-        runner = self._locate_bizhawk_runner()
+        runner = _locate_bizhawk_runner(self.logger)
         if runner is None:
             self.logger.log(
                 "EmuHawk auto-answer detected but no runner could be located.",
@@ -139,95 +235,6 @@ class ZenityShim:
             location="auto-answer",
         )
         return 0
-
-    def _locate_bizhawk_runner(self) -> Optional[Path]:
-        try:
-            from ap_bizhelper.ap_bizhelper_ap import _load_settings as _load_ap_settings
-        except Exception:
-            return None
-
-        settings = _load_ap_settings()
-        runner_str = str(settings.get("BIZHAWK_RUNNER", "") or "")
-        exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
-
-        candidates = []
-        candidate_sources = []
-        if runner_str:
-            runner_path = Path(runner_str)
-            candidates.append(runner_path)
-            candidate_sources.append((runner_path, "BIZHAWK_RUNNER"))
-        if exe_str:
-            exe_candidate = Path(exe_str).parent / "run_bizhawk_proton.py"
-            candidates.append(exe_candidate)
-            candidate_sources.append((exe_candidate, "BIZHAWK_EXE"))
-
-        local_candidate = Path(__file__).resolve().parent / "run_bizhawk_proton.py"
-        candidates.append(local_candidate)
-        candidate_sources.append((local_candidate, "local fallback"))
-
-        self.logger.log(
-            "BizHawk runner search candidates: "
-            + ", ".join(f"{source} -> {path}" for path, source in candidate_sources),
-            level="DEBUG",
-            include_context=True,
-            location="auto-answer",
-        )
-
-        skipped: List[str] = []
-
-        for candidate in candidates:
-            try:
-                if not candidate.exists():
-                    skipped.append(f"{candidate} (not found)")
-                    self.logger.log(
-                        f"Skipping BizHawk runner candidate {candidate}: not found.",
-                        level="DEBUG",
-                        include_context=True,
-                        location="auto-answer",
-                    )
-                    continue
-                if not candidate.is_file():
-                    skipped.append(f"{candidate} (not a file)")
-                    self.logger.log(
-                        f"Skipping BizHawk runner candidate {candidate}: not a file.",
-                        level="DEBUG",
-                        include_context=True,
-                        location="auto-answer",
-                    )
-                    continue
-                if not os.access(candidate, os.R_OK):
-                    skipped.append(f"{candidate} (unreadable)")
-                    self.logger.log(
-                        f"Skipping BizHawk runner candidate {candidate}: unreadable.",
-                        level="DEBUG",
-                        include_context=True,
-                        location="auto-answer",
-                    )
-                    continue
-                self.logger.log(
-                    f"Selected BizHawk runner candidate {candidate}.",
-                    level="DEBUG",
-                    include_context=True,
-                    location="auto-answer",
-                )
-                return candidate
-            except Exception as exc:
-                skipped.append(f"{candidate} (error: {exc})")
-                self.logger.log(
-                    f"Skipping BizHawk runner candidate {candidate}: error {exc}.",
-                    level="DEBUG",
-                    include_context=True,
-                    location="auto-answer",
-                )
-                continue
-
-        self.logger.log(
-            "No BizHawk runner found; skipped candidates: " + "; ".join(skipped),
-            level="WARNING",
-            include_context=True,
-            location="auto-answer",
-        )
-        return None
 
     def _qt_available(self) -> bool:
         return importlib.util.find_spec("PySide6") is not None
@@ -538,6 +545,45 @@ class KDialogShim:
                 return arg.split("=", 1)[1]
         return None
 
+    def _auto_answer_emuhawk(self, argv: Sequence[str]) -> Optional[int]:
+        title = self._extract_value(argv, "--title")
+        text_candidates = [
+            self._extract_value(argv, flag)
+            for flag in (
+                "--yesno",
+                "--warningyesno",
+                "--msgbox",
+                "--error",
+                "--sorry",
+                "--inputbox",
+                "--password",
+            )
+        ]
+        text = next((value for value in text_candidates if value), None)
+
+        title_matches = bool(title and "emuhawk" in title.casefold())
+        text_has_hint = bool(text and any(hint in text.casefold() for hint in ("emuhawk", "bizhawk")))
+
+        if not title_matches and not text_has_hint:
+            return None
+
+        runner = _locate_bizhawk_runner(self.logger)
+        if runner is None:
+            self.logger.log(
+                "EmuHawk auto-answer detected but no runner could be located.",
+                level="WARNING",
+                include_context=True,
+            )
+            return None
+
+        sys.stdout.write(str(runner) + "\n")
+        self.logger.log(
+            f"EmuHawk auto-answer provided runner: {runner}",
+            include_context=True,
+            location="auto-answer",
+        )
+        return 0
+
     def handle(self, argv: Sequence[str]) -> int:
         with self.logger.context("kdialog-handle"):
             self.logger.log(
@@ -547,6 +593,10 @@ class KDialogShim:
             )
             if not argv:
                 return self._fallback(argv, "No kdialog arguments were provided.")
+
+            auto_answer = self._auto_answer_emuhawk(argv)
+            if auto_answer is not None:
+                return auto_answer
 
             if not self._qt_available():
                 return self._fallback(argv, "PySide6 is unavailable for kdialog shimming.")
