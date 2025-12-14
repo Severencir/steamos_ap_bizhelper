@@ -22,7 +22,6 @@ APPIMAGE_TOOL_URL = (
     "appimagetool-x86_64.AppImage"
 )
 APPIMAGE_TOOL_PATH = DIST_DIR / "appimagetool"
-QTGAMEPAD_STUB = PROJECT_ROOT / "ap_bizhelper" / "qtgamepad_stub.py"
 ICON_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAJ0lEQVR4nO3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAA"
     "AAAAAAAAAAAAAICtF7kAARQrxxgAAAAASUVORK5CYII="
@@ -155,26 +154,6 @@ def _download_appimagetool() -> Path:
         APPIMAGE_TOOL_PATH.write_bytes(resp.read())
     APPIMAGE_TOOL_PATH.chmod(0o755)
     return APPIMAGE_TOOL_PATH
-
-
-def _site_packages(appdir: Path) -> list[Path]:
-    return sorted(appdir.glob("usr/lib/python*/site-packages"))
-
-
-def _inject_qtgamepad_stub(appdir: Path) -> None:
-    if not QTGAMEPAD_STUB.exists():
-        raise FileNotFoundError("QtGamepad stub source missing from project")
-
-    for site in _site_packages(appdir):
-        target_dir = site / "PySide6"
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target_path = target_dir / "QtGamepad.py"
-        if target_path.exists():
-            continue
-        target_path.write_text(
-            QTGAMEPAD_STUB.read_text()
-            + "\n# Injected by ap-bizhelper build to provide QtGamepad bindings.\n"
-        )
 
 
 def _build_appimage(appdir: Path) -> Path:

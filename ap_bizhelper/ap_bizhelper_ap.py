@@ -119,41 +119,16 @@ def _attach_gamepad_dialog_support(
         )
         return
 
-    qtgamepad_source = "PySide6"
     try:
         from PySide6 import QtGamepad, QtWidgets
     except Exception as exc:  # pragma: no cover - import depends on platform Qt build
-        try:
-            from . import qtgamepad_stub as QtGamepad
-            from PySide6 import QtWidgets
-        except Exception as stub_exc:  # pragma: no cover - stub availability is deterministic
-            APP_LOGGER.log(
-                "QtGamepad unavailable from PySide6 and stub load failed; controller support disabled "
-                f"({exc} / {stub_exc}).",
-                level="WARNING",
-                location=context,
-                include_context=True,
-            )
-            return
-
-        qtgamepad_source = "ap-bizhelper stub"
         APP_LOGGER.log(
-            "QtGamepad unavailable from PySide6; using bundled stub implementation.",
-            level="INFO",
+            f"QtGamepad unavailable; controller support disabled ({exc}).",
+            level="WARNING",
             location=context,
             include_context=True,
         )
-
-<<<<<<< main
-    APP_LOGGER.log(
-        f"QtGamepad available from {qtgamepad_source}; discovering connected controllers.",
-        level="DEBUG",
-        location=context,
-        include_context=True,
-    )
-
-=======
->>>>>>> 335755e Add QtGamepad support to packaged build
+        return
     manager = QtGamepad.QGamepadManager.instance()
     connected = list(getattr(manager, "connectedGamepads", lambda: [])())
     APP_LOGGER.log(
