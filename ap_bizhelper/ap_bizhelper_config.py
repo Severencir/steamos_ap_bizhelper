@@ -351,7 +351,7 @@ def cmd_export_shell() -> int:
         AP_APPIMAGE='/path/to/AppImage'
         BIZHAWK_EXE='/path/to/EmuHawk.exe'
     """
-    settings = _load_json(SETTINGS_FILE)
+    settings = load_settings()
     for key in SETTINGS_KEYS:
         if key in settings and settings[key] not in (None, ""):
             value = str(settings[key])
@@ -370,8 +370,9 @@ def cmd_save_from_env() -> int:
     (for example BIZHAWK_EXE) with empty strings when shell variables
     are unset.
     """
-    settings = _load_json(SETTINGS_FILE)
-    install_state = _load_install_state()
+    combined_settings = load_settings()
+    settings = {k: v for k, v in combined_settings.items() if k not in INSTALL_STATE_KEYS}
+    install_state = {k: v for k, v in combined_settings.items() if k in INSTALL_STATE_KEYS}
 
     for key in SETTINGS_KEYS:
         if key in os.environ and os.environ.get(key, "") != "":
@@ -380,8 +381,7 @@ def cmd_save_from_env() -> int:
             else:
                 settings[key] = os.environ[key]
 
-    _save_json(SETTINGS_FILE, settings)
-    _save_json(INSTALL_STATE_FILE, install_state)
+    save_settings({**settings, **install_state})
     return 0
 
 
