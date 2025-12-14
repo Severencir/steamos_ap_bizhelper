@@ -1287,6 +1287,7 @@ def ensure_appimage(
     download_selected: bool = True,
     create_shortcut: bool = False,
     download_messages: Optional[list[str]] = None,
+    settings: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """
     Ensure the Archipelago AppImage is configured and up to date.
@@ -1295,7 +1296,19 @@ def ensure_appimage(
     into the JSON settings file. On failure, raises RuntimeError.
     """
     _ensure_dirs()
-    settings = _load_settings()
+    provided_settings = settings
+    settings = settings if settings is not None else _load_settings()
+
+    def _merge_and_save_settings() -> None:
+        nonlocal settings
+
+        if provided_settings is not None and settings is not provided_settings:
+            merged = {**provided_settings, **settings}
+            provided_settings.clear()
+            provided_settings.update(merged)
+            settings = provided_settings
+
+        _save_settings(settings)
 
     downloaded = False
 
@@ -1337,7 +1350,7 @@ def ensure_appimage(
             settings["AP_APPIMAGE"] = str(AP_APPIMAGE_DEFAULT)
             settings["AP_VERSION"] = ver
             settings["AP_SKIP_VERSION"] = ""
-            _save_settings(settings)
+            _merge_and_save_settings()
             downloaded = True
         else:
             app_path = _prompt_select_existing_appimage(
@@ -1345,7 +1358,7 @@ def ensure_appimage(
             )
             settings["AP_APPIMAGE"] = str(app_path)
             # No version information when manually selected.
-            _save_settings(settings)
+            _merge_and_save_settings()
 
     if app_path is None or not app_path.is_file() or not os.access(str(app_path), os.X_OK):
         error_dialog("Archipelago AppImage was not configured correctly.")
