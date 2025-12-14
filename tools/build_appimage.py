@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import base64
+import os
 import shutil
 import subprocess
 import sys
 import textwrap
 import urllib.request
-import venv
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -37,18 +37,67 @@ def _build_wheel() -> Path:
     return wheels[-1]
 
 
-def _create_appdir_venv() -> Path:
+def _resolve_target_python() -> Path:
+    raw_path = os.environ.get("APPIMAGE_PYTHON", "python3.11")
+    candidates = []
+
+    if raw_path:
+        candidates.append(raw_path)
+
+    candidates.append(sys.executable)
+    candidates.extend(["python3.11", "python3.10", "python3", "python"])
+
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+
+        candidate_path = Path(candidate)
+        if candidate_path.is_absolute():
+            if candidate_path.exists():
+                return candidate_path
+            continue
+
+        resolved = shutil.which(candidate)
+        if resolved:
+            return Path(resolved)
+
+    raise FileNotFoundError(
+        f"Unable to locate target python '{raw_path}'. Set APPIMAGE_PYTHON to an explicit path."
+    )
+
+
+def _create_appdir_venv(target_python: Path) -> Path:
     if APPDIR.exists():
         shutil.rmtree(APPDIR)
     APPDIR.mkdir(parents=True)
     env_dir = APPDIR / "usr"
-    venv.EnvBuilder(with_pip=True, symlinks=False, upgrade_deps=False).create(env_dir)
+    subprocess.run([str(target_python), "-m", "venv", str(env_dir)], check=True)
     return env_dir / "bin" / "python"
 
 
 def _install_wheel(python: Path, wheel: Path) -> None:
     subprocess.run([python, "-m", "pip", "install", "--upgrade", "pip"], check=True)
     subprocess.run([python, "-m", "pip", "install", str(wheel)], check=True)
+
+
+def _verify_qtgamepad_plugins(appdir: Path) -> None:
+    site_packages = sorted(appdir.glob("usr/lib/python*/site-packages"))
+    plugin_candidates = []
+
+    for site in site_packages:
+        plugin_root = site / "PySide6" / "Qt" / "plugins"
+        if plugin_root.exists():
+            plugin_candidates.extend(plugin_root.rglob("libqtgamepad*.so"))
+
+    if not plugin_candidates:
+        raise FileNotFoundError(
+            "QtGamepad plugin (libqtgamepad*.so) was not bundled into the AppImage."
+        )
+
+    found_paths = "\n".join(str(p.relative_to(appdir)) for p in sorted(plugin_candidates))
+    print(f"Bundled QtGamepad plugins:\n{found_paths}")
 
 
 def _write_apprun(appdir: Path) -> None:
@@ -130,8 +179,10 @@ def _build_appimage(appdir: Path) -> Path:
 
 def build_appimage() -> Path:
     wheel = _build_wheel()
-    python = _create_appdir_venv()
+    target_python = _resolve_target_python()
+    python = _create_appdir_venv(target_python)
     _install_wheel(python, wheel)
+    _verify_qtgamepad_plugins(APPDIR)
     _write_apprun(APPDIR)
     _write_desktop(APPDIR)
     _write_icon(APPDIR)
