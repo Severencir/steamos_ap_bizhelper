@@ -92,13 +92,15 @@ class ZenityShim:
 
     def _auto_answer_emuhawk(self, argv: Sequence[str]) -> Optional[int]:
         title = self._extract_option(argv, "--title=")
-        if not title:
-            return None
-        if "emuhawk" not in title.casefold():
-            return None
-
         text = self._extract_option(argv, "--text=")
-        if text and all(hint not in text.casefold() for hint in ("emuhawk", "bizhawk")):
+
+        title_matches = bool(title and "emuhawk" in title.casefold())
+        text_has_hint = bool(text and any(hint in text.casefold() for hint in ("emuhawk", "bizhawk")))
+
+        if title_matches:
+            if text and not text_has_hint:
+                return None
+        elif not text_has_hint:
             return None
 
         runner = self._locate_bizhawk_runner()
