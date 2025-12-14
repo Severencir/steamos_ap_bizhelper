@@ -21,9 +21,9 @@ from .ap_bizhelper_config import (
     save_settings as _save_shared_settings,
 )
 
-CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
+CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
-DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper_test"))
+DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper"))
 
 BIZHAWK_WIN_DIR = DATA_DIR / "bizhawk_win"
 PROTON_PREFIX = DATA_DIR / "proton_prefix"

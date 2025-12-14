@@ -59,7 +59,7 @@ def configure_proton_env():
     home = Path.home()
     proton_bin = get_env_or_config("PROTON_BIN") or "proton"
     proton_prefix = get_env_or_config("PROTON_PREFIX") or str(
-        home / ".local" / "share" / "ap_bizhelper_test" / "proton_prefix"
+        home / ".local" / "share" / "ap_bizhelper" / "proton_prefix"
     )
     steam_root = get_env_or_config("STEAM_ROOT") or str(
         home / ".local" / "share" / "Steam"

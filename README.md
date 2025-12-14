@@ -25,7 +25,7 @@ The script writes the wheel and `dist/ap-bizhelper.AppImage`. The AppImage can b
 
 * When ap-bizhelper sees a new patch file extension, it prompts to register itself as the handler.
 * Accepting the prompt creates a per-user desktop entry and MIME globs under `~/.local/share/applications/ap-bizhelper.desktop` and `~/.local/share/mime/packages/ap-bizhelper-*.xml`. New extensions are added automatically after you opt in once.
-* Decisions are stored in `~/.config/ap_bizhelper_test/ext_associations.json` (mode plus per-extension choices) so the prompt is not repeated for the same extension.
+* Decisions are stored in `~/.config/ap_bizhelper/ext_associations.json` (mode plus per-extension choices) so the prompt is not repeated for the same extension.
 * Disable or revoke associations with the config helper, for example:
 
 ```bash
@@ -47,4 +47,4 @@ When launched through Steam (for overlay/controller support), the PySide6 file p
 * **D-pad Up/Down/Left/Right** or left stick: move the selection
 * **D-pad Left**: toggle focus to the sidebar; **D-pad Right**: toggle focus back to the file list
 
-To disable gamepad control, set `"ENABLE_GAMEPAD_FILE_DIALOG": false` in `~/.config/ap_bizhelper_test/settings.json` and restart the helper.
+To disable gamepad control, set `"ENABLE_GAMEPAD_FILE_DIALOG": false` in `~/.config/ap_bizhelper/settings.json` and restart the helper.

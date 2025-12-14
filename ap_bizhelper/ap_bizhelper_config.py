@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 # These match the paths used by the original Bash script.
-CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
+CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
 EXT_BEHAVIOR_FILE = CONFIG_DIR / "ext_behavior.json"

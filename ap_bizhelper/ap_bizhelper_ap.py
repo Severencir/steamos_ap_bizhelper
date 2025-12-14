@@ -16,14 +16,17 @@ from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
+from .logging_utils import get_app_logger
 
 # Paths mirror the bash script and the config helper.
-CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper_test"))
+CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
-DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper_test"))
+DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper"))
 AP_APPIMAGE_DEFAULT = DATA_DIR / "Archipelago.AppImage"
 DESKTOP_DIR = Path(os.path.expanduser("~/Desktop"))
 DOWNLOADS_DIR = Path(os.path.expanduser("~/Downloads"))
+
+APP_LOGGER = get_app_logger()
 
 GITHUB_API_LATEST = "https://api.github.com/repos/ArchipelagoMW/Archipelago/releases/latest"
 
@@ -570,6 +573,14 @@ def _run_zenity(args: list[str], *, input_text: Optional[str] = None) -> Tuple[i
 def _zenity_error_dialog(message: str) -> None:
     """Attempt to show a zenity error dialog with detailed text."""
 
+    APP_LOGGER.log_dialog(
+        "Zenity Error",
+        message,
+        level="ERROR",
+        backend="zenity" if _has_zenity() else "stderr",
+        location="zenity-error",
+    )
+
     if _has_zenity():
         _run_zenity(["--error", f"--text={message}"])
     else:
@@ -890,6 +901,8 @@ def _select_file_dialog(
 
 
 def info_dialog(message: str) -> None:
+    backend = "qt" if _has_qt_dialogs() else "zenity" if _has_zenity() else "stderr"
+    APP_LOGGER.log_dialog("Information", message, backend=backend, location="info-dialog")
     if _has_qt_dialogs():
         from PySide6 import QtWidgets
 
@@ -908,6 +921,10 @@ def info_dialog(message: str) -> None:
         sys.stderr.write(message + "\n")
 
 def error_dialog(message: str) -> None:
+    backend = "qt" if _has_qt_dialogs() else "zenity" if _has_zenity() else "stderr"
+    APP_LOGGER.log_dialog(
+        "Error", message, level="ERROR", backend=backend, location="error-dialog"
+    )
     if _has_qt_dialogs():
         from PySide6 import QtWidgets
 
