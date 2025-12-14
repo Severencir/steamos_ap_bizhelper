@@ -66,6 +66,12 @@ class _StreamCapture:
         return getattr(self._stream, "encoding", None)
 
 
+def _unwrap_stream(stream):
+    while isinstance(stream, _StreamCapture):
+        stream = stream._stream
+    return stream
+
+
 class AppLogger:
     """Structured application-wide logger with contextual breadcrumbs."""
 
@@ -94,8 +100,8 @@ class AppLogger:
         else:
             self.path = base_dir / f"{self.category}_{self.timestamp}_{self.run_id}.log"
         self._sequence = 0
-        self._original_stdout = sys.stdout
-        self._original_stderr = sys.stderr
+        self._original_stdout = _unwrap_stream(sys.stdout)
+        self._original_stderr = _unwrap_stream(sys.stderr)
 
     @contextlib.contextmanager
     def context(self, label: str):
