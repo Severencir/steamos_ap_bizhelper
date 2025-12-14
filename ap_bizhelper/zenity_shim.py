@@ -94,7 +94,11 @@ class ZenityShim:
         title = self._extract_option(argv, "--title=")
         if not title:
             return None
-        if title.strip().lower() != "select emuhawk executable".lower():
+        if "emuhawk" not in title.casefold():
+            return None
+
+        text = self._extract_option(argv, "--text=")
+        if text and all(hint not in text.casefold() for hint in ("emuhawk", "bizhawk")):
             return None
 
         runner = self._locate_bizhawk_runner()
