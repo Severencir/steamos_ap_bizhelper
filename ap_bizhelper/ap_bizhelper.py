@@ -38,7 +38,7 @@ from .ap_bizhelper_config import (
     set_ext_association,
 )
 from .zenity_shim import prepare_zenity_shim_env
-from .logging_utils import get_app_logger
+from .logging_utils import RUNNER_LOG_ENV, get_app_logger
 from .ap_bizhelper_worlds import ensure_apworld_for_patch
 
 
@@ -872,7 +872,13 @@ def _wait_for_rom(patch: Path, *, timeout: int = 60) -> Optional[Path]:
 def _launch_bizhawk(runner: Path, rom: Path) -> None:
     print(f"[ap-bizhelper] Launching BizHawk runner: {runner} {rom}")
     try:
-        subprocess.Popen([str(runner), str(rom)])
+        env = APP_LOGGER.component_environ(
+            env=os.environ.copy(),
+            category="bizhawk-runner",
+            subdir="runner",
+            env_var=RUNNER_LOG_ENV,
+        )
+        subprocess.Popen([str(runner), str(rom)], env=env)
     except Exception as exc:  # pragma: no cover - safety net for runtime environments
         error_dialog(f"Failed to launch BizHawk runner: {exc}")
 
@@ -1021,8 +1027,8 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
             include_context=True,
             mirror_console=True,
         )
-        shim_env = prepare_zenity_shim_env()
-        launch_env = os.environ.copy()
+        shim_env = prepare_zenity_shim_env(APP_LOGGER)
+        launch_env = APP_LOGGER.session_environ(env=os.environ.copy())
         if shim_env:
             launch_env.update(shim_env)
         try:

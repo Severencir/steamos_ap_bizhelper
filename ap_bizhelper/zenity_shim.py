@@ -20,9 +20,27 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from .logging_utils import (
+    SHIM_LOG_ENV,
+    AppLogger,
+    RUN_ID_ENV,
+    TIMESTAMP_ENV,
+    create_component_logger,
+)
+
 _REAL_ZENITY_ENV = "AP_BIZHELPER_REAL_ZENITY"
 _REAL_KDIALOG_ENV = "AP_BIZHELPER_REAL_KDIALOG"
 _REAL_PORTAL_ENV = "AP_BIZHELPER_REAL_XDG_DESKTOP_PORTAL"
+
+
+_SHIM_LOGGER: Optional[AppLogger] = None
+
+
+def _logger() -> AppLogger:
+    global _SHIM_LOGGER
+    if _SHIM_LOGGER is None:
+        _SHIM_LOGGER = create_component_logger("zenity-shim", env_var=SHIM_LOG_ENV, subdir="shim")
+    return _SHIM_LOGGER
 
 
 class ZenityShim:
@@ -30,6 +48,7 @@ class ZenityShim:
 
     def __init__(self, real_zenity: Optional[str] = None) -> None:
         self.real_zenity = real_zenity or self._discover_real_zenity()
+        self.logger = _logger()
 
     def _discover_real_zenity(self) -> Optional[str]:
         shim_dir = os.environ.get("AP_BIZHELPER_SHIM_DIR", "")
@@ -44,38 +63,43 @@ class ZenityShim:
         return shutil.which("zenity", path=cleaned) or None
 
     def handle(self, argv: Sequence[str]) -> int:
-        if not argv:
-            return self._fallback(argv, "No zenity arguments were provided.")
-
-        auto_answer = self._auto_answer_emuhawk(argv)
-        if auto_answer is not None:
-            return auto_answer
-
-        mode = self._detect_mode(argv)
-        if mode is None:
-            return self._fallback(
-                argv,
-                "The zenity shim could not recognize the requested dialog type.",
+        with self.logger.context("zenity-handle"):
+            self.logger.log(
+                f"Handling zenity shim request: {list(argv)}", include_context=True, location="zenity"
             )
+            if not argv:
+                return self._fallback(argv, "No zenity arguments were provided.")
 
-        if not self._qt_available():
-            return self._fallback(
-                argv,
-                "PySide6 is unavailable, so the shim cannot render the requested dialog.",
-            )
+            auto_answer = self._auto_answer_emuhawk(argv)
+            if auto_answer is not None:
+                return auto_answer
 
-        if mode == "question":
-            return self._handle_question(argv)
-        if mode == "info":
-            return self._handle_message(argv, level="info")
-        if mode == "error":
-            return self._handle_message(argv, level="error")
-        if mode == "checklist":
-            return self._handle_checklist(argv)
-        if mode == "progress":
-            return self._handle_progress(argv)
+            mode = self._detect_mode(argv)
+            if mode is None:
+                return self._fallback(
+                    argv,
+                    "The zenity shim could not recognize the requested dialog type.",
+                )
 
-        return self._fallback(argv, "The requested zenity mode is not yet supported.")
+            if not self._qt_available():
+                return self._fallback(
+                    argv,
+                    "PySide6 is unavailable, so the shim cannot render the requested dialog.",
+                )
+
+            self.logger.log(f"Detected zenity mode: {mode}", include_context=True, location="zenity")
+            if mode == "question":
+                return self._handle_question(argv)
+            if mode == "info":
+                return self._handle_message(argv, level="info")
+            if mode == "error":
+                return self._handle_message(argv, level="error")
+            if mode == "checklist":
+                return self._handle_checklist(argv)
+            if mode == "progress":
+                return self._handle_progress(argv)
+
+            return self._fallback(argv, "The requested zenity mode is not yet supported.")
 
     def _detect_mode(self, argv: Sequence[str]) -> Optional[str]:
         if "--question" in argv:
@@ -102,8 +126,18 @@ class ZenityShim:
 
         runner = self._locate_bizhawk_runner()
         if runner is None:
+            self.logger.log(
+                "EmuHawk auto-answer detected but no runner could be located.",
+                level="WARNING",
+                include_context=True,
+            )
             return None
         sys.stdout.write(str(runner) + "\n")
+        self.logger.log(
+            f"EmuHawk auto-answer provided runner: {runner}",
+            include_context=True,
+            location="auto-answer",
+        )
         return 0
 
     def _locate_bizhawk_runner(self) -> Optional[Path]:
@@ -135,8 +169,19 @@ class ZenityShim:
         return importlib.util.find_spec("PySide6") is not None
 
     def _fallback(self, argv: Sequence[str], reason: str) -> int:
+        self.logger.log(
+            f"Fallback invoked. Reason: {reason}. Original argv: {list(argv)}",
+            level="WARNING",
+            include_context=True,
+            location="fallback",
+        )
         real_result = self._maybe_run_real_zenity(argv)
         if real_result is not None:
+            self.logger.log(
+                f"Delegated to real zenity with return code {real_result}",
+                include_context=True,
+                location="fallback",
+            )
             return real_result
 
         cmd = " ".join(argv) if argv else "(no arguments)"
@@ -152,6 +197,11 @@ class ZenityShim:
         if not self.real_zenity:
             return None
         try:
+            self.logger.log(
+                f"Executing real zenity: {[self.real_zenity, *argv]}",
+                include_context=True,
+                location="real-zenity",
+            )
             return subprocess.call([self.real_zenity, *argv])
         except Exception:
             return None
@@ -170,10 +220,20 @@ class ZenityShim:
                 box.exec()
                 return
             except Exception:
-                pass
+                self.logger.log(
+                    "Qt error dialog rendering failed; trying zenity fallback.",
+                    level="WARNING",
+                    include_context=True,
+                    location="error-dialog",
+                )
 
         if self.real_zenity:
             try:
+                self.logger.log(
+                    "Attempting to display error via real zenity.",
+                    include_context=True,
+                    location="error-dialog",
+                )
                 subprocess.call(
                     [self.real_zenity, "--error", f"--text={message}"],
                     stdout=subprocess.DEVNULL,
@@ -181,7 +241,12 @@ class ZenityShim:
                 )
                 return
             except Exception:
-                pass
+                self.logger.log(
+                    "Failed to display error via real zenity; falling back to stderr.",
+                    level="WARNING",
+                    include_context=True,
+                    location="error-dialog",
+                )
 
         sys.stderr.write(message + "\n")
 
@@ -210,6 +275,11 @@ class ZenityShim:
         choice = _qt_question_dialog(
             title=title, text=text, ok_label=ok_label, cancel_label=cancel_label, extra_label=extra_label
         )
+        self.logger.log(
+            f"Question dialog selection: {choice or 'cancelled'} (title={title!r})",
+            include_context=True,
+            location="question",
+        )
         if choice == "ok":
             return 0
         if choice == "extra" and extra_label:
@@ -231,6 +301,11 @@ class ZenityShim:
             box.setWindowTitle(self._extract_option(argv, "--title=") or "Information")
         box.setText(self._extract_option(argv, "--text=") or "")
         box.exec()
+        self.logger.log(
+            f"Displayed {level} message dialog with title={box.windowTitle()!r}",
+            include_context=True,
+            location=f"message-{level}",
+        )
         return 0
 
     def _parse_checklist_items(self, argv: Sequence[str]) -> Optional[List[Tuple[bool, str]]]:
@@ -304,10 +379,16 @@ class ZenityShim:
 
         result = dialog.exec()
         if result != QtWidgets.QDialog.Accepted:
+            self.logger.log(
+                "Checklist dialog cancelled by user.", include_context=True, location="checklist"
+            )
             return 1
 
         selected = [cb.text() for cb in checkboxes if cb.isChecked()]
         sys.stdout.write("|".join(selected) + "\n")
+        self.logger.log(
+            f"Checklist selections: {selected}", include_context=True, location="checklist"
+        )
         return 0
 
     def _handle_progress(self, argv: Sequence[str]) -> int:
@@ -352,7 +433,13 @@ class ZenityShim:
         app.processEvents()
         if dialog.wasCanceled():
             dialog.cancel()
+            self.logger.log(
+                "Progress dialog cancelled by user before completion.",
+                include_context=True,
+                location="progress",
+            )
             return 1
+        self.logger.log("Progress dialog completed", include_context=True, location="progress")
         return 0
 
 
@@ -361,6 +448,7 @@ class KDialogShim:
 
     def __init__(self, real_kdialog: Optional[str] = None) -> None:
         self.real_kdialog = real_kdialog or self._discover_real_kdialog()
+        self.logger = _logger()
 
     def _discover_real_kdialog(self) -> Optional[str]:
         shim_dir = os.environ.get("AP_BIZHELPER_SHIM_DIR", "")
@@ -387,20 +475,26 @@ class KDialogShim:
         return None
 
     def handle(self, argv: Sequence[str]) -> int:
-        if not argv:
-            return self._fallback(argv, "No kdialog arguments were provided.")
+        with self.logger.context("kdialog-handle"):
+            self.logger.log(
+                f"Handling kdialog shim request: {list(argv)}",
+                include_context=True,
+                location="kdialog",
+            )
+            if not argv:
+                return self._fallback(argv, "No kdialog arguments were provided.")
 
-        if not self._qt_available():
-            return self._fallback(argv, "PySide6 is unavailable for kdialog shimming.")
+            if not self._qt_available():
+                return self._fallback(argv, "PySide6 is unavailable for kdialog shimming.")
 
-        if "--yesno" in argv or "--warningyesno" in argv:
-            return self._handle_yesno(argv)
-        if "--msgbox" in argv or "--sorry" in argv or "--error" in argv:
-            return self._handle_message(argv)
-        if "--getopenfilename" in argv:
-            return self._handle_getopenfilename(argv)
+            if "--yesno" in argv or "--warningyesno" in argv:
+                return self._handle_yesno(argv)
+            if "--msgbox" in argv or "--sorry" in argv or "--error" in argv:
+                return self._handle_message(argv)
+            if "--getopenfilename" in argv:
+                return self._handle_getopenfilename(argv)
 
-        return self._fallback(argv, "The requested kdialog mode is not supported by the shim.")
+            return self._fallback(argv, "The requested kdialog mode is not supported by the shim.")
 
     def _handle_yesno(self, argv: Sequence[str]) -> int:
         from PySide6 import QtWidgets  # type: ignore
@@ -414,6 +508,11 @@ class KDialogShim:
         QtWidgets.QApplication.instance()
         choice = _qt_question_dialog(
             title=title, text=text or "", ok_label="Yes", cancel_label="No"
+        )
+        self.logger.log(
+            f"kdialog yes/no selection: {choice or 'cancelled'} (title={title!r})",
+            include_context=True,
+            location="kdialog-yesno",
         )
         return 0 if choice == "ok" else 1
 
@@ -437,6 +536,11 @@ class KDialogShim:
             or ""
         )
         box.exec()
+        self.logger.log(
+            f"kdialog message displayed with title={box.windowTitle()!r}",
+            include_context=True,
+            location="kdialog-message",
+        )
         return 0
 
     def _handle_getopenfilename(self, argv: Sequence[str]) -> int:
@@ -474,7 +578,13 @@ class KDialogShim:
             _remember_file_dialog_dir(settings, selection, "shim")
             _save_settings(settings)
             sys.stdout.write(str(selection) + "\n")
+            self.logger.log(
+                f"kdialog file selection: {selection}", include_context=True, location="kdialog-open"
+            )
             return 0
+        self.logger.log(
+            "kdialog file selection cancelled", include_context=True, location="kdialog-open"
+        )
         return 1
 
     def _fallback(self, argv: Sequence[str], reason: str) -> int:
@@ -492,20 +602,27 @@ class PortalShim:
 
     def __init__(self, real_portal: Optional[str] = None) -> None:
         self.real_portal = real_portal
+        self.logger = _logger()
 
     def _qt_available(self) -> bool:
         return importlib.util.find_spec("PySide6") is not None
 
     def handle(self, argv: Sequence[str]) -> int:
-        if argv and argv[0] in {"--help", "-h"}:
-            sys.stdout.write("ap-bizhelper portal shim (FileChooser only)\n")
-            return 0
+        with self.logger.context("portal-handle"):
+            self.logger.log(
+                f"Handling portal shim request: {list(argv)}",
+                include_context=True,
+                location="portal",
+            )
+            if argv and argv[0] in {"--help", "-h"}:
+                sys.stdout.write("ap-bizhelper portal shim (FileChooser only)\n")
+                return 0
 
-        if self._qt_available():
-            if argv and argv[0] in {"--choose-file", "--choose-multiple"}:
-                return self._handle_choose_file(argv)
+            if self._qt_available():
+                if argv and argv[0] in {"--choose-file", "--choose-multiple"}:
+                    return self._handle_choose_file(argv)
 
-        return self._fallback(argv)
+            return self._fallback(argv)
 
     def _handle_choose_file(self, argv: Sequence[str]) -> int:
         from ap_bizhelper.ap_bizhelper_ap import (
@@ -529,12 +646,21 @@ class PortalShim:
             _remember_file_dialog_dir(settings, selection, "shim")
             _save_settings(settings)
             sys.stdout.write(str(selection) + "\n")
+            self.logger.log(
+                f"portal file selection: {selection}", include_context=True, location="portal"
+            )
             return 0
+        self.logger.log("portal file selection cancelled", include_context=True, location="portal")
         return 1
 
     def _fallback(self, argv: Sequence[str]) -> int:
         if self.real_portal:
             try:
+                self.logger.log(
+                    f"Delegating portal shim to real portal: {self.real_portal}",
+                    include_context=True,
+                    location="portal-fallback",
+                )
                 return subprocess.call([self.real_portal, *argv])
             except Exception:
                 pass
@@ -543,7 +669,7 @@ class PortalShim:
         )
         return 127
 
-def prepare_zenity_shim_env() -> Optional[Dict[str, str]]:
+def prepare_zenity_shim_env(logger: Optional[AppLogger] = None) -> Optional[Dict[str, str]]:
     """Create a temporary zenity shim script and return environment overrides.
 
     The returned mapping can be merged into a subprocess environment to force
@@ -603,22 +729,49 @@ if __name__ == "__main__":
         _REAL_PORTAL_ENV: real_portal or "",
         "AP_BIZHELPER_SHIM_DIR": shim_dir.as_posix(),
     }
+    session_env: Dict[str, str] = {}
+    if logger:
+        session_env = logger.session_environ()
+        env[SHIM_LOG_ENV] = str(logger.component_log_path("zenity-shim", subdir="shim"))
+    else:
+        if RUN_ID_ENV in os.environ:
+            session_env[RUN_ID_ENV] = os.environ[RUN_ID_ENV]
+        if TIMESTAMP_ENV in os.environ:
+            session_env[TIMESTAMP_ENV] = os.environ[TIMESTAMP_ENV]
+        if SHIM_LOG_ENV in os.environ:
+            env[SHIM_LOG_ENV] = os.environ[SHIM_LOG_ENV]
+    env.update({k: v for k, v in session_env.items() if v})
     return env
 
 
 def shim_main() -> None:
-    shim = ZenityShim(real_zenity=os.environ.get(_REAL_ZENITY_ENV) or None)
-    sys.exit(shim.handle(sys.argv[1:]))
+    logger = _logger()
+    with logger.context("shim-main"):
+        logger.log(
+            f"zenity shim entrypoint argv={sys.argv[1:]}", include_context=True, location="entry"
+        )
+        shim = ZenityShim(real_zenity=os.environ.get(_REAL_ZENITY_ENV) or None)
+        sys.exit(shim.handle(sys.argv[1:]))
 
 
 def kdialog_main() -> None:
-    shim = KDialogShim(real_kdialog=os.environ.get(_REAL_KDIALOG_ENV) or None)
-    sys.exit(shim.handle(sys.argv[1:]))
+    logger = _logger()
+    with logger.context("kdialog-main"):
+        logger.log(
+            f"kdialog shim entrypoint argv={sys.argv[1:]}", include_context=True, location="entry"
+        )
+        shim = KDialogShim(real_kdialog=os.environ.get(_REAL_KDIALOG_ENV) or None)
+        sys.exit(shim.handle(sys.argv[1:]))
 
 
 def portal_file_chooser_main() -> None:
-    shim = PortalShim(real_portal=os.environ.get(_REAL_PORTAL_ENV) or None)
-    sys.exit(shim.handle(sys.argv[1:]))
+    logger = _logger()
+    with logger.context("portal-main"):
+        logger.log(
+            f"portal shim entrypoint argv={sys.argv[1:]}", include_context=True, location="entry"
+        )
+        shim = PortalShim(real_portal=os.environ.get(_REAL_PORTAL_ENV) or None)
+        sys.exit(shim.handle(sys.argv[1:]))
 
 
 if __name__ == "__main__":
