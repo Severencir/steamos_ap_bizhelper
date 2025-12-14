@@ -10,7 +10,7 @@ import sys
 import time
 from urllib.parse import quote, unquote, urlparse
 from pathlib import Path
-from typing import Iterable, Optional, Set, Tuple
+from typing import Optional, Set, Tuple
 
 from .ap_bizhelper_ap import (
     AP_APPIMAGE_DEFAULT,
@@ -48,116 +48,6 @@ def _is_running_under_steam() -> bool:
     return bool(os.environ.get("SteamGameId"))
 
 
-def _shortcut_vdf_paths() -> Iterable[Path]:
-    """Yield plausible ``shortcuts.vdf`` locations for the current user."""
-
-    home = Path.home()
-    bases = [home / ".steam/steam", home / ".local/share/Steam"]
-    for base in bases:
-        userdata = base / "userdata"
-        if not userdata.is_dir():
-            continue
-        for userdir in userdata.iterdir():
-            config = userdir / "config/shortcuts.vdf"
-            if config.is_file():
-                yield config
-
-
-def _read_cstring(data: bytes, idx: int) -> Tuple[str, int]:
-    end = data.find(b"\x00", idx)
-    if end == -1:
-        raise ValueError("Unterminated string in shortcuts.vdf")
-    return data[idx:end].decode("utf-8", errors="ignore"), end + 1
-
-
-def _parse_binary_kv(data: bytes, idx: int = 0) -> Tuple[dict, int]:
-    """Parse a binary VDF-style key/value object starting at ``idx``."""
-
-    obj = {}
-    while idx < len(data):
-        value_type = data[idx]
-        idx += 1
-
-        if value_type == 0x08:
-            return obj, idx
-
-        key, idx = _read_cstring(data, idx)
-
-        if value_type == 0x00:  # nested object
-            value, idx = _parse_binary_kv(data, idx)
-        elif value_type == 0x01:  # string
-            value, idx = _read_cstring(data, idx)
-        elif value_type == 0x02:  # int32
-            if idx + 4 > len(data):
-                raise ValueError("Unexpected end of int32 in shortcuts.vdf")
-            value = int.from_bytes(data[idx : idx + 4], "little", signed=True)
-            idx += 4
-        elif value_type == 0x07:  # uint64
-            if idx + 8 > len(data):
-                raise ValueError("Unexpected end of int64 in shortcuts.vdf")
-            value = int.from_bytes(data[idx : idx + 8], "little", signed=False)
-            idx += 8
-        else:
-            raise ValueError(f"Unsupported VDF field type: {value_type}")
-
-        obj[key] = value
-
-    raise ValueError("Unexpected end of shortcuts.vdf")
-
-
-def _load_shortcuts(path: Path) -> list[dict]:
-    """Return a list of shortcut dicts from a binary ``shortcuts.vdf`` file."""
-
-    try:
-        data = path.read_bytes()
-        root, _ = _parse_binary_kv(data)
-    except Exception:
-        return []
-
-    shortcuts_obj = root.get("shortcuts")
-    if not isinstance(shortcuts_obj, dict):
-        return []
-
-    shortcuts: list[dict] = []
-    for entry in shortcuts_obj.values():
-        if isinstance(entry, dict):
-            shortcuts.append(entry)
-
-    return shortcuts
-
-
-def _normalize_exe_field(value: str | None) -> Optional[Path]:
-    if not value:
-        return None
-    cleaned = value.strip().strip("\"")
-    first = cleaned.split(" ", 1)[0]
-    try:
-        return Path(first).expanduser().resolve()
-    except Exception:
-        return None
-
-
-def _find_shortcut_appid(target: Path) -> Optional[int]:
-    target = target.resolve()
-    for shortcuts_path in _shortcut_vdf_paths():
-        for entry in _load_shortcuts(shortcuts_path):
-            exe_value = entry.get("exe") or entry.get("Exe")
-            exe_path = _normalize_exe_field(str(exe_value)) if exe_value is not None else None
-            if exe_path is None:
-                continue
-            if exe_path == target or str(target) in str(exe_path):
-                appid = entry.get("appid") or entry.get("AppId")
-                if isinstance(appid, int):
-                    return appid
-
-            app_name = str(entry.get("appname") or entry.get("AppName") or "")
-            if app_name.lower().startswith("ap-bizhelper") or "bizhelper" in app_name.lower():
-                appid = entry.get("appid") or entry.get("AppId")
-                if isinstance(appid, int):
-                    return appid
-    return None
-
-
 def _capture_steam_appid_if_present(settings: dict) -> None:
     """Persist ``SteamGameId`` into settings when available."""
 
@@ -187,13 +77,6 @@ def _get_known_steam_appid(settings: dict) -> Optional[str]:
     cached_appid = str(settings.get("STEAM_APPID") or "")
     if cached_appid.isdigit():
         return cached_appid
-
-    try:
-        shortcut_appid = _find_shortcut_appid(Path(sys.argv[0]))
-    except Exception:
-        shortcut_appid = None
-    if shortcut_appid is not None:
-        return str(shortcut_appid)
 
     return None
 

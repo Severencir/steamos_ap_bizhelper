@@ -146,8 +146,6 @@ def _download_apworld(url: str, dest_name: Optional[str]) -> Optional[Path]:
             dest,
             title="Downloading APWorld",
             text=filename,
-            cache_key=f"apworld:{filename}",
-            cache_version=dest_name,
         )
     except Exception:
         return None
