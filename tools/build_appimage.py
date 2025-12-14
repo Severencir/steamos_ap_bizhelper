@@ -90,43 +90,6 @@ def _install_wheel(python: Path, wheel: Path) -> None:
     subprocess.run([python, "-m", "pip", "install", "--upgrade", "pip"], check=True)
     subprocess.run([python, "-m", "pip", "install", str(wheel)], check=True)
 
-
-<<<<<<< main
-def _verify_qtgamepad_plugins(appdir: Path) -> None:
-    site_packages = _site_packages(appdir)
-    plugin_candidates = []
-
-    for site in site_packages:
-        plugin_root = site / "PySide6" / "Qt" / "plugins"
-        if plugin_root.exists():
-            plugin_candidates.extend(plugin_root.rglob("libqtgamepad*.so"))
-
-    python = appdir / "usr" / "bin" / "python"
-    import_check = subprocess.run(
-        [
-            python,
-            "-c",
-            "import importlib; import PySide6; importlib.import_module('PySide6.QtGamepad');"
-            "print('QtGamepad import succeeded')",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if import_check.returncode != 0:
-        raise RuntimeError(
-            "QtGamepad import failed inside AppImage env:\n"
-            f"stdout: {import_check.stdout}\nstderr: {import_check.stderr}"
-        )
-
-    if plugin_candidates:
-        found_paths = "\n".join(str(p.relative_to(appdir)) for p in sorted(plugin_candidates))
-        print(f"Bundled QtGamepad plugins:\n{found_paths}")
-    else:
-        print("QtGamepad Qt plugin not found; relying on stubbed bindings.")
-
-
-=======
->>>>>>> 335755e Add QtGamepad support to packaged build
 def _write_apprun(appdir: Path) -> None:
     apprun_path = appdir / "AppRun"
     content = textwrap.dedent(
@@ -229,11 +192,6 @@ def build_appimage() -> Path:
     wheel = _build_wheel(target_python)
     python = _create_appdir_venv(target_python)
     _install_wheel(python, wheel)
-<<<<<<< main
-    _inject_qtgamepad_stub(APPDIR)
-    _verify_qtgamepad_plugins(APPDIR)
-=======
->>>>>>> 335755e Add QtGamepad support to packaged build
     _write_apprun(APPDIR)
     _write_desktop(APPDIR)
     _write_icon(APPDIR)
