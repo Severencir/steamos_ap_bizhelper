@@ -28,6 +28,16 @@ DOWNLOADS_DIR = Path(os.path.expanduser("~/Downloads"))
 
 APP_LOGGER = get_app_logger()
 
+
+def _is_running_under_steam() -> bool:
+    """Return ``True`` when launched by Steam (Steam overlay/controller env set)."""
+
+    for key in ("SteamGameId", "SteamGameID", "SteamAppId", "SteamAppID"):
+        value = os.environ.get(key)
+        if value and str(value).isdigit():
+            return True
+    return False
+
 GITHUB_API_LATEST = "https://api.github.com/repos/ArchipelagoMW/Archipelago/releases/latest"
 
 _QT_APP: Optional["QtWidgets.QApplication"] = None
@@ -84,6 +94,163 @@ def _has_qt_dialogs() -> bool:
         return False
 
     return True
+
+
+def _attach_gamepad_dialog_support(
+    dialog: "QtWidgets.QDialog",
+    *,
+    ok_button: Optional["QtWidgets.QAbstractButton"] = None,
+    cancel_button: Optional["QtWidgets.QAbstractButton"] = None,
+    extra_button: Optional["QtWidgets.QAbstractButton"] = None,
+    context: str,
+) -> None:
+    """Wire up basic gamepad navigation for Qt dialogs when running under Steam.
+
+    The helper is intentionally noisy in logs to aid troubleshooting because
+    controller handling on SteamOS has been flaky historically.
+    """
+
+    if not _is_running_under_steam():
+        APP_LOGGER.log(
+            "Skipping gamepad wiring: not running under Steam.",
+            level="DEBUG",
+            location=context,
+            include_context=True,
+        )
+        return
+
+    try:
+        from PySide6 import QtGamepad, QtWidgets
+    except Exception as exc:  # pragma: no cover - import depends on platform Qt build
+        APP_LOGGER.log(
+            f"QtGamepad unavailable; controller support disabled ({exc}).",
+            level="WARNING",
+            location=context,
+            include_context=True,
+        )
+        return
+
+    manager = QtGamepad.QGamepadManager.instance()
+    connected = list(getattr(manager, "connectedGamepads", lambda: [])())
+    APP_LOGGER.log(
+        f"Gamepad manager connected ids: {connected}",
+        level="DEBUG",
+        location=context,
+        include_context=True,
+    )
+    if not connected:
+        APP_LOGGER.log(
+            "No connected gamepads detected; skipping dialog bindings.",
+            level="INFO",
+            location=context,
+            include_context=True,
+        )
+        return
+
+    try:
+        gamepad = QtGamepad.QGamepad(connected[0], dialog)
+    except Exception as exc:  # pragma: no cover - runtime device errors
+        APP_LOGGER.log(
+            f"Failed to initialize QGamepad for device {connected[0]}: {exc}",
+            level="ERROR",
+            location=context,
+            include_context=True,
+        )
+        return
+
+    APP_LOGGER.log(
+        "Attached gamepad to dialog: "
+        f"id={gamepad.deviceId()} name={gamepad.name()} "
+        f"manufacturer={gamepad.manufacturer()} profile={gamepad.profile()}",
+        level="INFO",
+        location=context,
+        include_context=True,
+    )
+
+    def _click_button(target: Optional["QtWidgets.QAbstractButton"], label: str) -> None:
+        if target is not None:
+            APP_LOGGER.log(
+                f"Gamepad activating {label} button.",
+                level="DEBUG",
+                location=context,
+                include_context=True,
+            )
+            target.animateClick()
+        else:
+            APP_LOGGER.log(
+                f"Gamepad {label} fallback accepting dialog.",
+                level="DEBUG",
+                location=context,
+                include_context=True,
+            )
+            dialog.accept()
+
+    def _focus_next(backwards: bool = False) -> None:
+        moved = dialog.focusPreviousChild() if backwards else dialog.focusNextChild()
+        APP_LOGGER.log(
+            f"Gamepad focus {'previous' if backwards else 'next'} child result: {moved}.",
+            level="DEBUG",
+            location=context,
+            include_context=True,
+        )
+
+    def _on_button(signal_name: str, pressed: bool, action) -> None:
+        APP_LOGGER.log(
+            f"Gamepad event {signal_name}: pressed={pressed}",
+            level="DEBUG",
+            location=context,
+            include_context=True,
+        )
+        if pressed:
+            action()
+
+    try:
+        gamepad.buttonAChanged.connect(
+            lambda pressed: _on_button("A", pressed, lambda: _click_button(ok_button, "OK"))
+        )
+        gamepad.buttonBChanged.connect(
+            lambda pressed: _on_button(
+                "B", pressed, lambda: _click_button(cancel_button, "Cancel")
+            )
+        )
+        gamepad.buttonXChanged.connect(
+            lambda pressed: _on_button(
+                "X", pressed, lambda: _click_button(extra_button or ok_button, "Extra")
+            )
+        )
+        gamepad.buttonYChanged.connect(
+            lambda pressed: _on_button(
+                "Y", pressed, lambda: _click_button(extra_button or ok_button, "Extra")
+            )
+        )
+        gamepad.buttonStartChanged.connect(
+            lambda pressed: _on_button("Start", pressed, dialog.accept)
+        )
+        gamepad.buttonSelectChanged.connect(
+            lambda pressed: _on_button("Select", pressed, dialog.reject)
+        )
+        gamepad.buttonLeftChanged.connect(
+            lambda pressed: _on_button("DPadLeft", pressed, lambda: _focus_next(True))
+        )
+        gamepad.buttonRightChanged.connect(
+            lambda pressed: _on_button("DPadRight", pressed, lambda: _focus_next(False))
+        )
+        gamepad.buttonUpChanged.connect(
+            lambda pressed: _on_button("DPadUp", pressed, lambda: _focus_next(True))
+        )
+        gamepad.buttonDownChanged.connect(
+            lambda pressed: _on_button("DPadDown", pressed, lambda: _focus_next(False))
+        )
+    except Exception as exc:  # pragma: no cover - signal connections can be platform specific
+        APP_LOGGER.log(
+            f"Failed to attach one or more gamepad signals: {exc}",
+            level="ERROR",
+            location=context,
+            include_context=True,
+        )
+
+    # Keep a reference alive for the lifetime of the dialog to avoid garbage collection
+    dialog._ap_bizhelper_gamepad = gamepad
 
 
 def _coerce_font_setting(
@@ -274,6 +441,13 @@ def _qt_question_dialog(
     if extra_label:
         extra_button = box.addButton(extra_label, QtWidgets.QMessageBox.ActionRole)
     box.setDefaultButton(ok_button)
+    _attach_gamepad_dialog_support(
+        box,
+        ok_button=ok_button,
+        cancel_button=cancel_button,
+        extra_button=extra_button,
+        context="qt-question-dialog",
+    )
     box.exec()
     clicked = box.clickedButton()
     if clicked == ok_button:
@@ -515,6 +689,33 @@ def _qt_file_dialog(
     ):
         dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
     _configure_file_view_columns(dialog, settings_obj)
+    button_box = dialog.findChild(QtWidgets.QDialogButtonBox)
+    ok_button = None
+    cancel_button = None
+    try:
+        if button_box is not None:
+            ok_button = button_box.button(QtWidgets.QDialogButtonBox.Open)
+            cancel_button = button_box.button(QtWidgets.QDialogButtonBox.Cancel)
+            APP_LOGGER.log(
+                "Discovered file dialog button box; enabling gamepad bindings.",
+                level="DEBUG",
+                location="qt-file-dialog",
+                include_context=True,
+            )
+    except Exception as exc:  # pragma: no cover - depends on Qt internals
+        APP_LOGGER.log(
+            f"Failed to locate file dialog buttons for gamepad wiring: {exc}",
+            level="WARNING",
+            location="qt-file-dialog",
+            include_context=True,
+        )
+
+    _attach_gamepad_dialog_support(
+        dialog,
+        ok_button=ok_button,
+        cancel_button=cancel_button,
+        context="qt-file-dialog",
+    )
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
@@ -575,6 +776,11 @@ def info_dialog(message: str) -> None:
         box.setIcon(QtWidgets.QMessageBox.Information)
         box.setWindowTitle("Information")
         box.setText(message)
+        _attach_gamepad_dialog_support(
+            box,
+            ok_button=box.addButton(QtWidgets.QMessageBox.Ok),
+            context="info-dialog",
+        )
         box.exec()
         return
 
@@ -597,6 +803,11 @@ def error_dialog(message: str) -> None:
         box.setIcon(QtWidgets.QMessageBox.Critical)
         box.setWindowTitle("Error")
         box.setText(message)
+        _attach_gamepad_dialog_support(
+            box,
+            ok_button=box.addButton(QtWidgets.QMessageBox.Ok),
+            context="error-dialog",
+        )
         box.exec()
         return
 
