@@ -11,6 +11,8 @@ try:
 except ImportError:  # pragma: no cover - fallback when executed outside the package
     from .ap_bizhelper_config import load_settings as _load_shared_settings
 
+from ap_bizhelper.logging_utils import RUNNER_LOG_ENV, create_component_logger
+
 
 def _load_settings():
     return _load_shared_settings()
@@ -18,6 +20,7 @@ def _load_settings():
 
 def error_dialog(msg: str) -> None:
     """Show an error via zenity if available, else stderr."""
+    RUNNER_LOGGER.log(f"Error dialog requested: {msg}", level="ERROR", include_context=True)
     if shutil.which("zenity"):
         try:
             subprocess.run(
@@ -31,12 +34,16 @@ def error_dialog(msg: str) -> None:
 
 
 _SETTINGS_CACHE = None
+RUNNER_LOGGER = create_component_logger("bizhawk-runner", env_var=RUNNER_LOG_ENV, subdir="runner")
 
 
 def get_env_or_config(var: str):
     """Read config from the environment or stored settings."""
     value = os.environ.get(var)
     if value:
+        RUNNER_LOGGER.log(
+            f"Using environment override for {var}={value}", include_context=True, location="env-config"
+        )
         return value
 
     global _SETTINGS_CACHE
@@ -44,6 +51,10 @@ def get_env_or_config(var: str):
         _SETTINGS_CACHE = _load_settings()
 
     value = _SETTINGS_CACHE.get(var)
+    if value:
+        RUNNER_LOGGER.log(
+            f"Loaded {var} from cached settings: {value}", include_context=True, location="env-config"
+        )
     return str(value) if value else None
 
 
@@ -52,6 +63,7 @@ def ensure_bizhawk_exe() -> Path:
     if not exe or not Path(exe).is_file():
         error_dialog("[ap-bizhelper] BIZHAWK_EXE is not set or not a file; cannot launch BizHawk.")
         sys.exit(1)
+    RUNNER_LOGGER.log(f"Resolved BizHawk executable: {exe}", include_context=True)
     return Path(exe)
 
 
@@ -67,6 +79,11 @@ def configure_proton_env():
 
     os.environ["STEAM_COMPAT_DATA_PATH"] = proton_prefix
     os.environ["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = steam_root
+
+    RUNNER_LOGGER.log(
+        f"Configured Proton env: proton_bin={proton_bin}, prefix={proton_prefix}, steam_root={steam_root}",
+        include_context=True,
+    )
 
     return proton_bin, proton_prefix, steam_root
 
@@ -106,6 +123,11 @@ def parse_args(argv):
                 emu_args = emu_args[:idx] + emu_args[idx + 1 :]
                 break
 
+    RUNNER_LOGGER.log(
+        f"Parsed args rom={rom_path}, ap_lua_arg={ap_lua_arg}, emu_args={emu_args}",
+        include_context=True,
+        location="parse-args",
+    )
     return rom_path, ap_lua_arg, emu_args
 
 
@@ -189,6 +211,11 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> 
             print("[ap-bizhelper] Ignoring AP-supplied --lua for SNES ROM; using local SNI connector.")
         lua_ap_path = _connector_windows_path(bizhawk_dir, connector_path)
         print(f"[ap-bizhelper] Using SNI Lua connector for SNES ROM: {lua_ap_path}")
+        RUNNER_LOGGER.log(
+            f"Selected SNI connector for SNES ROM at {lua_ap_path}",
+            include_context=True,
+            location="lua",
+        )
         return f"--lua={lua_ap_path}"
 
     connector_name = _detect_connector_name(ap_lua_arg) or "connector_bizhawk_generic.lua"
@@ -198,6 +225,9 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> 
 
     lua_ap_path = _connector_windows_path(bizhawk_dir, connector_path)
     print(f"[ap-bizhelper] Using BizHawk Lua connector: {lua_ap_path}")
+    RUNNER_LOGGER.log(
+        f"Using connector {connector_name} at {lua_ap_path}", include_context=True, location="lua"
+    )
     return f"--lua={lua_ap_path}"
 
 
@@ -224,13 +254,26 @@ def build_bizhawk_command(argv):
 
     bizhawk_exe_rel = bizhawk_exe.name
 
-    return proton_bin, bizhawk_dir, [proton_bin, "run", bizhawk_exe_rel, *final_args]
+    command = [proton_bin, "run", bizhawk_exe_rel, *final_args]
+    RUNNER_LOGGER.log(
+        f"Built BizHawk command: {command} (cwd={bizhawk_dir})",
+        include_context=True,
+        location="command",
+    )
+    return proton_bin, bizhawk_dir, command
 
 
 def main(argv):
-    proton_bin, bizhawk_dir, cmd = build_bizhawk_command(argv)
-    os.chdir(bizhawk_dir)
-    os.execvp(proton_bin, cmd)
+    with RUNNER_LOGGER.context("runner-main"):
+        RUNNER_LOGGER.log(
+            f"Starting BizHawk runner with argv: {argv}", include_context=True, mirror_console=True
+        )
+        proton_bin, bizhawk_dir, cmd = build_bizhawk_command(argv)
+        os.chdir(bizhawk_dir)
+        RUNNER_LOGGER.log(
+            f"Executing via execvp: {proton_bin} {cmd}", include_context=True, location="exec"
+        )
+        os.execvp(proton_bin, cmd)
 
 
 if __name__ == "__main__":

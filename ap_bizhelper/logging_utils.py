@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Dict, Iterable, Optional
 from uuid import uuid4
 
 
 LOG_ROOT = Path.home() / ".local" / "share" / "ap_bizhelper" / "logs"
+RUN_ID_ENV = "AP_BIZHELPER_LOG_RUN_ID"
+TIMESTAMP_ENV = "AP_BIZHELPER_LOG_TIMESTAMP"
+SHIM_LOG_ENV = "AP_BIZHELPER_SHIM_LOG_PATH"
+RUNNER_LOG_ENV = "AP_BIZHELPER_RUNNER_LOG_PATH"
 _CONTEXT_STACK: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
     "ap_bizhelper_context", default=()
 )
@@ -64,12 +69,30 @@ class _StreamCapture:
 class AppLogger:
     """Structured application-wide logger with contextual breadcrumbs."""
 
-    def __init__(self, category: str = "ap-bizhelper") -> None:
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.run_id = uuid4().hex[:8]
+    def __init__(
+        self,
+        category: str = "ap-bizhelper",
+        *,
+        log_dir: Optional[Path] = None,
+        log_path: Optional[Path] = None,
+        run_id: Optional[str] = None,
+        timestamp: Optional[str] = None,
+    ) -> None:
+        self.timestamp = timestamp or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.run_id = run_id or uuid4().hex[:8]
         self.category = _slugify(category)
-        LOG_ROOT.mkdir(parents=True, exist_ok=True)
-        self.path = LOG_ROOT / f"{self.category}_{timestamp}_{self.run_id}.log"
+        base_dir = log_dir or LOG_ROOT
+        base_dir.mkdir(parents=True, exist_ok=True)
+        if log_path:
+            self.path = Path(log_path)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            stem_parts = self.path.stem.split("_")
+            if timestamp is None and len(stem_parts) >= 2:
+                self.timestamp = stem_parts[-2]
+            if run_id is None and len(stem_parts) >= 1:
+                self.run_id = stem_parts[-1]
+        else:
+            self.path = base_dir / f"{self.category}_{self.timestamp}_{self.run_id}.log"
         self._sequence = 0
         self._original_stdout = sys.stdout
         self._original_stderr = sys.stderr
@@ -157,13 +180,64 @@ class AppLogger:
         sys.stdout = _StreamCapture(self, self._original_stdout, "INFO", "stdout")
         sys.stderr = _StreamCapture(self, self._original_stderr, "ERROR", "stderr")
 
+    def session_environ(self, *, env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        base = {} if env is None else dict(env)
+        base[RUN_ID_ENV] = self.run_id
+        base[TIMESTAMP_ENV] = self.timestamp
+        return base
 
-def get_app_logger(category: str = "ap-bizhelper") -> AppLogger:
+    def component_log_path(self, category: str, *, subdir: Optional[str] = None) -> Path:
+        target_dir = LOG_ROOT / subdir if subdir else LOG_ROOT
+        target_dir.mkdir(parents=True, exist_ok=True)
+        return target_dir / f"{_slugify(category)}_{self.timestamp}_{self.run_id}.log"
+
+    def component_environ(
+        self,
+        *,
+        env: Optional[Dict[str, str]] = None,
+        category: str,
+        subdir: Optional[str] = None,
+        env_var: Optional[str] = None,
+    ) -> Dict[str, str]:
+        merged = self.session_environ(env=env)
+        if env_var:
+            merged[env_var] = str(self.component_log_path(category, subdir=subdir))
+        return merged
+
+
+def create_component_logger(
+    category: str,
+    *,
+    env_var: Optional[str] = None,
+    subdir: Optional[str] = None,
+) -> AppLogger:
+    env_path = Path(os.environ[env_var]) if env_var and os.environ.get(env_var) else None
+    logger = AppLogger(
+        category,
+        log_dir=LOG_ROOT / subdir if subdir else None,
+        log_path=env_path,
+        run_id=os.environ.get(RUN_ID_ENV) or None,
+        timestamp=os.environ.get(TIMESTAMP_ENV) or None,
+    )
+    logger.capture_console_streams()
+    return logger
+
+
+def get_app_logger(category: str = "ap-bizhelper", *, log_dir: Optional[Path] = None) -> AppLogger:
     global _GLOBAL_LOGGER
     if _GLOBAL_LOGGER is None:
-        _GLOBAL_LOGGER = AppLogger(category)
+        _GLOBAL_LOGGER = AppLogger(category, log_dir=log_dir or LOG_ROOT / "app")
         _GLOBAL_LOGGER.capture_console_streams()
     return _GLOBAL_LOGGER
 
 
-__all__ = ["AppLogger", "LOG_ROOT", "get_app_logger"]
+__all__ = [
+    "AppLogger",
+    "LOG_ROOT",
+    "RUNNER_LOG_ENV",
+    "RUN_ID_ENV",
+    "SHIM_LOG_ENV",
+    "TIMESTAMP_ENV",
+    "create_component_logger",
+    "get_app_logger",
+]
