@@ -768,6 +768,8 @@ def ensure_bizhawk_and_proton(
             if cached_exe and cached_exe.is_file():
                 exe = cached_exe
                 downloaded = True
+                # Refresh settings with values written during cache install
+                settings = _load_settings()
 
         if download_selected and (exe is None or not exe.is_file()):
             try:
