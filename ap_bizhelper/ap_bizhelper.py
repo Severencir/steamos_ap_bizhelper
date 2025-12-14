@@ -956,6 +956,10 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
         error_dialog(str(exc))
         return 1
 
+    # Re-capture the Steam app id after downloads in case other settings writes
+    # occurred during setup (for example, after fetching BizHawk/Archipelago).
+    _capture_steam_appid_if_present(settings)
+
     if appimage is None:
         error_dialog("Archipelago was not selected for download and is required to continue.")
         return 1
@@ -1039,6 +1043,7 @@ def main(argv: list[str]) -> int:
             _run_prereqs(settings, allow_archipelago_skip=True)
         except RuntimeError:
             return 1
+        _capture_steam_appid_if_present(settings)
         return 0
 
     if len(user_args) > 1:
