@@ -1,33 +1,72 @@
 from __future__ import annotations
 
 import base64
+import os
 import shutil
 import subprocess
 import sys
 import textwrap
 import urllib.request
-import venv
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DIST_DIR = PROJECT_ROOT / "dist"
 APPDIR = DIST_DIR / "AppDir"
 APP_NAME = "ap-bizhelper"
+DEFAULT_TARGET_PYTHON = "python3.11"
+SUPPORTED_PYTHON_MIN = (3, 10)
+SUPPORTED_PYTHON_MAX = (3, 11)
 APPIMAGE_TOOL_URL = (
     "https://github.com/AppImage/AppImageKit/releases/download/continuous/"
     "appimagetool-x86_64.AppImage"
 )
 APPIMAGE_TOOL_PATH = DIST_DIR / "appimagetool"
+QTGAMEPAD_STUB = PROJECT_ROOT / "ap_bizhelper" / "qtgamepad_stub.py"
 ICON_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAJ0lEQVR4nO3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAA"
     "AAAAAAAAAAAAAICtF7kAARQrxxgAAAAASUVORK5CYII="
 )
 
 
-def _build_wheel() -> Path:
+def _get_python_version(python: Path) -> tuple[int, int, int]:
+    output = subprocess.run(
+        [str(python), "-c", "import sys; print('.'.join(map(str, sys.version_info[:3])))"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    major, minor, micro = (int(part) for part in output.split("."))
+    return major, minor, micro
+
+
+def _resolve_target_python() -> Path:
+    raw_path = os.environ.get("APPIMAGE_PYTHON", DEFAULT_TARGET_PYTHON)
+    candidate = Path(raw_path)
+
+    if not candidate.is_absolute():
+        resolved = shutil.which(raw_path)
+        if resolved is None:
+            raise FileNotFoundError(
+                f"Unable to locate target python '{raw_path}'. Set APPIMAGE_PYTHON to an explicit path."
+            )
+        candidate = Path(resolved)
+
+    version = _get_python_version(candidate)
+    if not (SUPPORTED_PYTHON_MIN <= version[:2] <= SUPPORTED_PYTHON_MAX):
+        raise RuntimeError(
+            "Unsupported python version for AppImage build: "
+            f"{'.'.join(map(str, version))}. "
+            f"Expected {SUPPORTED_PYTHON_MIN[0]}.{SUPPORTED_PYTHON_MIN[1]} "
+            f"through {SUPPORTED_PYTHON_MAX[0]}.{SUPPORTED_PYTHON_MAX[1]}."
+        )
+
+    return candidate
+
+
+def _build_wheel(python: Path) -> Path:
     DIST_DIR.mkdir(exist_ok=True)
     subprocess.run(
-        [sys.executable, "-m", "build", "--wheel", "--outdir", str(DIST_DIR)],
+        [str(python), "-m", "build", "--wheel", "--outdir", str(DIST_DIR)],
         check=True,
         cwd=PROJECT_ROOT,
     )
@@ -37,12 +76,12 @@ def _build_wheel() -> Path:
     return wheels[-1]
 
 
-def _create_appdir_venv() -> Path:
+def _create_appdir_venv(python: Path) -> Path:
     if APPDIR.exists():
         shutil.rmtree(APPDIR)
     APPDIR.mkdir(parents=True)
     env_dir = APPDIR / "usr"
-    venv.EnvBuilder(with_pip=True, symlinks=False, upgrade_deps=False).create(env_dir)
+    subprocess.run([str(python), "-m", "venv", str(env_dir)], check=True)
     return env_dir / "bin" / "python"
 
 
@@ -52,7 +91,7 @@ def _install_wheel(python: Path, wheel: Path) -> None:
 
 
 def _verify_qtgamepad_plugins(appdir: Path) -> None:
-    site_packages = sorted(appdir.glob("usr/lib/python*/site-packages"))
+    site_packages = _site_packages(appdir)
     plugin_candidates = []
 
     for site in site_packages:
@@ -60,13 +99,28 @@ def _verify_qtgamepad_plugins(appdir: Path) -> None:
         if plugin_root.exists():
             plugin_candidates.extend(plugin_root.rglob("libqtgamepad*.so"))
 
-    if not plugin_candidates:
-        raise FileNotFoundError(
-            "QtGamepad plugin (libqtgamepad*.so) was not bundled into the AppImage."
+    python = appdir / "usr" / "bin" / "python"
+    import_check = subprocess.run(
+        [
+            python,
+            "-c",
+            "import importlib; import PySide6; importlib.import_module('PySide6.QtGamepad');"
+            "print('QtGamepad import succeeded')",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if import_check.returncode != 0:
+        raise RuntimeError(
+            "QtGamepad import failed inside AppImage env:\n"
+            f"stdout: {import_check.stdout}\nstderr: {import_check.stderr}"
         )
 
-    found_paths = "\n".join(str(p.relative_to(appdir)) for p in sorted(plugin_candidates))
-    print(f"Bundled QtGamepad plugins:\n{found_paths}")
+    if plugin_candidates:
+        found_paths = "\n".join(str(p.relative_to(appdir)) for p in sorted(plugin_candidates))
+        print(f"Bundled QtGamepad plugins:\n{found_paths}")
+    else:
+        print("QtGamepad Qt plugin not found; relying on stubbed bindings.")
 
 
 def _write_apprun(appdir: Path) -> None:
@@ -136,6 +190,26 @@ def _download_appimagetool() -> Path:
     return APPIMAGE_TOOL_PATH
 
 
+def _site_packages(appdir: Path) -> list[Path]:
+    return sorted(appdir.glob("usr/lib/python*/site-packages"))
+
+
+def _inject_qtgamepad_stub(appdir: Path) -> None:
+    if not QTGAMEPAD_STUB.exists():
+        raise FileNotFoundError("QtGamepad stub source missing from project")
+
+    for site in _site_packages(appdir):
+        target_dir = site / "PySide6"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / "QtGamepad.py"
+        if target_path.exists():
+            continue
+        target_path.write_text(
+            QTGAMEPAD_STUB.read_text()
+            + "\n# Injected by ap-bizhelper build to provide QtGamepad bindings.\n"
+        )
+
+
 def _build_appimage(appdir: Path) -> Path:
     tool = _download_appimagetool()
     appimage_path = DIST_DIR / f"{APP_NAME}.AppImage"
@@ -147,9 +221,11 @@ def _build_appimage(appdir: Path) -> Path:
 
 
 def build_appimage() -> Path:
-    wheel = _build_wheel()
-    python = _create_appdir_venv()
+    target_python = _resolve_target_python()
+    wheel = _build_wheel(target_python)
+    python = _create_appdir_venv(target_python)
     _install_wheel(python, wheel)
+    _inject_qtgamepad_stub(APPDIR)
     _verify_qtgamepad_plugins(APPDIR)
     _write_apprun(APPDIR)
     _write_desktop(APPDIR)

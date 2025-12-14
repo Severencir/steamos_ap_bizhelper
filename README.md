@@ -13,7 +13,8 @@ python -m ap_bizhelper
 ## Building a one-file release
 
 1. Ensure `build` is available (e.g., `python -m pip install build`).
-2. Build the wheel and AppImage artifact (Python, PySide6, and the app are bundled inside the AppImage so the target system just downloads and runs one file):
+2. Use Python 3.10 or 3.11 for packaging (the AppImage builder defaults to `python3.11`; override with `APPIMAGE_PYTHON` if you need a specific interpreter path).
+3. Build the wheel and AppImage artifact (Python, PySide6, and the app are bundled inside the AppImage so the target system just downloads and runs one file):
 
 ```bash
 python tools/build_appimage.py
