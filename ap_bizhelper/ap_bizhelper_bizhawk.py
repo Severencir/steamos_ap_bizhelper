@@ -17,9 +17,6 @@ from typing import Any, Dict, Optional, Tuple
 
 from .ap_bizhelper_ap import _select_file_dialog, download_with_progress
 from .ap_bizhelper_config import (
-    DEBUG_CACHE_ENABLED,
-    cache_debug_component,
-    get_debug_cache_entry,
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
@@ -189,7 +186,6 @@ def _extract_bizhawk_archive(archive: Path, version: str, preserved_config: Opti
     if exe is None:
         raise RuntimeError("Could not find EmuHawk.exe after extracting BizHawk.")
     _stage_bizhawk_config(exe, preserved_config)
-    cache_debug_component("bizhawk_win_zip", archive, version=version)
     return exe
 
 
@@ -215,8 +211,6 @@ def download_and_extract_bizhawk(url: str, version: str) -> Path:
             tmp_path,
             title="BizHawk download",
             text=f"Downloading BizHawk {version}...",
-            cache_key="bizhawk_win_zip",
-            cache_version=version,
         )
 
         return _extract_bizhawk_archive(tmp_path, version, preserved_config)
@@ -226,34 +220,6 @@ def download_and_extract_bizhawk(url: str, version: str) -> Path:
                 tmp_path.unlink()
         except Exception:
             pass
-
-
-def _install_bizhawk_from_cache(settings: Dict[str, Any]) -> Optional[Path]:
-    if not DEBUG_CACHE_ENABLED:
-        return None
-
-    cached = get_debug_cache_entry("bizhawk_win_zip")
-    if not cached:
-        return None
-
-    archive_path = cached.get("path")
-    if not isinstance(archive_path, Path) or not archive_path.is_file():
-        return None
-
-    preserved_config = _preserve_bizhawk_config()
-    version = str(cached.get("version") or settings.get("BIZHAWK_VERSION", "") or "cached")
-
-    try:
-        exe = _extract_bizhawk_archive(archive_path, version, preserved_config)
-    except Exception:
-        return None
-
-    settings = _load_settings()
-    settings["BIZHAWK_EXE"] = str(exe)
-    settings["BIZHAWK_VERSION"] = version
-    settings["BIZHAWK_SKIP_VERSION"] = ""
-    _save_settings(settings)
-    return exe
 
 
 def _copy_tree(src: Path, dest: Path) -> None:
@@ -294,22 +260,6 @@ def _stage_archipelago_connectors(
 ) -> str:
     """Download Archipelago source and copy data/lua into bizhawk_dir/connectors."""
 
-    if DEBUG_CACHE_ENABLED:
-        cached = get_debug_cache_entry("archipelago_connectors")
-        if cached:
-            cached_path = cached.get("path")
-            cached_tag = str(cached.get("version") or "cached")
-            if isinstance(cached_path, Path) and cached_path.is_file():
-                try:
-                    _apply_archipelago_connector_archive(cached_path, bizhawk_dir)
-                    if download_messages is not None:
-                        download_messages.append(
-                            f"Updated BizHawk connectors to Archipelago {cached_tag}"
-                        )
-                    return cached_tag
-                except Exception:
-                    pass
-
     url, tag = _archipelago_release(ap_version or None)
     suffix = ".tar.gz" if "tar" in url else ".zip"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmpf:
@@ -321,8 +271,6 @@ def _stage_archipelago_connectors(
             tmp_path,
             title="Archipelago connectors",
             text=f"Downloading Archipelago connectors ({tag})...",
-            cache_key="archipelago_connectors",
-            cache_version=tag,
         )
 
         _apply_archipelago_connector_archive(tmp_path, bizhawk_dir)
@@ -340,28 +288,6 @@ def _stage_archipelago_connectors(
 def _stage_sni_connectors(bizhawk_dir: Path, download_messages: Optional[list[str]]) -> None:
     """Download SNI release and copy lua folder into bizhawk_dir/sni."""
 
-    cached_applied = False
-    if DEBUG_CACHE_ENABLED:
-        cached = get_debug_cache_entry("sni_connectors")
-        if cached:
-            cached_path = cached.get("path")
-            if isinstance(cached_path, Path) and cached_path.is_file():
-                try:
-                    with tempfile.TemporaryDirectory() as td:
-                        extracted_root = _extract_archive(cached_path, Path(td))
-                        lua_dir = next((p for p in extracted_root.rglob("lua") if p.is_dir()), None)
-                        if lua_dir is None:
-                            raise RuntimeError("SNI release did not contain a lua directory")
-                        _copy_tree(lua_dir, bizhawk_dir / "sni")
-                        cached_applied = True
-                except Exception:
-                    cached_applied = False
-
-    if cached_applied:
-        if download_messages is not None:
-            download_messages.append("Updated BizHawk SNI connectors")
-        return
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmpf:
         tmp_path = Path(tmpf.name)
 
@@ -371,8 +297,6 @@ def _stage_sni_connectors(bizhawk_dir: Path, download_messages: Optional[list[st
             tmp_path,
             title="SNI connectors",
             text=f"Downloading SNI connectors ({SNI_VERSION})...",
-            cache_key="sni_connectors",
-            cache_version=SNI_VERSION,
         )
         with tempfile.TemporaryDirectory() as td:
             extracted_root = _extract_archive(tmp_path, Path(td))
@@ -768,14 +692,6 @@ def ensure_bizhawk_and_proton(
             return None
 
         cached_exe: Optional[Path] = None
-        if download_selected and DEBUG_CACHE_ENABLED:
-            cached_exe = _install_bizhawk_from_cache(settings)
-            if cached_exe and cached_exe.is_file():
-                exe = cached_exe
-                downloaded = True
-                # Refresh settings with values written during cache install
-                settings = _load_settings()
-
         if download_selected and (exe is None or not exe.is_file()):
             try:
                 url, ver = _github_latest_bizhawk()
