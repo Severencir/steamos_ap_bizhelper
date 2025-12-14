@@ -151,18 +151,82 @@ class ZenityShim:
         exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
 
         candidates = []
+        candidate_sources = []
         if runner_str:
-            candidates.append(Path(runner_str))
+            runner_path = Path(runner_str)
+            candidates.append(runner_path)
+            candidate_sources.append((runner_path, "BIZHAWK_RUNNER"))
         if exe_str:
-            candidates.append(Path(exe_str).parent / "run_bizhawk_proton.py")
-        candidates.append(Path(__file__).resolve().parent / "run_bizhawk_proton.py")
+            exe_candidate = Path(exe_str).parent / "run_bizhawk_proton.py"
+            candidates.append(exe_candidate)
+            candidate_sources.append((exe_candidate, "BIZHAWK_EXE"))
+
+        local_candidate = Path(__file__).resolve().parent / "run_bizhawk_proton.py"
+        candidates.append(local_candidate)
+        candidate_sources.append((local_candidate, "local fallback"))
+
+        self.logger.log(
+            "BizHawk runner search candidates: "
+            + ", ".join(f"{source} -> {path}" for path, source in candidate_sources),
+            level="DEBUG",
+            include_context=True,
+            location="auto-answer",
+        )
+
+        skipped: List[str] = []
 
         for candidate in candidates:
             try:
-                if candidate.is_file():
-                    return candidate
-            except Exception:
+                if not candidate.exists():
+                    skipped.append(f"{candidate} (not found)")
+                    self.logger.log(
+                        f"Skipping BizHawk runner candidate {candidate}: not found.",
+                        level="DEBUG",
+                        include_context=True,
+                        location="auto-answer",
+                    )
+                    continue
+                if not candidate.is_file():
+                    skipped.append(f"{candidate} (not a file)")
+                    self.logger.log(
+                        f"Skipping BizHawk runner candidate {candidate}: not a file.",
+                        level="DEBUG",
+                        include_context=True,
+                        location="auto-answer",
+                    )
+                    continue
+                if not os.access(candidate, os.R_OK):
+                    skipped.append(f"{candidate} (unreadable)")
+                    self.logger.log(
+                        f"Skipping BizHawk runner candidate {candidate}: unreadable.",
+                        level="DEBUG",
+                        include_context=True,
+                        location="auto-answer",
+                    )
+                    continue
+                self.logger.log(
+                    f"Selected BizHawk runner candidate {candidate}.",
+                    level="DEBUG",
+                    include_context=True,
+                    location="auto-answer",
+                )
+                return candidate
+            except Exception as exc:
+                skipped.append(f"{candidate} (error: {exc})")
+                self.logger.log(
+                    f"Skipping BizHawk runner candidate {candidate}: error {exc}.",
+                    level="DEBUG",
+                    include_context=True,
+                    location="auto-answer",
+                )
                 continue
+
+        self.logger.log(
+            "No BizHawk runner found; skipped candidates: " + "; ".join(skipped),
+            level="WARNING",
+            include_context=True,
+            location="auto-answer",
+        )
         return None
 
     def _qt_available(self) -> bool:
