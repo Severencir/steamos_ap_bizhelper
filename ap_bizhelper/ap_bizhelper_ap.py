@@ -373,6 +373,14 @@ def _ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _steam_game_id_present() -> bool:
+    for key in ("SteamGameId", "SteamGameID", "SteamAppId", "SteamAppID"):
+        value = os.environ.get(key)
+        if value and str(value).isdigit():
+            return True
+    return False
+
+
 def _load_settings() -> Dict[str, Any]:
     return {**_DEFAULT_SETTINGS, **_load_shared_settings()}
 
@@ -662,7 +670,7 @@ def _widen_file_dialog_sidebar(dialog: "QtWidgets.QFileDialog") -> None:
         return
 
     new_sizes = list(sizes)
-    new_sizes[0] = max(1, int(new_sizes[0] * 1.3))
+    new_sizes[0] = max(1, int(new_sizes[0] * 3))
     try:
         splitter.setSizes(new_sizes)
     except Exception:
@@ -828,7 +836,7 @@ def _qt_file_dialog(
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-    steam_launch = bool(os.environ.get("SteamGameId"))
+    steam_launch = _steam_game_id_present()
     enable_gamepad = bool(settings_obj.get("ENABLE_GAMEPAD_FILE_DIALOG", True)) or steam_launch
     if enable_gamepad and _has_qt_gamepad():
         try:
