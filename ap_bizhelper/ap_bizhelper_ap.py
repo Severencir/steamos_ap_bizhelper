@@ -557,6 +557,10 @@ def _qt_file_dialog(
         dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
     _configure_file_view_columns(dialog, settings_obj)
     _focus_file_view(dialog)
+    try:
+        QtCore.QTimer.singleShot(0, lambda: _focus_file_view(dialog))
+    except Exception:
+        pass
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
