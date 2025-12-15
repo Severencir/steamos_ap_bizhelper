@@ -38,10 +38,11 @@ _QT_FILE_NAME_FONT_SCALE = 1.8
 _QT_FILE_DIALOG_WIDTH = 1280
 _QT_FILE_DIALOG_HEIGHT = 800
 _QT_FILE_DIALOG_MAXIMIZE = True
-_QT_FILE_DIALOG_NAME_WIDTH = 700
+_QT_FILE_DIALOG_NAME_WIDTH = 850
 _QT_FILE_DIALOG_TYPE_WIDTH = 0
 _QT_FILE_DIALOG_SIZE_WIDTH = 250
-_QT_FILE_DIALOG_DATE_WIDTH = 0
+_QT_FILE_DIALOG_DATE_WIDTH = 300
+_QT_FILE_DIALOG_SIDEBAR_WIDTH = 400
 _QT_FILE_DIALOG_COLUMN_SCALE = 1.8
 _QT_FILE_DIALOG_DEFAULT_SHRINK = 0.95
 _QT_IMPORT_ERROR: Optional[BaseException] = None
@@ -56,6 +57,7 @@ _DEFAULT_SETTINGS = {
     "QT_FILE_DIALOG_TYPE_WIDTH": _QT_FILE_DIALOG_TYPE_WIDTH,
     "QT_FILE_DIALOG_SIZE_WIDTH": _QT_FILE_DIALOG_SIZE_WIDTH,
     "QT_FILE_DIALOG_DATE_WIDTH": _QT_FILE_DIALOG_DATE_WIDTH,
+    "QT_FILE_DIALOG_SIDEBAR_WIDTH": _QT_FILE_DIALOG_SIDEBAR_WIDTH,
 }
 
 
@@ -338,7 +340,9 @@ def _sidebar_urls() -> list["QtCore.QUrl"]:
     ]
 
 
-def _widen_file_dialog_sidebar(dialog: "QtWidgets.QFileDialog") -> None:
+def _widen_file_dialog_sidebar(
+    dialog: "QtWidgets.QFileDialog", settings_obj: Dict[str, Any]
+) -> None:
     from PySide6 import QtWidgets
 
     splitter = dialog.findChild(QtWidgets.QSplitter)
@@ -352,7 +356,12 @@ def _widen_file_dialog_sidebar(dialog: "QtWidgets.QFileDialog") -> None:
         return
 
     new_sizes = list(sizes)
-    new_sizes[0] = max(1, int(new_sizes[0] * 3))
+    new_sizes[0] = max(
+        1,
+        _coerce_int_setting(
+            settings_obj, "QT_FILE_DIALOG_SIDEBAR_WIDTH", _QT_FILE_DIALOG_SIDEBAR_WIDTH, minimum=1
+        ),
+    )
     try:
         splitter.setSizes(new_sizes)
     except Exception:
@@ -509,7 +518,7 @@ def _qt_file_dialog(
     sidebar_urls = _sidebar_urls()
     if sidebar_urls:
         dialog.setSidebarUrls(sidebar_urls)
-    _widen_file_dialog_sidebar(dialog)
+    _widen_file_dialog_sidebar(dialog, settings_obj)
     if _coerce_bool_setting(
         settings_obj, "QT_FILE_DIALOG_MAXIMIZE", _QT_FILE_DIALOG_MAXIMIZE
     ):
