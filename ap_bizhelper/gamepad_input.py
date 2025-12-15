@@ -295,16 +295,32 @@ if QT_AVAILABLE:
                 QtCore.Qt.Key_Up,
                 QtCore.Qt.Key_Down,
             ):
-                self._ensure_file_view_selection(target)
+                item_view = self._item_view_for_widget(target)
+                if item_view:
+                    self._ensure_file_view_selection(item_view)
 
             event_type = QtCore.QEvent.KeyPress if pressed else QtCore.QEvent.KeyRelease
             ev = QtGui.QKeyEvent(event_type, qt_key, modifiers)
             QtWidgets.QApplication.postEvent(target, ev)
 
-        def _ensure_file_view_selection(self, widget: QtWidgets.QWidget) -> None:
-            if not isinstance(widget, (QtWidgets.QListView, QtWidgets.QTreeView)):
-                return
+        def _item_view_for_widget(
+            self, widget: Optional[QtWidgets.QWidget]
+        ) -> Optional[QtWidgets.QAbstractItemView]:
+            if widget is None:
+                return None
 
+            if isinstance(widget, QtWidgets.QAbstractItemView):
+                return widget
+
+            parent = widget.parent()
+            while parent:
+                if isinstance(parent, QtWidgets.QAbstractItemView):
+                    return parent
+                parent = parent.parent()
+
+            return None
+
+        def _ensure_file_view_selection(self, widget: QtWidgets.QAbstractItemView) -> None:
             model = widget.model()
             selection_model = widget.selectionModel()
             if model is None or selection_model is None:
