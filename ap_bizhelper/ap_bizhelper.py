@@ -14,6 +14,7 @@ from typing import Optional, Set, Tuple
 
 from .ap_bizhelper_ap import (
     AP_APPIMAGE_DEFAULT,
+    _enable_dialog_gamepad,
     _ensure_qt_app,
     _ensure_qt_available,
     _select_file_dialog,
@@ -332,14 +333,22 @@ def _prompt_setup_choices(
         shortcut_box.setChecked(True)
         layout.addWidget(shortcut_box)
 
-    buttons = QtWidgets.QDialogButtonBox()
+    button_row = QtWidgets.QHBoxLayout()
+    button_row.addStretch()
     download_btn = QtWidgets.QPushButton("Download")
+    download_btn.setDefault(True)
+    button_row.addWidget(download_btn)
     cancel_btn = QtWidgets.QPushButton("Cancel")
-    buttons.addButton(download_btn, QtWidgets.QDialogButtonBox.AcceptRole)
-    buttons.addButton(cancel_btn, QtWidgets.QDialogButtonBox.RejectRole)
-    buttons.accepted.connect(dialog.accept)
-    buttons.rejected.connect(dialog.reject)
-    layout.addWidget(buttons)
+    button_row.addWidget(cancel_btn)
+    button_row.addStretch()
+    layout.addLayout(button_row)
+
+    download_btn.clicked.connect(dialog.accept)
+    cancel_btn.clicked.connect(dialog.reject)
+
+    _enable_dialog_gamepad(
+        dialog, affirmative=download_btn, negative=cancel_btn, default=download_btn
+    )
 
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         raise RuntimeError("User cancelled setup selection.")
@@ -394,7 +403,11 @@ def _ensure_apworld_for_extension(ext: str) -> None:
         try:
             worlds_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(apworld_path, worlds_dir / apworld_path.name)
-            info_dialog(f"Copied {apworld_path.name} to:\n{worlds_dir}")
+            APP_LOGGER.log(
+                f"Copied {apworld_path.name} to {worlds_dir}",
+                include_context=True,
+                location="apworld-copy",
+            )
         except Exception as exc:  # pragma: no cover - filesystem edge cases
             error_dialog(f"Failed to copy {apworld_path.name}: {exc}")
     else:

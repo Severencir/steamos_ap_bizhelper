@@ -234,27 +234,89 @@ def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApp
     return app
 
 
+def _enable_dialog_gamepad(
+    dialog: "QtWidgets.QDialog | QtWidgets.QMessageBox",
+    *,
+    affirmative: Optional["QtWidgets.QAbstractButton"] = None,
+    negative: Optional["QtWidgets.QAbstractButton"] = None,
+    special: Optional["QtWidgets.QAbstractButton"] = None,
+    default: Optional["QtWidgets.QAbstractButton"] = None,
+) -> Optional["object"]:
+    """Attach controller navigation to ``dialog`` if available."""
+
+    try:
+        from . import gamepad_input
+
+        layer = gamepad_input.install_gamepad_navigation(
+            dialog,
+            actions={
+                "affirmative": affirmative,
+                "negative": negative,
+                "special": special,
+                "default": default,
+            },
+        )
+        if layer is not None:
+            dialog.finished.connect(layer.shutdown)  # type: ignore[attr-defined]
+        return layer
+    except Exception as exc:  # pragma: no cover - runtime guard
+        APP_LOGGER.log(
+            f"Failed to enable gamepad navigation: {exc}",
+            level="WARNING",
+            include_context=True,
+            location="gamepad",
+        )
+    return None
+
+
 def _qt_question_dialog(
     *, title: str, text: str, ok_label: str, cancel_label: str, extra_label: Optional[str] = None
 ) -> str:
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 
     _ensure_qt_app()
-    box = QtWidgets.QMessageBox()
-    box.setWindowTitle(title)
-    box.setText(text)
-    box.setIcon(QtWidgets.QMessageBox.Question)
-    ok_button = box.addButton(ok_label, QtWidgets.QMessageBox.AcceptRole)
-    cancel_button = box.addButton(cancel_label, QtWidgets.QMessageBox.RejectRole)
+    dialog = QtWidgets.QDialog()
+    dialog.setWindowTitle(title)
+    layout = QtWidgets.QVBoxLayout(dialog)
+
+    label = QtWidgets.QLabel(text)
+    label.setWordWrap(True)
+    layout.addWidget(label)
+
+    button_row = QtWidgets.QHBoxLayout()
+    button_row.addStretch()
+    ok_button = QtWidgets.QPushButton(ok_label)
+    ok_button.setDefault(True)
+    button_row.addWidget(ok_button)
     extra_button = None
     if extra_label:
-        extra_button = box.addButton(extra_label, QtWidgets.QMessageBox.ActionRole)
-    box.setDefaultButton(ok_button)
-    box.exec()
-    clicked = box.clickedButton()
-    if clicked == ok_button:
+        extra_button = QtWidgets.QPushButton(extra_label)
+        button_row.addWidget(extra_button)
+    cancel_button = QtWidgets.QPushButton(cancel_label)
+    button_row.addWidget(cancel_button)
+    button_row.addStretch()
+    layout.addLayout(button_row)
+
+    ok_button.clicked.connect(dialog.accept)
+    cancel_button.clicked.connect(dialog.reject)
+    extra_result = QtWidgets.QDialog.Accepted + 1
+    if extra_button is not None:
+        extra_button.clicked.connect(lambda: dialog.done(extra_result))
+
+    dialog.setLayout(layout)
+    dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+    _enable_dialog_gamepad(
+        dialog,
+        affirmative=ok_button,
+        negative=cancel_button,
+        special=extra_button,
+        default=ok_button,
+    )
+
+    result = dialog.exec()
+    if result == QtWidgets.QDialog.Accepted:
         return "ok"
-    if extra_button is not None and clicked == extra_button:
+    if result == extra_result:
         return "extra"
     return "cancel"
 
@@ -538,20 +600,7 @@ def _qt_file_dialog(
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-    gamepad_layer = None
-    try:
-        from . import gamepad_input
-
-        gamepad_layer = gamepad_input.install_gamepad_navigation(dialog)
-        if gamepad_layer is not None:
-            dialog.finished.connect(gamepad_layer.shutdown)
-    except Exception as exc:  # pragma: no cover - runtime safety net
-        APP_LOGGER.log(
-            f"Failed to enable gamepad navigation: {exc}",
-            level="WARNING",
-            location="gamepad",
-            include_context=True,
-        )
+    gamepad_layer = _enable_dialog_gamepad(dialog)
     if dialog.exec() == QtWidgets.QDialog.Accepted:
         selected_files = dialog.selectedFiles()
         if selected_files:
@@ -608,6 +657,11 @@ def info_dialog(message: str) -> None:
     box.setIcon(QtWidgets.QMessageBox.Information)
     box.setWindowTitle("Information")
     box.setText(message)
+    ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
+    box.setDefaultButton(QtWidgets.QMessageBox.Ok)
+    _enable_dialog_gamepad(
+        box, affirmative=ok_button, negative=ok_button, default=ok_button
+    )
     box.exec()
 
 
@@ -623,6 +677,11 @@ def error_dialog(message: str) -> None:
     box.setIcon(QtWidgets.QMessageBox.Critical)
     box.setWindowTitle("Error")
     box.setText(message)
+    ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
+    box.setDefaultButton(QtWidgets.QMessageBox.Ok)
+    _enable_dialog_gamepad(
+        box, affirmative=ok_button, negative=ok_button, default=ok_button
+    )
     box.exec()
 
 def choose_install_action(title: str, text: str, select_label: str = "Select") -> str:

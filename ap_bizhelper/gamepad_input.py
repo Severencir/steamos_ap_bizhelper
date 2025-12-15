@@ -179,7 +179,30 @@ if QT_AVAILABLE:
             self._active = False
             self._last_target: Optional[QtWidgets.QWidget] = None
             self._focus_before_toggle: Optional[QtWidgets.QWidget] = None
+            self._action_buttons: Dict[str, Optional[QtWidgets.QAbstractButton]] = {
+                "affirmative": None,
+                "negative": None,
+                "special": None,
+                "default": None,
+            }
             self._init_sdl()
+
+        def register_action_buttons(
+            self,
+            *,
+            affirmative: Optional[QtWidgets.QAbstractButton] = None,
+            negative: Optional[QtWidgets.QAbstractButton] = None,
+            special: Optional[QtWidgets.QAbstractButton] = None,
+            default: Optional[QtWidgets.QAbstractButton] = None,
+        ) -> None:
+            self._action_buttons.update(
+                {
+                    "affirmative": affirmative,
+                    "negative": negative,
+                    "special": special,
+                    "default": default or affirmative,
+                }
+            )
 
         @property
         def active(self) -> bool:
@@ -428,15 +451,11 @@ if QT_AVAILABLE:
             shortcut_map: Dict[int, tuple[int, QtCore.Qt.KeyboardModifiers]] = {
                 SDL_CONTROLLER_BUTTON_Y: (QtCore.Qt.Key_Up, QtCore.Qt.AltModifier),
             }
-            key_map: Dict[int, int] = {
+            nav_map: Dict[int, int] = {
                 SDL_CONTROLLER_BUTTON_DPAD_UP: QtCore.Qt.Key_Up,
                 SDL_CONTROLLER_BUTTON_DPAD_DOWN: QtCore.Qt.Key_Down,
                 SDL_CONTROLLER_BUTTON_DPAD_LEFT: QtCore.Qt.Key_Left,
                 SDL_CONTROLLER_BUTTON_DPAD_RIGHT: QtCore.Qt.Key_Right,
-                SDL_CONTROLLER_BUTTON_A: QtCore.Qt.Key_Return,
-                SDL_CONTROLLER_BUTTON_B: QtCore.Qt.Key_Escape,
-                SDL_CONTROLLER_BUTTON_START: QtCore.Qt.Key_Return,
-                SDL_CONTROLLER_BUTTON_BACK: QtCore.Qt.Key_Backspace,
             }
 
             if button in focus_map and pressed:
@@ -448,8 +467,38 @@ if QT_AVAILABLE:
                 self._post_key(key, pressed, modifiers=modifiers)
                 return
 
-            if button in key_map:
-                self._post_key(key_map[button], pressed)
+            if button in nav_map:
+                self._post_key(nav_map[button], pressed)
+                return
+
+            if not pressed:
+                return
+
+            action_buttons = self._action_buttons
+            if button == SDL_CONTROLLER_BUTTON_A:
+                self._post_key(QtCore.Qt.Key_Return, True)
+                return
+            if button == SDL_CONTROLLER_BUTTON_B:
+                if not self._activate_button(action_buttons.get("negative")):
+                    self._post_key(QtCore.Qt.Key_Escape, True)
+                return
+            if button == SDL_CONTROLLER_BUTTON_X:
+                if not self._activate_button(action_buttons.get("affirmative")):
+                    self._activate_button(action_buttons.get("default"))
+                return
+            if button == SDL_CONTROLLER_BUTTON_Y:
+                self._activate_button(action_buttons.get("special"))
+
+        def _activate_button(self, button: Optional[QtWidgets.QAbstractButton]) -> bool:
+            if button is None:
+                return False
+
+            try:
+                button.setFocus()
+                button.animateClick()
+                return True
+            except Exception:
+                return False
 
         def _change_focus(self, *, next_focus: bool) -> None:
             if not self._dialog:
@@ -532,7 +581,11 @@ def _in_steam_mode() -> bool:
     return any(os.environ.get(key) for key in _STEAM_ENV_KEYS)
 
 
-def install_gamepad_navigation(dialog: QtWidgets.QWidget) -> Optional[GamepadEventFilter]:
+def install_gamepad_navigation(
+    dialog: QtWidgets.QWidget,
+    *,
+    actions: Optional[Dict[str, Optional[QtWidgets.QAbstractButton]]] = None,
+) -> Optional[GamepadEventFilter]:
     """Install gamepad navigation when enabled and a controller is available."""
 
     if QtWidgets is None or QtCore is None:
@@ -548,6 +601,12 @@ def install_gamepad_navigation(dialog: QtWidgets.QWidget) -> Optional[GamepadEve
     if not layer.active:
         layer.shutdown()
         return None
+
+    if actions:
+        try:
+            layer.register_action_buttons(**actions)
+        except Exception:
+            pass
 
     dialog.installEventFilter(layer)
     try:
