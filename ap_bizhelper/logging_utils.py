@@ -232,7 +232,12 @@ def create_component_logger(
 def get_app_logger(category: str = "ap-bizhelper", *, log_dir: Optional[Path] = None) -> AppLogger:
     global _GLOBAL_LOGGER
     if _GLOBAL_LOGGER is None:
-        _GLOBAL_LOGGER = AppLogger(category, log_dir=log_dir or LOG_ROOT / "app")
+        _GLOBAL_LOGGER = AppLogger(
+            category,
+            log_dir=log_dir or LOG_ROOT / "app",
+            run_id=os.environ.get(RUN_ID_ENV) or None,
+            timestamp=os.environ.get(TIMESTAMP_ENV) or None,
+        )
         _GLOBAL_LOGGER.capture_console_streams()
     return _GLOBAL_LOGGER
 
