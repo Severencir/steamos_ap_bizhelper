@@ -323,11 +323,23 @@ if QT_AVAILABLE:
                 QtCore.Qt.Key_Up,
                 QtCore.Qt.Key_Down,
             ):
+                go_next = qt_key in (QtCore.Qt.Key_Right, QtCore.Qt.Key_Down)
+
+                if (
+                    isinstance(target, QtWidgets.QAbstractButton)
+                    and self._has_multiple_buttons()
+                    and not self._is_file_dialog()
+                    and self._move_between_buttons(go_next=go_next)
+                ):
+                    return
+
+                if self._checkbox_targets() and self._move_between_checkboxes(
+                    go_next=go_next, origin=target
+                ):
+                    return
+
                 if self._has_multiple_buttons() and not self._is_file_dialog():
-                    moved = self._move_between_buttons(
-                        go_next=qt_key in (QtCore.Qt.Key_Right, QtCore.Qt.Key_Down)
-                    )
-                    if moved:
+                    if self._move_between_buttons(go_next=go_next):
                         return
 
             if pressed and qt_key in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right):
@@ -455,13 +467,11 @@ if QT_AVAILABLE:
         def _handle_button(self, button_event: SDL_ControllerButtonEvent, *, pressed: bool) -> None:
             button = int(button_event.button)
             self._button_state[button] = pressed
+            action_buttons = self._action_buttons
 
             focus_map: Dict[int, bool] = {
                 SDL_CONTROLLER_BUTTON_LEFTSHOULDER: False,
                 SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: True,
-            }
-            shortcut_map: Dict[int, tuple[int, QtCore.Qt.KeyboardModifiers]] = {
-                SDL_CONTROLLER_BUTTON_Y: (QtCore.Qt.Key_Up, QtCore.Qt.AltModifier),
             }
             nav_map: Dict[int, int] = {
                 SDL_CONTROLLER_BUTTON_DPAD_UP: QtCore.Qt.Key_Up,
@@ -474,9 +484,9 @@ if QT_AVAILABLE:
                 self._change_focus(next_focus=focus_map[button])
                 return
 
-            if button in shortcut_map:
-                key, modifiers = shortcut_map[button]
-                self._post_key(key, pressed, modifiers=modifiers)
+            if button == SDL_CONTROLLER_BUTTON_Y:
+                if pressed and self._activate_button(action_buttons.get("special")):
+                    return
                 return
 
             if button in nav_map:
@@ -485,8 +495,6 @@ if QT_AVAILABLE:
 
             if not pressed:
                 return
-
-            action_buttons = self._action_buttons
             if button == SDL_CONTROLLER_BUTTON_A:
                 target = self._target_widget()
                 if isinstance(target, QtWidgets.QCheckBox):
@@ -502,11 +510,8 @@ if QT_AVAILABLE:
                     self._post_key(QtCore.Qt.Key_Escape, True)
                 return
             if button == SDL_CONTROLLER_BUTTON_X:
-                if not self._activate_button(action_buttons.get("affirmative")):
-                    self._activate_button(action_buttons.get("default"))
+                self._activate_button(action_buttons.get("affirmative"))
                 return
-            if button == SDL_CONTROLLER_BUTTON_Y:
-                self._activate_button(action_buttons.get("special"))
 
         def _activate_button(self, button: Optional[QtWidgets.QAbstractButton]) -> bool:
             if button is None:
@@ -540,6 +545,15 @@ if QT_AVAILABLE:
                     buttons.append(button)
             return buttons
 
+        def _checkbox_targets(self) -> list[QtWidgets.QCheckBox]:
+            if not self._dialog:
+                return []
+
+            checkboxes = [
+                cb for cb in self._dialog.findChildren(QtWidgets.QCheckBox) if cb.isVisible()
+            ]
+            return checkboxes
+
         def _has_multiple_buttons(self) -> bool:
             return len(self._button_targets()) > 1
 
@@ -564,6 +578,32 @@ if QT_AVAILABLE:
             try:
                 target_button.setFocus()
                 self._last_target = target_button
+                return True
+            except Exception:
+                return False
+
+        def _move_between_checkboxes(
+            self, *, go_next: bool, origin: QtWidgets.QWidget
+        ) -> bool:
+            checkboxes = self._checkbox_targets()
+            if not checkboxes:
+                return False
+
+            try:
+                current_index = checkboxes.index(origin)  # type: ignore[arg-type]
+            except ValueError:
+                current_index = -1
+
+            if current_index < 0:
+                target_index = 0 if go_next else len(checkboxes) - 1
+            else:
+                step = 1 if go_next else -1
+                target_index = max(0, min(len(checkboxes) - 1, current_index + step))
+
+            try:
+                target_cb = checkboxes[target_index]
+                target_cb.setFocus()
+                self._last_target = target_cb
                 return True
             except Exception:
                 return False

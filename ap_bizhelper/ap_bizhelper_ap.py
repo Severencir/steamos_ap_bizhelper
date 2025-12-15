@@ -797,7 +797,16 @@ def download_with_progress(
     dialog.setValue(0)
     dialog.setAutoClose(True)
     dialog.setAutoReset(True)
+    dialog.setCancelButtonText("Cancel")
     dialog.show()
+
+    cancel_button = dialog.findChild(QtWidgets.QPushButton)
+    _enable_dialog_gamepad(
+        dialog,
+        affirmative=cancel_button,
+        negative=cancel_button,
+        default=cancel_button,
+    )
 
     app = QtWidgets.QApplication.instance()
     if app is None:
