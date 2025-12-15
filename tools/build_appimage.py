@@ -8,6 +8,7 @@ import textwrap
 import urllib.request
 import venv
 from pathlib import Path
+from typing import Iterable, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DIST_DIR = PROJECT_ROOT / "dist"
@@ -22,6 +23,13 @@ ICON_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAJ0lEQVR4nO3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAA"
     "AAAAAAAAAAAAAICtF7kAARQrxxgAAAAASUVORK5CYII="
 )
+LIB_SEARCH_ROOTS = [
+    Path("/usr/lib"),
+    Path("/usr/lib/x86_64-linux-gnu"),
+    Path("/usr/local/lib"),
+    Path("/lib"),
+    Path("/lib/x86_64-linux-gnu"),
+]
 
 
 def _build_wheel() -> Path:
@@ -51,6 +59,61 @@ def _install_wheel(python: Path, wheel: Path) -> None:
     subprocess.run([python, "-m", "pip", "install", str(wheel)], check=True)
 
 
+def _find_library_path(names: Iterable[str]) -> Optional[Path]:
+    for name in names:
+        for root in LIB_SEARCH_ROOTS:
+            direct = root / name
+            if direct.exists():
+                return direct
+            for candidate in root.glob(name):
+                if candidate.exists():
+                    return candidate
+    try:
+        import ctypes.util
+
+        for name in names:
+            hinted = ctypes.util.find_library(name) or ctypes.util.find_library(
+                str(name).replace("lib", "").split(".so")[0]
+            )
+            if hinted:
+                hinted_path = Path(hinted)
+                if hinted_path.exists():
+                    return hinted_path
+                for root in LIB_SEARCH_ROOTS:
+                    candidate = root / hinted
+                    if candidate.exists():
+                        return candidate
+    except Exception:
+        pass
+    return None
+
+
+def _bundle_runtime_libs(appdir: Path) -> None:
+    lib_dir = appdir / "usr" / "lib"
+    lib_dir.mkdir(parents=True, exist_ok=True)
+
+    required_libs = {
+        "SDL2": ["libSDL2-2.0.so.0"],
+        "hidapi-hidraw": ["libhidapi-hidraw.so.0"],
+        "hidapi-libusb": ["libhidapi-libusb.so.0"],
+    }
+
+    missing: list[str] = []
+    for label, names in required_libs.items():
+        path = _find_library_path(names)
+        if path is None:
+            missing.append(label)
+            continue
+        shutil.copy2(path, lib_dir / path.name)
+
+    if missing:
+        raise FileNotFoundError(
+            "Missing native libraries: "
+            + ", ".join(missing)
+            + ". Please install libsdl2 and hidapi packages before building the AppImage."
+        )
+
+
 def _write_apprun(appdir: Path) -> None:
     apprun_path = appdir / "AppRun"
     content = textwrap.dedent(
@@ -59,6 +122,8 @@ def _write_apprun(appdir: Path) -> None:
         set -e
         HERE="$(dirname "$(readlink -f "$0")")"
         export PATH="$HERE/usr/bin:$PATH"
+        export APPDIR="$HERE"
+        export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         QT_PLUGIN_PATH=""
         QML2_IMPORT_PATH=""
         for site in "$HERE"/usr/lib/python*/site-packages; do
@@ -132,6 +197,7 @@ def build_appimage() -> Path:
     wheel = _build_wheel()
     python = _create_appdir_venv()
     _install_wheel(python, wheel)
+    _bundle_runtime_libs(APPDIR)
     _write_apprun(APPDIR)
     _write_desktop(APPDIR)
     _write_icon(APPDIR)
