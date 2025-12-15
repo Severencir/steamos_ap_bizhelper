@@ -178,6 +178,7 @@ if QT_AVAILABLE:
             self._timer: Optional[QtCore.QTimer] = None
             self._active = False
             self._last_target: Optional[QtWidgets.QWidget] = None
+            self._focus_before_toggle: Optional[QtWidgets.QWidget] = None
             self._init_sdl()
 
         @property
@@ -269,6 +270,10 @@ if QT_AVAILABLE:
         def _target_widget(self) -> Optional[QtWidgets.QWidget]:
             if self._dialog and self._dialog.isVisible():
                 focused = self._dialog.focusWidget()
+                if self._last_target and (
+                    focused is self._dialog or focused is self._focus_before_toggle
+                ):
+                    return self._last_target
                 if focused and focused is not self._dialog:
                     return focused
                 if self._last_target:
@@ -341,6 +346,7 @@ if QT_AVAILABLE:
             if not self._dialog:
                 return False
 
+            self._focus_before_toggle = self._dialog.focusWidget()
             sidebar = self._dialog.findChild(QtWidgets.QAbstractItemView, "sidebar")
             tree_view = self._dialog.findChild(QtWidgets.QTreeView, "treeView")
             list_view = self._dialog.findChild(QtWidgets.QListView, "listView")
@@ -364,8 +370,9 @@ if QT_AVAILABLE:
             if not target.hasFocus():
                 target.setFocus(QtCore.Qt.OtherFocusReason)
             if not target.hasFocus():
-                # QFileDialog can keep focus on the dialog, so we fall back to the last target.
-                return False
+                # QFileDialog can keep focus on the dialog, so we fall back to routing
+                # subsequent navigation events to the cached target even without focus.
+                return True
             self._ensure_file_view_selection(target)
             return True
 
