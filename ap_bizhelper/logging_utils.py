@@ -170,7 +170,7 @@ class AppLogger:
         message: str,
         *,
         level: str = "INFO",
-        backend: str = "zenity",
+        backend: str = "qt",
         location: Optional[str] = None,
     ) -> str:
         return self.log(

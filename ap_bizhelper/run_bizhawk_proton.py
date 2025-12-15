@@ -12,6 +12,7 @@ except ImportError:  # pragma: no cover - fallback when executed outside the pac
     from .ap_bizhelper_config import load_settings as _load_shared_settings
 
 from ap_bizhelper.logging_utils import RUNNER_LOG_ENV, create_component_logger
+from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app, _ensure_qt_available
 
 
 def _load_settings():
@@ -19,18 +20,17 @@ def _load_settings():
 
 
 def error_dialog(msg: str) -> None:
-    """Show an error via zenity if available, else stderr."""
+    """Show an error using PySide6 message boxes."""
     RUNNER_LOGGER.log(f"Error dialog requested: {msg}", level="ERROR", include_context=True)
-    if shutil.which("zenity"):
-        try:
-            subprocess.run(
-                ["zenity", "--error", f"--text={msg}"],
-                check=False,
-            )
-        except Exception:
-            pass
-    else:
-        sys.stderr.write(f"ERROR: {msg}\n")
+    _ensure_qt_available()
+    from PySide6 import QtWidgets
+
+    _ensure_qt_app()
+    box = QtWidgets.QMessageBox()
+    box.setIcon(QtWidgets.QMessageBox.Critical)
+    box.setWindowTitle("BizHawk runner error")
+    box.setText(msg)
+    box.exec()
 
 
 _SETTINGS_CACHE = None

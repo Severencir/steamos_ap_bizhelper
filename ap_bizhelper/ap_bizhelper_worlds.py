@@ -13,10 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from .ap_bizhelper_ap import (
-    _has_qt_dialogs,
-    _has_zenity,
     _qt_question_dialog,
-    _run_zenity,
     _select_file_dialog,
     choose_install_action,
     download_with_progress,
@@ -283,35 +280,16 @@ def ensure_apworld_for_patch(patch: Path) -> None:
             _select_custom_apworld(display_name, normalized, cache, playable_cache)
         return
 
-    if _has_qt_dialogs():
-        choice = _qt_question_dialog(
-            title=f"APWorld for {display_name}",
-            text=(
-                f"No downloadable APWorld was found for {display_name}.\n\n"
-                "Do you want to select a .apworld file now or cancel?"
-            ),
-            ok_label="Select .apworld",
-            cancel_label="Cancel",
-        )
-        if choice == "ok":
-            _select_custom_apworld(display_name, normalized, cache, playable_cache)
-        return
+    choice = _qt_question_dialog(
+        title=f"APWorld for {display_name}",
+        text=(
+            f"No downloadable APWorld was found for {display_name}.\n\n"
+            "Do you want to select a .apworld file now or cancel?"
+        ),
+        ok_label="Select .apworld",
+        cancel_label="Cancel",
+    )
+    if choice == "ok":
+        _select_custom_apworld(display_name, normalized, cache, playable_cache)
+    return
 
-    if _has_zenity():
-        code, _ = _run_zenity(
-            [
-                "--question",
-                f"--title=APWorld for {display_name}",
-                (
-                    f"--text=No downloadable APWorld was found for {display_name}.\n\n"
-                    "Do you want to select a .apworld file now or cancel?"
-                ),
-                "--ok-label=Select .apworld",
-                "--cancel-label=Cancel",
-            ]
-        )
-        if code == 0:
-            _select_custom_apworld(display_name, normalized, cache, playable_cache)
-        return
-
-    print("[ap-bizhelper] No dialog backend available; skipping APWorld selection.")

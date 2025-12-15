@@ -76,16 +76,33 @@ def _save_settings(settings: Dict[str, Any]) -> None:
     _save_shared_settings(merged_settings)
 
 
-def _has_qt_dialogs() -> bool:
+def _ensure_qt_available() -> None:
     global _QT_IMPORT_ERROR
+
+    if _QT_IMPORT_ERROR is not None:
+        APP_LOGGER.log(
+            "PySide6 failed to load; runtime dialogs are unavailable.",
+            level="ERROR",
+            include_context=True,
+            mirror_console=True,
+            stream="stderr",
+            location="qt-deps",
+        )
+        raise RuntimeError("PySide6 is required for ap-bizhelper") from _QT_IMPORT_ERROR
 
     try:
         from PySide6 import QtWidgets  # noqa: F401
-    except Exception as exc:
+    except Exception as exc:  # pragma: no cover - import guard
         _QT_IMPORT_ERROR = exc
-        return False
-
-    return True
+        APP_LOGGER.log(
+            f"PySide6 is required but could not be imported: {exc}",
+            level="ERROR",
+            include_context=True,
+            mirror_console=True,
+            stream="stderr",
+            location="qt-deps",
+        )
+        raise RuntimeError("PySide6 is required for ap-bizhelper") from exc
 
 
 def _coerce_font_setting(
@@ -130,10 +147,8 @@ def _coerce_bool_setting(settings: Dict[str, Any], key: str, default: bool) -> b
 
 
 def _detect_global_scale() -> float:
-    try:
-        from PySide6 import QtGui
-    except Exception:
-        return 1.0
+    _ensure_qt_available()
+    from PySide6 import QtGui
 
     try:
         screen = QtGui.QGuiApplication.primaryScreen()
@@ -164,6 +179,7 @@ def _detect_global_scale() -> float:
 def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApplication":
     global _QT_APP, _QT_BASE_FONT
 
+    _ensure_qt_available()
     from PySide6 import QtGui, QtWidgets
 
     def _scaled_font(
@@ -216,48 +232,6 @@ def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApp
 
     _QT_APP = app
     return app
-
-
-def _has_zenity() -> bool:
-    return subprocess.call(["which", "zenity"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
-
-
-def _run_zenity(args: list[str], *, input_text: Optional[str] = None) -> Tuple[int, str]:
-    """
-    Run zenity with given args, return (exit_code, stdout_text).
-    If zenity is not available, returns (127, "").
-    """
-    if not _has_zenity():
-        return 127, ""
-    try:
-        proc = subprocess.Popen(
-            ["zenity", *args],
-            stdin=subprocess.PIPE if input_text is not None else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        out, _ = proc.communicate(input_text)
-        return proc.returncode, out.strip()
-    except FileNotFoundError:
-        return 127, ""
-
-
-def _zenity_error_dialog(message: str) -> None:
-    """Attempt to show a zenity error dialog with detailed text."""
-
-    APP_LOGGER.log_dialog(
-        "Zenity Error",
-        message,
-        level="ERROR",
-        backend="zenity" if _has_zenity() else "stderr",
-        location="zenity-error",
-    )
-
-    if _has_zenity():
-        _run_zenity(["--error", f"--text={message}"])
-    else:
-        sys.stderr.write("ERROR: " + message + "\n")
 
 
 def _qt_question_dialog(
@@ -597,18 +571,7 @@ def _select_file_dialog(
     settings: Optional[Dict[str, Any]] = None,
     dialog_key: str = "default",
 ) -> Optional[Path]:
-    if not _has_qt_dialogs():
-        details = ""
-        if _QT_IMPORT_ERROR is not None:
-            details = f"\nDetails: {_QT_IMPORT_ERROR}"
-
-        _zenity_error_dialog(
-            "PySide6 is required for file selection but is not installed or failed to load.\n"
-            "Please install PySide6 (e.g. `pip install PySide6`) and try again."
-            f"{details}"
-        )
-        return None
-
+    _ensure_qt_available()
     settings_obj = settings if settings is not None else _load_settings()
     start_dir = _preferred_start_dir(initial, settings_obj, dialog_key)
 
@@ -617,8 +580,15 @@ def _select_file_dialog(
             title=title, start_dir=start_dir, file_filter=file_filter, settings=settings_obj
         )
     except Exception as exc:  # pragma: no cover - GUI/runtime issues
-        _zenity_error_dialog(f"PySide6 file selection failed: {exc}")
-        return None
+        APP_LOGGER.log(
+            f"PySide6 file selection failed: {exc}",
+            level="ERROR",
+            include_context=True,
+            mirror_console=True,
+            stream="stderr",
+            location="qt-file-dialog",
+        )
+        raise
 
     if selection:
         _remember_file_dialog_dir(settings_obj, selection, dialog_key)
@@ -629,45 +599,31 @@ def _select_file_dialog(
 
 
 def info_dialog(message: str) -> None:
-    backend = "qt" if _has_qt_dialogs() else "zenity" if _has_zenity() else "stderr"
-    APP_LOGGER.log_dialog("Information", message, backend=backend, location="info-dialog")
-    if _has_qt_dialogs():
-        from PySide6 import QtWidgets
+    _ensure_qt_available()
+    APP_LOGGER.log_dialog("Information", message, backend="qt", location="info-dialog")
+    from PySide6 import QtWidgets
 
-        _ensure_qt_app()
-        box = QtWidgets.QMessageBox()
-        box.setIcon(QtWidgets.QMessageBox.Information)
-        box.setWindowTitle("Information")
-        box.setText(message)
-        box.exec()
-        return
+    _ensure_qt_app()
+    box = QtWidgets.QMessageBox()
+    box.setIcon(QtWidgets.QMessageBox.Information)
+    box.setWindowTitle("Information")
+    box.setText(message)
+    box.exec()
 
-    if _has_zenity():
-        _run_zenity(["--info", f"--text={message}"])
-    else:
-        # Last resort: print to stderr
-        sys.stderr.write(message + "\n")
 
 def error_dialog(message: str) -> None:
-    backend = "qt" if _has_qt_dialogs() else "zenity" if _has_zenity() else "stderr"
+    _ensure_qt_available()
     APP_LOGGER.log_dialog(
-        "Error", message, level="ERROR", backend=backend, location="error-dialog"
+        "Error", message, level="ERROR", backend="qt", location="error-dialog"
     )
-    if _has_qt_dialogs():
-        from PySide6 import QtWidgets
+    from PySide6 import QtWidgets
 
-        _ensure_qt_app()
-        box = QtWidgets.QMessageBox()
-        box.setIcon(QtWidgets.QMessageBox.Critical)
-        box.setWindowTitle("Error")
-        box.setText(message)
-        box.exec()
-        return
-
-    if _has_zenity():
-        _run_zenity(["--error", f"--text={message}"])
-    else:
-        sys.stderr.write("ERROR: " + message + "\n")
+    _ensure_qt_app()
+    box = QtWidgets.QMessageBox()
+    box.setIcon(QtWidgets.QMessageBox.Critical)
+    box.setWindowTitle("Error")
+    box.setText(message)
+    box.exec()
 
 def choose_install_action(title: str, text: str, select_label: str = "Select") -> str:
     """
@@ -676,41 +632,17 @@ def choose_install_action(title: str, text: str, select_label: str = "Select") -
     Returns "Download", "Select", or "Cancel". ``select_label`` customizes the
     text shown for the "Select" button.
     """
-    if _has_qt_dialogs():
-        choice = _qt_question_dialog(
-            title=title,
-            text=text,
-            ok_label="Download",
-            cancel_label="Cancel",
-            extra_label=select_label,
-        )
-        if choice == "extra":
-            return "Select"
-        if choice == "ok":
-            return "Download"
-        return "Cancel"
-
-    if not _has_zenity():
-        # Without zenity we can't offer a clickable choice safely.
-        return "Cancel"
-
-    code, out = _run_zenity(
-        [
-            "--question",
-            f"--title={title}",
-            f"--text={text}",
-            "--ok-label=Download",
-            "--cancel-label=Cancel",
-            f"--extra-button={select_label}",
-        ]
+    choice = _qt_question_dialog(
+        title=title,
+        text=text,
+        ok_label="Download",
+        cancel_label="Cancel",
+        extra_label=select_label,
     )
-    if out == select_label or code == 5:
-        # Extra button: select a local file.
+    if choice == "extra":
         return "Select"
-    if code == 0:
-        # "Download" was chosen.
+    if choice == "ok":
         return "Download"
-    # User hit Cancel/close
     return "Cancel"
 
 
@@ -739,29 +671,14 @@ def select_appimage(
 def _prompt_select_existing_appimage(initial: Path, *, settings: Dict[str, Any]) -> Path:
     """Prompt the user to select an existing AppImage without offering download."""
 
-    if _has_qt_dialogs():
-        choice = _qt_question_dialog(
-            title="Archipelago setup",
-            text="Archipelago was not selected for download.\n\nSelect an existing AppImage to continue?",
-            ok_label="Select AppImage",
-            cancel_label="Cancel",
-        )
-        if choice != "ok":
-            raise RuntimeError("User cancelled Archipelago AppImage selection")
-    elif not _has_zenity():
-        raise RuntimeError("zenity is required to select an Archipelago AppImage.")
-    else:
-        code, _ = _run_zenity(
-            [
-                "--question",
-                "--title=Archipelago setup",
-                "--text=Archipelago was not selected for download.\n\nSelect an existing AppImage to continue?",
-                "--ok-label=Select AppImage",
-                "--cancel-label=Cancel",
-            ]
-        )
-        if code != 0:
-            raise RuntimeError("User cancelled Archipelago AppImage selection")
+    choice = _qt_question_dialog(
+        title="Archipelago setup",
+        text="Archipelago was not selected for download.\n\nSelect an existing AppImage to continue?",
+        ok_label="Select AppImage",
+        cancel_label="Cancel",
+    )
+    if choice != "ok":
+        raise RuntimeError("User cancelled Archipelago AppImage selection")
 
     chosen = select_appimage(initial, settings=settings)
     if not chosen:
@@ -801,88 +718,64 @@ def download_with_progress(
     title: str,
     text: str,
 ) -> None:
-    """Download ``url`` to ``dest`` with optional zenity progress UI."""
+    """Download ``url`` to ``dest`` with a PySide6 progress dialog."""
 
     _ensure_dirs()
+    _ensure_qt_available()
+    from PySide6 import QtWidgets
+
     if dest.exists():
         try:
             dest.unlink()
         except Exception:
             pass
 
-    # If zenity is available, show a progress dialog.
-    if _has_zenity():
-        proc = subprocess.Popen(
-            [
-                "zenity",
-                "--progress",
-                f"--title={title}",
-                f"--text={text}",
-                "--percentage=0",
-                "--auto-close",
-            ],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "ap-bizhelper/1.0"})
-            with urllib.request.urlopen(req, timeout=300) as resp, dest.open("wb") as f:
-                total_str = resp.headers.get("Content-Length") or "0"
-                try:
-                    total = int(total_str)
-                except ValueError:
-                    total = 0
-                downloaded = 0
-                chunk_size = 65536
-                while True:
-                    chunk = resp.read(chunk_size)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if proc.stdin and total > 0:
-                        percent = max(0, min(100, int(downloaded * 100 / total)))
-                        try:
-                            proc.stdin.write(f"{percent}\n")
-                            proc.stdin.flush()
-                        except BrokenPipeError:
-                            raise RuntimeError("Download cancelled by user")
-                if proc.stdin:
-                    try:
-                        proc.stdin.write("100\n")
-                        proc.stdin.flush()
-                    except BrokenPipeError:
-                        pass
-        except Exception:
-            try:
-                if proc.stdin:
-                    proc.stdin.close()
-            except Exception:
-                pass
-            proc.wait(timeout=1)
-            if dest.exists():
-                try:
-                    dest.unlink()
-                except Exception:
-                    pass
-            raise
-        finally:
-            try:
-                if proc.stdin:
-                    proc.stdin.close()
-            except Exception:
-                pass
-            proc.wait(timeout=5)
-    else:
-        req = urllib.request.Request(url, headers={"User-Agent": "ap-bizhelper/1.0"})
+    _ensure_qt_app()
+    dialog = QtWidgets.QProgressDialog()
+    dialog.setWindowTitle(title)
+    dialog.setLabelText(text)
+    dialog.setRange(0, 100)
+    dialog.setValue(0)
+    dialog.setAutoClose(True)
+    dialog.setAutoReset(True)
+    dialog.show()
+
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        raise RuntimeError("QApplication unavailable for download progress dialog")
+
+    req = urllib.request.Request(url, headers={"User-Agent": "ap-bizhelper/1.0"})
+    try:
         with urllib.request.urlopen(req, timeout=300) as resp, dest.open("wb") as f:
+            total_str = resp.headers.get("Content-Length") or "0"
+            try:
+                total = int(total_str)
+            except ValueError:
+                total = 0
+            downloaded = 0
+            chunk_size = 65536
             while True:
-                chunk = resp.read(65536)
+                if dialog.wasCanceled():
+                    raise RuntimeError("Download cancelled by user")
+                chunk = resp.read(chunk_size)
                 if not chunk:
                     break
                 f.write(chunk)
+                downloaded += len(chunk)
+                if total > 0:
+                    percent = max(0, min(100, int(downloaded * 100 / total)))
+                    dialog.setValue(percent)
+                app.processEvents()
+            dialog.setValue(100)
+            app.processEvents()
+    except Exception:
+        if dest.exists():
+            try:
+                dest.unlink()
+            except Exception:
+                pass
+        dialog.cancel()
+        raise
 
     try:
         dest.chmod(dest.stat().st_mode | 0o111)
@@ -893,7 +786,7 @@ def download_with_progress(
 def download_appimage(
     url: str, dest: Path, version: str, *, download_messages: Optional[list[str]] = None
 ) -> None:
-    """Download the AppImage to ``dest`` with a zenity progress dialog if possible."""
+    """Download the AppImage to ``dest`` with a Qt progress dialog."""
 
     download_with_progress(
         url,
@@ -976,40 +869,19 @@ def maybe_update_appimage(
     if current_ver == latest_ver or skip_ver == latest_ver:
         return appimage, False
 
-    if _has_qt_dialogs():
-        choice = _qt_question_dialog(
-            title="Archipelago update",
-            text="An Archipelago update is available. Update now?",
-            ok_label="Update now",
-            cancel_label="Later",
-            extra_label="Skip this version",
-        )
-        if choice == "cancel":
-            return appimage, False
-        if choice == "extra":
-            settings["AP_SKIP_VERSION"] = latest_ver
-            _save_settings(settings)
-            return appimage, False
-    elif not _has_zenity():
+    choice = _qt_question_dialog(
+        title="Archipelago update",
+        text="An Archipelago update is available. Update now?",
+        ok_label="Update now",
+        cancel_label="Later",
+        extra_label="Skip this version",
+    )
+    if choice == "cancel":
         return appimage, False
-    else:
-        code, choice = _run_zenity(
-            [
-                "--question",
-                "--title=Archipelago update",
-                "--text=An Archipelago update is available. Update now?",
-                "--ok-label=Update now",
-                "--cancel-label=Later",
-                "--extra-button=Skip this version",
-            ]
-        )
-        if code != 0:
-            # "Later"
-            return appimage, False
-        if choice == "Skip this version":
-            settings["AP_SKIP_VERSION"] = latest_ver
-            _save_settings(settings)
-            return appimage, False
+    if choice == "extra":
+        settings["AP_SKIP_VERSION"] = latest_ver
+        _save_settings(settings)
+        return appimage, False
 
     # Update now
     try:
