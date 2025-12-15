@@ -15,7 +15,13 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .ap_bizhelper_ap import _select_file_dialog, download_with_progress
+from .ap_bizhelper_ap import (
+    _qt_question_dialog,
+    _select_file_dialog,
+    download_with_progress,
+    error_dialog,
+    info_dialog,
+)
 from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
@@ -51,40 +57,6 @@ def _load_settings() -> Dict[str, Any]:
 def _save_settings(settings: Dict[str, Any]) -> None:
     _ensure_dirs()
     _save_shared_settings(settings)
-
-
-def _has_zenity() -> bool:
-    return subprocess.call(["which", "zenity"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
-
-
-def _run_zenity(args: list[str]) -> Tuple[int, str]:
-    if not _has_zenity():
-        return 127, ""
-    try:
-        proc = subprocess.Popen(
-            ["zenity", *args],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        out, _ = proc.communicate()
-        return proc.returncode, out.strip()
-    except FileNotFoundError:
-        return 127, ""
-
-
-def info_dialog(message: str) -> None:
-    if _has_zenity():
-        _run_zenity(["--info", f"--text={message}"])
-    else:
-        sys.stderr.write(message + "\n")
-
-
-def error_dialog(message: str) -> None:
-    if _has_zenity():
-        _run_zenity(["--error", f"--text={message}"])
-    else:
-        sys.stderr.write("ERROR: " + message + "\n")
 
 
 def _github_latest_bizhawk() -> Tuple[str, str]:
@@ -590,24 +562,17 @@ def maybe_update_bizhawk(
     if not current_ver or current_ver == latest_ver or skip_ver == latest_ver:
         return bizhawk_exe, False
 
-    if not _has_zenity():
-        return bizhawk_exe, False
-
-    code, choice = _run_zenity(
-        [
-            "--question",
-            "--title=BizHawk update",
-            "--text=A BizHawk update is available. Update now?",
-            "--ok-label=Update now",
-            "--cancel-label=Later",
-            "--extra-button=Skip this version",
-        ]
+    choice = _qt_question_dialog(
+        title="BizHawk update",
+        text="A BizHawk update is available. Update now?",
+        ok_label="Update now",
+        cancel_label="Later",
+        extra_label="Skip this version",
     )
-    if code != 0:
-        # "Later"
+    if choice == "cancel":
         return bizhawk_exe, False
 
-    if choice == "Skip this version":
+    if choice == "extra":
         settings["BIZHAWK_SKIP_VERSION"] = latest_ver
         _save_settings(settings)
         return bizhawk_exe, False
@@ -698,10 +663,6 @@ def ensure_bizhawk_and_proton(
     # Need to (re)configure BizHawk
     exe = auto_detect_bizhawk_exe(settings)
     if not exe or not exe.is_file():
-        if not download_selected and not _has_zenity():
-            error_dialog("BizHawk is not configured and zenity is not available for setup.")
-            return None
-
         cached_exe: Optional[Path] = None
         if download_selected and (exe is None or not exe.is_file()):
             try:
@@ -722,16 +683,16 @@ def ensure_bizhawk_and_proton(
             if download_messages is not None:
                 download_messages.append(f"Downloaded BizHawk {ver}")
         elif not download_selected:
-            code, _ = _run_zenity(
-                [
-                    "--question",
-                    "--title=BizHawk (Proton) setup",
-                    "--text=BizHawk (with Proton) was not selected for download.\n\nSelect an existing EmuHawk.exe to continue?",
-                    "--ok-label=Select EmuHawk.exe",
-                    "--cancel-label=Cancel",
-                ]
+            choice = _qt_question_dialog(
+                title="BizHawk (Proton) setup",
+                text=(
+                    "BizHawk (with Proton) was not selected for download.\n\n"
+                    "Select an existing EmuHawk.exe to continue?"
+                ),
+                ok_label="Select EmuHawk.exe",
+                cancel_label="Cancel",
             )
-            if code != 0:
+            if choice != "ok":
                 return None
 
             exe = select_bizhawk_exe(Path(os.path.expanduser("~")))

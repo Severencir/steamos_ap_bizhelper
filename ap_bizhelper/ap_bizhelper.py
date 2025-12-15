@@ -15,12 +15,9 @@ from typing import Optional, Set, Tuple
 from .ap_bizhelper_ap import (
     AP_APPIMAGE_DEFAULT,
     _ensure_qt_app,
-    _has_qt_dialogs,
-    _has_zenity,
-    _run_zenity,
+    _ensure_qt_available,
     _select_file_dialog,
     _qt_question_dialog,
-    _zenity_error_dialog,
     ensure_appimage,
     error_dialog,
     info_dialog,
@@ -128,7 +125,7 @@ def _maybe_relaunch_via_steam(argv: list[str], settings: dict) -> None:
                 mirror_console=True,
                 stream="stderr",
             )
-            _zenity_error_dialog(message)
+            error_dialog(message)
             sys.exit(1)
 
         if str(settings.get("STEAM_APPID")) != str(appid):
@@ -227,7 +224,7 @@ def _maybe_relaunch_via_steam(argv: list[str], settings: dict) -> None:
                 mirror_console=True,
                 stream="stderr",
             )
-            _zenity_error_dialog(msg)
+            error_dialog(msg)
         except Exception as exc:
             APP_LOGGER.log(
                 f"Failed to relaunch via Steam: {exc}",
@@ -237,7 +234,7 @@ def _maybe_relaunch_via_steam(argv: list[str], settings: dict) -> None:
                 mirror_console=True,
                 stream="stderr",
             )
-            _zenity_error_dialog(
+            error_dialog(
                 "Steam relaunch failed. Please check the console output and recent log entries to troubleshoot."
             )
 
@@ -306,89 +303,52 @@ def _prompt_setup_choices(
     if not any((show_archipelago, show_bizhawk)):
         return False, False, False
 
-    if _has_qt_dialogs():
-        from PySide6 import QtWidgets
+    from PySide6 import QtWidgets
 
-        _ensure_qt_app()
-        dialog = QtWidgets.QDialog()
-        dialog.setWindowTitle("Download setup")
-        layout = QtWidgets.QVBoxLayout(dialog)
-        label = QtWidgets.QLabel("Select which components to download and configure.")
-        layout.addWidget(label)
+    _ensure_qt_app()
+    dialog = QtWidgets.QDialog()
+    dialog.setWindowTitle("Download setup")
+    layout = QtWidgets.QVBoxLayout(dialog)
+    label = QtWidgets.QLabel("Select which components to download and configure.")
+    layout.addWidget(label)
 
-        arch_box = None
-        if show_archipelago:
-            arch_box = QtWidgets.QCheckBox("Archipelago")
-            arch_box.setChecked(True)
-            layout.addWidget(arch_box)
+    arch_box = None
+    if show_archipelago:
+        arch_box = QtWidgets.QCheckBox("Archipelago")
+        arch_box.setChecked(True)
+        layout.addWidget(arch_box)
 
-        bizhawk_box = None
-        if show_bizhawk:
-            bizhawk_box = QtWidgets.QCheckBox("BizHawk (with Proton)")
-            bizhawk_box.setChecked(True)
-            layout.addWidget(bizhawk_box)
+    bizhawk_box = None
+    if show_bizhawk:
+        bizhawk_box = QtWidgets.QCheckBox("BizHawk (with Proton)")
+        bizhawk_box.setChecked(True)
+        layout.addWidget(bizhawk_box)
 
-        shortcut_box = None
-        if show_archipelago or show_bizhawk:
-            shortcut_box = QtWidgets.QCheckBox(
-                "Create Desktop shortcuts (Archipelago & BizHawk)"
-            )
-            shortcut_box.setChecked(True)
-            layout.addWidget(shortcut_box)
+    shortcut_box = None
+    if show_archipelago or show_bizhawk:
+        shortcut_box = QtWidgets.QCheckBox(
+            "Create Desktop shortcuts (Archipelago & BizHawk)"
+        )
+        shortcut_box.setChecked(True)
+        layout.addWidget(shortcut_box)
 
-        buttons = QtWidgets.QDialogButtonBox()
-        download_btn = QtWidgets.QPushButton("Download")
-        cancel_btn = QtWidgets.QPushButton("Cancel")
-        buttons.addButton(download_btn, QtWidgets.QDialogButtonBox.AcceptRole)
-        buttons.addButton(cancel_btn, QtWidgets.QDialogButtonBox.RejectRole)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
+    buttons = QtWidgets.QDialogButtonBox()
+    download_btn = QtWidgets.QPushButton("Download")
+    cancel_btn = QtWidgets.QPushButton("Cancel")
+    buttons.addButton(download_btn, QtWidgets.QDialogButtonBox.AcceptRole)
+    buttons.addButton(cancel_btn, QtWidgets.QDialogButtonBox.RejectRole)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
 
-        if dialog.exec() != QtWidgets.QDialog.Accepted:
-            raise RuntimeError("User cancelled setup selection.")
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        raise RuntimeError("User cancelled setup selection.")
 
-        arch = arch_box.isChecked() if arch_box is not None else False
-        bizhawk = bizhawk_box.isChecked() if bizhawk_box is not None else False
-        shortcuts = shortcut_box.isChecked() if shortcut_box is not None else False
+    arch = arch_box.isChecked() if arch_box is not None else False
+    bizhawk = bizhawk_box.isChecked() if bizhawk_box is not None else False
+    shortcuts = shortcut_box.isChecked() if shortcut_box is not None else False
 
-        return arch, bizhawk, shortcuts
-
-    if not _has_zenity():
-        # Fall back to enabling available options when zenity is unavailable.
-        shortcuts = show_archipelago or show_bizhawk
-        return show_archipelago, show_bizhawk, shortcuts
-
-    while True:
-        args = [
-            "--list",
-            "--checklist",
-            "--title=Download setup",
-            "--text=Select which components to download and configure.",
-            "--column=Install",
-            "--column=Component",
-        ]
-
-        if show_archipelago:
-            args.extend(["TRUE", "Archipelago"])
-        if show_bizhawk:
-            args.extend(["TRUE", "BizHawk (with Proton)"])
-        if show_archipelago or show_bizhawk:
-            args.extend(["TRUE", "Create Desktop shortcuts (Archipelago & BizHawk)"])
-
-        args.extend(["--ok-label=Download", "--cancel-label=Cancel", "--height=300"])
-
-        code, out = _run_zenity(args)
-
-        if code != 0:
-            raise RuntimeError("User cancelled setup selection.")
-
-        selections = [s.strip() for s in out.split("|") if s.strip()]
-        arch = "Archipelago" in selections
-        bizhawk = "BizHawk (with Proton)" in selections
-        shortcuts = "Create Desktop shortcuts (Archipelago & BizHawk)" in selections
-
-        return arch, bizhawk, shortcuts
+    return arch, bizhawk, shortcuts
 
 
 def _ensure_apworld_for_extension(ext: str) -> None:
@@ -401,12 +361,6 @@ def _ensure_apworld_for_extension(ext: str) -> None:
     if behavior:
         return
 
-    if not (_has_qt_dialogs() or _has_zenity()):
-        print(
-            f"[ap-bizhelper] No dialog backend available; skipping APWorld prompt for .{ext}."
-        )
-        return
-
     worlds_dir = Path.home() / ".local/share/Archipelago/worlds"
     text = (
         f"This looks like a new Archipelago patch extension (.{ext}).\n\n"
@@ -416,29 +370,22 @@ def _ensure_apworld_for_extension(ext: str) -> None:
     )
 
     apworld_path: Optional[Path]
-    if _has_qt_dialogs():
-        choice = _qt_question_dialog(
-            title=f"APWorld for .{ext}",
-            text=text,
-            ok_label="Select .apworld",
-            cancel_label="Skip",
-        )
-        if choice != "ok":
-            print(f"[ap-bizhelper] User skipped APWorld selection for .{ext}.")
-            return
-
-        apworld_path = _select_file_dialog(
-            title=f"Select .apworld file for .{ext}",
-            initial=Path.home(),
-            file_filter="*.apworld",
-            dialog_key="apworld",
-        )
-    else:
-        _zenity_error_dialog(
-            "PySide6 is required to select .apworld files.\n"
-            "Install PySide6 and rerun the setup to pick a .apworld file."
-        )
+    choice = _qt_question_dialog(
+        title=f"APWorld for .{ext}",
+        text=text,
+        ok_label="Select .apworld",
+        cancel_label="Skip",
+    )
+    if choice != "ok":
+        print(f"[ap-bizhelper] User skipped APWorld selection for .{ext}.")
         return
+
+    apworld_path = _select_file_dialog(
+        title=f"Select .apworld file for .{ext}",
+        initial=Path.home(),
+        file_filter="*.apworld",
+        dialog_key="apworld",
+    )
 
     if apworld_path is None:
         return
@@ -668,12 +615,6 @@ def _handle_extension_association(ext: str) -> None:
     if mode != "prompt":
         return
 
-    if not (_has_qt_dialogs() or _has_zenity()):
-        print(
-            f"[ap-bizhelper] No dialog backend available; skipping association prompt for .{ext}."
-        )
-        return
-
     prompt_text = (
         f"ap-bizhelper can handle .{ext} files automatically.\n\n"
         "Do you want to register ap-bizhelper as the default handler? If you accept,\n"
@@ -681,31 +622,13 @@ def _handle_extension_association(ext: str) -> None:
     )
 
     choice: Optional[str] = None
-    if _has_qt_dialogs():
-        choice = _qt_question_dialog(
-            title=f"Handle .{ext} with ap-bizhelper",
-            text=prompt_text,
-            ok_label="Register handler",
-            cancel_label="Not now",
-            extra_label="Disable prompts",
-        )
-    else:
-        code, out = _run_zenity(
-            [
-                "--question",
-                f"--title=Handle .{ext} with ap-bizhelper",
-                f"--text={prompt_text}",
-                "--ok-label=Register handler",
-                "--cancel-label=Not now",
-                "--extra-button=Disable prompts",
-            ]
-        )
-        if code == 0:
-            choice = "ok"
-        elif code == 1:
-            choice = "cancel"
-        elif code == 5:
-            choice = "extra"
+    choice = _qt_question_dialog(
+        title=f"Handle .{ext} with ap-bizhelper",
+        text=prompt_text,
+        ok_label="Register handler",
+        cancel_label="Not now",
+        extra_label="Disable prompts",
+    )
 
     apply_associations = False
     if choice == "ok":
@@ -1052,6 +975,10 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
 def main(argv: list[str]) -> int:
     with APP_LOGGER.context("main"):
         APP_LOGGER.log("Starting ap-bizhelper", include_context=True)
+        try:
+            _ensure_qt_available()
+        except RuntimeError:
+            return 1
         settings = load_settings()
 
         settings_dirty = False
