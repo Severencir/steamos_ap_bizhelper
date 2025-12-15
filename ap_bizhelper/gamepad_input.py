@@ -266,12 +266,23 @@ if QT_AVAILABLE:
                     self._handle_button(event.cbutton, pressed=False)
 
         def _target_widget(self) -> Optional[QtWidgets.QWidget]:
-            if self._dialog and self._dialog.isVisible():
-                focused = self._dialog.focusWidget()
-                if focused:
+            if not (self._dialog and self._dialog.isVisible()):
+                return None
+
+            focused = self._dialog.focusWidget()
+            if focused:
+                if isinstance(focused, QtWidgets.QAbstractItemView):
                     return focused
-                return self._dialog
-            return None
+
+                parent = focused.parent()
+                while parent:
+                    if isinstance(parent, QtWidgets.QAbstractItemView):
+                        return parent
+                    parent = parent.parent()
+
+                return focused
+
+            return self._dialog
 
         def _post_key(
             self,
@@ -303,22 +314,9 @@ if QT_AVAILABLE:
             ev = QtGui.QKeyEvent(event_type, qt_key, modifiers)
             QtWidgets.QApplication.postEvent(target, ev)
 
-        def _item_view_for_widget(
-            self, widget: Optional[QtWidgets.QWidget]
-        ) -> Optional[QtWidgets.QAbstractItemView]:
-            if widget is None:
-                return None
-
-            if isinstance(widget, QtWidgets.QAbstractItemView):
-                return widget
-
-            parent = widget.parent()
-            while parent:
-                if isinstance(parent, QtWidgets.QAbstractItemView):
-                    return parent
-                parent = parent.parent()
-
-            return None
+        def _ensure_file_view_selection(self, widget: QtWidgets.QWidget) -> None:
+            if not isinstance(widget, QtWidgets.QAbstractItemView):
+                return
 
         def _ensure_file_view_selection(self, widget: QtWidgets.QAbstractItemView) -> None:
             model = widget.model()
