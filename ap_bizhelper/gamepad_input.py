@@ -177,6 +177,7 @@ if QT_AVAILABLE:
             self._button_state: Dict[int, bool] = {}
             self._timer: Optional[QtCore.QTimer] = None
             self._active = False
+            self._last_target: Optional[QtWidgets.QWidget] = None
             self._init_sdl()
 
         @property
@@ -268,6 +269,10 @@ if QT_AVAILABLE:
         def _target_widget(self) -> Optional[QtWidgets.QWidget]:
             if self._dialog and self._dialog.isVisible():
                 focused = self._dialog.focusWidget()
+                if focused and focused is not self._dialog:
+                    return focused
+                if self._last_target:
+                    return self._last_target
                 if focused:
                     return focused
                 return self._dialog
@@ -354,7 +359,13 @@ if QT_AVAILABLE:
             if target is None:
                 return False
 
+            self._last_target = target
             target.setFocus()
+            if not target.hasFocus():
+                target.setFocus(QtCore.Qt.OtherFocusReason)
+            if not target.hasFocus():
+                # QFileDialog can keep focus on the dialog, so we fall back to the last target.
+                return False
             self._ensure_file_view_selection(target)
             return True
 
