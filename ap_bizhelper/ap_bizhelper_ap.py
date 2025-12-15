@@ -518,10 +518,28 @@ def _qt_file_dialog(
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+    gamepad_layer = None
+    try:
+        from . import gamepad_input
+
+        gamepad_layer = gamepad_input.install_gamepad_navigation(dialog)
+        if gamepad_layer is not None:
+            dialog.finished.connect(gamepad_layer.shutdown)
+    except Exception as exc:  # pragma: no cover - runtime safety net
+        APP_LOGGER.log(
+            f"Failed to enable gamepad navigation: {exc}",
+            level="WARNING",
+            location="gamepad",
+            include_context=True,
+        )
     if dialog.exec() == QtWidgets.QDialog.Accepted:
         selected_files = dialog.selectedFiles()
         if selected_files:
+            if gamepad_layer is not None:
+                gamepad_layer.shutdown()
             return Path(selected_files[0])
+    if gamepad_layer is not None:
+        gamepad_layer.shutdown()
     return None
 
 
