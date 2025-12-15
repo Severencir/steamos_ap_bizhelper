@@ -274,6 +274,11 @@ if QT_AVAILABLE:
             if target is None:
                 return
 
+            if pressed and qt_key in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right):
+                toggled = self._toggle_file_dialog_pane(go_right=qt_key == QtCore.Qt.Key_Right)
+                if toggled:
+                    return
+
             if qt_key in (
                 QtCore.Qt.Key_Left,
                 QtCore.Qt.Key_Right,
@@ -316,6 +321,32 @@ if QT_AVAILABLE:
                 widget.setCurrentIndex(first_index)
             except Exception:
                 pass
+
+        def _toggle_file_dialog_pane(self, *, go_right: bool) -> bool:
+            if not self._dialog:
+                return False
+
+            sidebar = self._dialog.findChild(QtWidgets.QAbstractItemView, "sidebar")
+            tree_view = self._dialog.findChild(QtWidgets.QTreeView, "treeView")
+            list_view = self._dialog.findChild(QtWidgets.QListView, "listView")
+
+            file_panes: list[QtWidgets.QAbstractItemView] = []
+            for candidate in (tree_view, list_view):
+                if candidate is not None and candidate.isVisible():
+                    file_panes.append(candidate)
+
+            target: Optional[QtWidgets.QWidget]
+            if go_right:
+                target = file_panes[0] if file_panes else None
+            else:
+                target = sidebar if sidebar and sidebar.isVisible() else None
+
+            if target is None:
+                return False
+
+            target.setFocus()
+            self._ensure_file_view_selection(target)
+            return True
 
         def _handle_axis(self, axis_event: SDL_ControllerAxisEvent) -> None:
             value = axis_event.value
