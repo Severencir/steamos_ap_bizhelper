@@ -16,6 +16,7 @@ from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
+from .gamepad_backend import start_gamepad_key_emitter
 from .logging_utils import get_app_logger
 
 # Paths mirror the bash script and the config helper.
@@ -120,52 +121,15 @@ def _attach_gamepad_dialog_support(
         return
 
     try:
-        from PySide6 import QtGamepad, QtWidgets
+        from PySide6 import QtCore, QtGui, QtWidgets
     except Exception as exc:  # pragma: no cover - import depends on platform Qt build
         APP_LOGGER.log(
-            f"QtGamepad unavailable; controller support disabled ({exc}).",
+            f"Qt imports unavailable; controller support disabled ({exc}).",
             level="WARNING",
             location=context,
             include_context=True,
         )
         return
-
-    manager = QtGamepad.QGamepadManager.instance()
-    connected = list(getattr(manager, "connectedGamepads", lambda: [])())
-    APP_LOGGER.log(
-        f"Gamepad manager connected ids: {connected}",
-        level="DEBUG",
-        location=context,
-        include_context=True,
-    )
-    if not connected:
-        APP_LOGGER.log(
-            "No connected gamepads detected; skipping dialog bindings.",
-            level="INFO",
-            location=context,
-            include_context=True,
-        )
-        return
-
-    try:
-        gamepad = QtGamepad.QGamepad(connected[0], dialog)
-    except Exception as exc:  # pragma: no cover - runtime device errors
-        APP_LOGGER.log(
-            f"Failed to initialize QGamepad for device {connected[0]}: {exc}",
-            level="ERROR",
-            location=context,
-            include_context=True,
-        )
-        return
-
-    APP_LOGGER.log(
-        "Attached gamepad to dialog: "
-        f"id={gamepad.deviceId()} name={gamepad.name()} "
-        f"manufacturer={gamepad.manufacturer()} profile={gamepad.profile()}",
-        level="INFO",
-        location=context,
-        include_context=True,
-    )
 
     def _click_button(target: Optional["QtWidgets.QAbstractButton"], label: str) -> None:
         if target is not None:
@@ -194,63 +158,76 @@ def _attach_gamepad_dialog_support(
             include_context=True,
         )
 
-    def _on_button(signal_name: str, pressed: bool, action) -> None:
+    class _GamepadKeyRouter(QtCore.QObject):
+        def eventFilter(self, watched, event):  # pragma: no cover - Qt runtime behavior
+            if event.type() == QtCore.QEvent.KeyPress:
+                key = event.key()
+                if key in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Up):
+                    _focus_next(True)
+                    return True
+                if key in (QtCore.Qt.Key_Right, QtCore.Qt.Key_Down):
+                    _focus_next(False)
+                    return True
+                if key in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Space):
+                    _click_button(ok_button, "OK")
+                    return True
+                if key in (QtCore.Qt.Key_Escape, QtCore.Qt.Key_Backspace):
+                    _click_button(cancel_button, "Cancel")
+                    return True
+            return super().eventFilter(watched, event)
+
+    key_router = _GamepadKeyRouter(dialog)
+    dialog.installEventFilter(key_router)
+    dialog._ap_bizhelper_key_router = key_router
+
+    def _emit_key(key: int) -> None:
+        if key == QtCore.Qt.Key_unknown:
+            return
+        QtWidgets.QApplication.postEvent(
+            dialog, QtGui.QKeyEvent(QtCore.QEvent.KeyPress, key, QtCore.Qt.NoModifier)
+        )
+        QtWidgets.QApplication.postEvent(
+            dialog, QtGui.QKeyEvent(QtCore.QEvent.KeyRelease, key, QtCore.Qt.NoModifier)
+        )
+
+    def _start_sdl_bridge() -> None:
         APP_LOGGER.log(
-            f"Gamepad event {signal_name}: pressed={pressed}",
-            level="DEBUG",
+            "Enabling SDL/evdev controller bridge for dialog navigation.",
+            level="INFO",
             location=context,
             include_context=True,
         )
-        if pressed:
-            action()
+        stop_fn = start_gamepad_key_emitter(
+            APP_LOGGER,
+            on_key=lambda code: _emit_key(
+                {
+                    1: QtCore.Qt.Key_Left,
+                    2: QtCore.Qt.Key_Right,
+                    3: QtCore.Qt.Key_Up,
+                    4: QtCore.Qt.Key_Down,
+                    5: QtCore.Qt.Key_Return,
+                    6: QtCore.Qt.Key_Escape,
+                }.get(code, QtCore.Qt.Key_unknown)
+            ),
+            context=context,
+        )
+        if stop_fn is None:
+            APP_LOGGER.log(
+                "SDL/evdev controller bridge unavailable; dialog will ignore gamepads.",
+                level="INFO",
+                location=context,
+                include_context=True,
+            )
+            return
 
-    try:
-        gamepad.buttonAChanged.connect(
-            lambda pressed: _on_button("A", pressed, lambda: _click_button(ok_button, "OK"))
-        )
-        gamepad.buttonBChanged.connect(
-            lambda pressed: _on_button(
-                "B", pressed, lambda: _click_button(cancel_button, "Cancel")
-            )
-        )
-        gamepad.buttonXChanged.connect(
-            lambda pressed: _on_button(
-                "X", pressed, lambda: _click_button(extra_button or ok_button, "Extra")
-            )
-        )
-        gamepad.buttonYChanged.connect(
-            lambda pressed: _on_button(
-                "Y", pressed, lambda: _click_button(extra_button or ok_button, "Extra")
-            )
-        )
-        gamepad.buttonStartChanged.connect(
-            lambda pressed: _on_button("Start", pressed, dialog.accept)
-        )
-        gamepad.buttonSelectChanged.connect(
-            lambda pressed: _on_button("Select", pressed, dialog.reject)
-        )
-        gamepad.buttonLeftChanged.connect(
-            lambda pressed: _on_button("DPadLeft", pressed, lambda: _focus_next(True))
-        )
-        gamepad.buttonRightChanged.connect(
-            lambda pressed: _on_button("DPadRight", pressed, lambda: _focus_next(False))
-        )
-        gamepad.buttonUpChanged.connect(
-            lambda pressed: _on_button("DPadUp", pressed, lambda: _focus_next(True))
-        )
-        gamepad.buttonDownChanged.connect(
-            lambda pressed: _on_button("DPadDown", pressed, lambda: _focus_next(False))
-        )
-    except Exception as exc:  # pragma: no cover - signal connections can be platform specific
-        APP_LOGGER.log(
-            f"Failed to attach one or more gamepad signals: {exc}",
-            level="ERROR",
-            location=context,
-            include_context=True,
-        )
+        def _stop_bridge(*_args) -> None:
+            stop_fn()
 
-    # Keep a reference alive for the lifetime of the dialog to avoid garbage collection
-    dialog._ap_bizhelper_gamepad = gamepad
+        dialog.finished.connect(_stop_bridge)
+        dialog.destroyed.connect(_stop_bridge)
+        dialog._ap_bizhelper_sdl_gamepad = stop_fn
+
+    _start_sdl_bridge()
 
 
 def _coerce_font_setting(
