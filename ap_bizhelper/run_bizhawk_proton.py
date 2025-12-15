@@ -12,7 +12,11 @@ except ImportError:  # pragma: no cover - fallback when executed outside the pac
     from .ap_bizhelper_config import load_settings as _load_shared_settings
 
 from ap_bizhelper.logging_utils import RUNNER_LOG_ENV, create_component_logger
-from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app, _ensure_qt_available
+from ap_bizhelper.ap_bizhelper_ap import (
+    _enable_dialog_gamepad,
+    _ensure_qt_app,
+    _ensure_qt_available,
+)
 
 
 def _load_settings():
@@ -30,6 +34,11 @@ def error_dialog(msg: str) -> None:
     box.setIcon(QtWidgets.QMessageBox.Critical)
     box.setWindowTitle("BizHawk runner error")
     box.setText(msg)
+    ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
+    box.setDefaultButton(QtWidgets.QMessageBox.Ok)
+    _enable_dialog_gamepad(
+        box, affirmative=ok_button, negative=ok_button, default=ok_button
+    )
     box.exec()
 
 

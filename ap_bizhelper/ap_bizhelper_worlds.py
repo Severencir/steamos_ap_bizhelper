@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from .ap_bizhelper_ap import (
+    APP_LOGGER,
     _qt_question_dialog,
     _select_file_dialog,
     choose_install_action,
@@ -187,7 +188,11 @@ def _select_custom_apworld(
             WORLD_DIR.mkdir(parents=True, exist_ok=True)
             dest = WORLD_DIR / apworld_path.name
             shutil.copy2(apworld_path, dest)
-            info_dialog(f"Copied {apworld_path.name} to:\n{WORLD_DIR}")
+            APP_LOGGER.log(
+                f"Copied {apworld_path.name} to {WORLD_DIR}",
+                include_context=True,
+                location="apworld-copy",
+            )
             if normalized:
                 existing = playable_cache.get(normalized, {})
                 _update_playable_cache(

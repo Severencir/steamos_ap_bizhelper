@@ -360,7 +360,7 @@ class ZenityShim:
 
     def _handle_message(self, argv: Sequence[str], *, level: str) -> int:
         from PySide6 import QtWidgets  # type: ignore
-        from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app
+        from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
         _ensure_qt_app()
         box = QtWidgets.QMessageBox()
@@ -371,6 +371,11 @@ class ZenityShim:
             box.setIcon(QtWidgets.QMessageBox.Information)
             box.setWindowTitle(self._extract_option(argv, "--title=") or "Information")
         box.setText(self._extract_option(argv, "--text=") or "")
+        ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
+        box.setDefaultButton(QtWidgets.QMessageBox.Ok)
+        _enable_dialog_gamepad(
+            box, affirmative=ok_button, negative=ok_button, default=ok_button
+        )
         box.exec()
         self.logger.log(
             f"Displayed {level} message dialog with title={box.windowTitle()!r}",
@@ -399,7 +404,7 @@ class ZenityShim:
 
     def _handle_checklist(self, argv: Sequence[str]) -> int:
         from PySide6 import QtWidgets  # type: ignore
-        from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app
+        from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
         items = self._parse_checklist_items(argv)
         if items is None:
@@ -437,15 +442,24 @@ class ZenityShim:
         scroll.setWidget(container)
         layout.addWidget(scroll)
 
-        buttons = QtWidgets.QDialogButtonBox()
         ok_label = self._extract_option(argv, "--ok-label=") or "OK"
         cancel_label = self._extract_option(argv, "--cancel-label=") or "Cancel"
-        ok_button = buttons.addButton(ok_label, QtWidgets.QDialogButtonBox.AcceptRole)
-        cancel_button = buttons.addButton(cancel_label, QtWidgets.QDialogButtonBox.RejectRole)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
+        button_row = QtWidgets.QHBoxLayout()
+        button_row.addStretch()
+        ok_button = QtWidgets.QPushButton(ok_label)
         ok_button.setDefault(True)
+        button_row.addWidget(ok_button)
+        cancel_button = QtWidgets.QPushButton(cancel_label)
+        button_row.addWidget(cancel_button)
+        button_row.addStretch()
+        layout.addLayout(button_row)
+
+        ok_button.clicked.connect(dialog.accept)
+        cancel_button.clicked.connect(dialog.reject)
+
+        _enable_dialog_gamepad(
+            dialog, affirmative=ok_button, negative=cancel_button, default=ok_button
+        )
         dialog.setLayout(layout)
 
         result = dialog.exec()
@@ -632,7 +646,7 @@ class KDialogShim:
 
     def _handle_message(self, argv: Sequence[str]) -> int:
         from PySide6 import QtWidgets  # type: ignore
-        from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app
+        from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
         _ensure_qt_app()
         box = QtWidgets.QMessageBox()
@@ -648,6 +662,11 @@ class KDialogShim:
             or self._extract_value(argv, "--error")
             or self._extract_value(argv, "--sorry")
             or ""
+        )
+        ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
+        box.setDefaultButton(QtWidgets.QMessageBox.Ok)
+        _enable_dialog_gamepad(
+            box, affirmative=ok_button, negative=ok_button, default=ok_button
         )
         box.exec()
         self.logger.log(
