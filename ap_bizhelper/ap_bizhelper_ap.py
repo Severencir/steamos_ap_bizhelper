@@ -450,6 +450,38 @@ def _configure_file_view_columns(
         _save_settings(settings_obj)
 
 
+def _focus_file_view(dialog: "QtWidgets.QFileDialog") -> None:
+    from PySide6 import QtCore, QtWidgets
+
+    tree_view = dialog.findChild(QtWidgets.QTreeView, "treeView")
+    if tree_view is None:
+        return
+
+    selection_model = tree_view.selectionModel()
+    model = tree_view.model()
+    if model is None or selection_model is None:
+        return
+
+    try:
+        current_index = tree_view.currentIndex()
+        if not current_index.isValid() and model.rowCount() > 0:
+            first_index = model.index(0, 0)
+            if first_index.isValid():
+                tree_view.setCurrentIndex(first_index)
+                selection_model.select(
+                    first_index,
+                    QtCore.QItemSelectionModel.Select
+                    | QtCore.QItemSelectionModel.Rows,
+                )
+    except Exception:
+        pass
+
+    try:
+        tree_view.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+    except Exception:
+        pass
+
+
 def _qt_file_dialog(
     *,
     title: str,
@@ -524,6 +556,7 @@ def _qt_file_dialog(
     ):
         dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
     _configure_file_view_columns(dialog, settings_obj)
+    _focus_file_view(dialog)
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
