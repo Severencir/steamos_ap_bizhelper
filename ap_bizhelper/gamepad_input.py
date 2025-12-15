@@ -317,6 +317,19 @@ if QT_AVAILABLE:
             if target is None:
                 return
 
+            if pressed and qt_key in (
+                QtCore.Qt.Key_Left,
+                QtCore.Qt.Key_Right,
+                QtCore.Qt.Key_Up,
+                QtCore.Qt.Key_Down,
+            ):
+                if self._has_multiple_buttons() and not self._is_file_dialog():
+                    moved = self._move_between_buttons(
+                        go_next=qt_key in (QtCore.Qt.Key_Right, QtCore.Qt.Key_Down)
+                    )
+                    if moved:
+                        return
+
             if pressed and qt_key in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right):
                 toggled = self._toggle_file_dialog_pane(go_right=qt_key == QtCore.Qt.Key_Right)
                 if toggled:
@@ -446,7 +459,6 @@ if QT_AVAILABLE:
             focus_map: Dict[int, bool] = {
                 SDL_CONTROLLER_BUTTON_LEFTSHOULDER: False,
                 SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: True,
-                SDL_CONTROLLER_BUTTON_X: True,
             }
             shortcut_map: Dict[int, tuple[int, QtCore.Qt.KeyboardModifiers]] = {
                 SDL_CONTROLLER_BUTTON_Y: (QtCore.Qt.Key_Up, QtCore.Qt.AltModifier),
@@ -476,6 +488,13 @@ if QT_AVAILABLE:
 
             action_buttons = self._action_buttons
             if button == SDL_CONTROLLER_BUTTON_A:
+                target = self._target_widget()
+                if isinstance(target, QtWidgets.QCheckBox):
+                    try:
+                        target.animateClick()
+                        return
+                    except Exception:
+                        pass
                 self._post_key(QtCore.Qt.Key_Return, True)
                 return
             if button == SDL_CONTROLLER_BUTTON_B:
@@ -512,6 +531,50 @@ if QT_AVAILABLE:
                 target.focusNextPrevChild(True)
             else:
                 target.focusNextPrevChild(False)
+
+        def _button_targets(self) -> list[QtWidgets.QAbstractButton]:
+            buttons: list[QtWidgets.QAbstractButton] = []
+            for key in ("affirmative", "special", "negative", "default"):
+                button = self._action_buttons.get(key)
+                if button is not None and button not in buttons:
+                    buttons.append(button)
+            return buttons
+
+        def _has_multiple_buttons(self) -> bool:
+            return len(self._button_targets()) > 1
+
+        def _move_between_buttons(self, *, go_next: bool) -> bool:
+            buttons = self._button_targets()
+            if len(buttons) < 2:
+                return False
+
+            focused = self._dialog.focusWidget() if self._dialog else None
+            try:
+                current_index = buttons.index(focused) if focused is not None else -1
+            except ValueError:
+                current_index = -1
+
+            if current_index < 0:
+                target_index = 0
+            else:
+                step = 1 if go_next else -1
+                target_index = max(0, min(len(buttons) - 1, current_index + step))
+
+            target_button = buttons[target_index]
+            try:
+                target_button.setFocus()
+                self._last_target = target_button
+                return True
+            except Exception:
+                return False
+
+        def _is_file_dialog(self) -> bool:
+            try:
+                from PySide6 import QtWidgets as _QtWidgets  # type: ignore
+
+                return isinstance(self._dialog, _QtWidgets.QFileDialog)
+            except Exception:
+                return False
 
 else:  # pragma: no cover - PySide6 not available in environment
 

@@ -478,7 +478,7 @@ class ZenityShim:
 
     def _handle_progress(self, argv: Sequence[str]) -> int:
         from PySide6 import QtWidgets  # type: ignore
-        from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app
+        from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
         _ensure_qt_app()
         dialog = QtWidgets.QProgressDialog()
@@ -490,6 +490,14 @@ class ZenityShim:
         dialog.setAutoClose(True)
         dialog.setAutoReset(True)
         dialog.show()
+
+        cancel_button = dialog.findChild(QtWidgets.QPushButton)
+        _enable_dialog_gamepad(
+            dialog,
+            affirmative=cancel_button,
+            negative=cancel_button,
+            default=cancel_button,
+        )
 
         app = QtWidgets.QApplication.instance()
         if app is None:
