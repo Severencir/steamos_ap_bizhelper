@@ -274,9 +274,48 @@ if QT_AVAILABLE:
             if target is None:
                 return
 
+            if qt_key in (
+                QtCore.Qt.Key_Left,
+                QtCore.Qt.Key_Right,
+                QtCore.Qt.Key_Up,
+                QtCore.Qt.Key_Down,
+            ):
+                self._ensure_file_view_selection(target)
+
             event_type = QtCore.QEvent.KeyPress if pressed else QtCore.QEvent.KeyRelease
             ev = QtGui.QKeyEvent(event_type, qt_key, QtCore.Qt.NoModifier)
             QtWidgets.QApplication.postEvent(target, ev)
+
+        def _ensure_file_view_selection(self, widget: QtWidgets.QWidget) -> None:
+            if not isinstance(widget, (QtWidgets.QListView, QtWidgets.QTreeView)):
+                return
+
+            model = widget.model()
+            selection_model = widget.selectionModel()
+            if model is None or selection_model is None:
+                return
+
+            if selection_model.hasSelection():
+                return
+
+            root_index = widget.rootIndex()
+            if model.rowCount(root_index) <= 0:
+                return
+
+            first_index = model.index(0, 0, root_index)
+            if not first_index.isValid():
+                return
+
+            selection_model.select(
+                first_index,
+                QtCore.QItemSelectionModel.Clear
+                | QtCore.QItemSelectionModel.Select
+                | QtCore.QItemSelectionModel.Current,
+            )
+            try:
+                widget.setCurrentIndex(first_index)
+            except Exception:
+                pass
 
         def _handle_axis(self, axis_event: SDL_ControllerAxisEvent) -> None:
             value = axis_event.value
