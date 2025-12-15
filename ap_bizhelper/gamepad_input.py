@@ -265,11 +265,38 @@ if QT_AVAILABLE:
                 elif etype == SDL_CONTROLLERBUTTONUP:
                     self._handle_button(event.cbutton, pressed=False)
 
+        def _navigation_views(self) -> tuple[Optional[QtWidgets.QAbstractItemView], list[QtWidgets.QAbstractItemView]]:
+            if not self._dialog:
+                return None, []
+
+            sidebar = self._dialog.findChild(QtWidgets.QAbstractItemView, "sidebar")
+            tree_view = self._dialog.findChild(QtWidgets.QTreeView, "treeView")
+            list_view = self._dialog.findChild(QtWidgets.QListView, "listView")
+
+            file_panes: list[QtWidgets.QAbstractItemView] = []
+            for candidate in (tree_view, list_view):
+                if candidate is not None and candidate.isVisible():
+                    file_panes.append(candidate)
+
+            visible_sidebar: Optional[QtWidgets.QAbstractItemView]
+            if sidebar is not None and sidebar.isVisible():
+                visible_sidebar = sidebar
+            else:
+                visible_sidebar = None
+
+            return visible_sidebar, file_panes
+
         def _target_widget(self) -> Optional[QtWidgets.QWidget]:
             if self._dialog and self._dialog.isVisible():
                 focused = self._dialog.focusWidget()
                 if focused:
                     return focused
+
+                sidebar, file_panes = self._navigation_views()
+                if sidebar:
+                    return sidebar
+                if file_panes:
+                    return file_panes[0]
                 return self._dialog
             return None
 
@@ -284,7 +311,17 @@ if QT_AVAILABLE:
             if target is None:
                 return
 
-            if pressed and qt_key in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right):
+            try:
+                if hasattr(target, "hasFocus") and not target.hasFocus():
+                    target.setFocus()
+            except Exception:
+                pass
+
+            if (
+                pressed
+                and modifiers == QtCore.Qt.NoModifier
+                and qt_key in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right)
+            ):
                 toggled = self._toggle_file_dialog_pane(go_right=qt_key == QtCore.Qt.Key_Right)
                 if toggled:
                     return
@@ -336,14 +373,7 @@ if QT_AVAILABLE:
             if not self._dialog:
                 return False
 
-            sidebar = self._dialog.findChild(QtWidgets.QAbstractItemView, "sidebar")
-            tree_view = self._dialog.findChild(QtWidgets.QTreeView, "treeView")
-            list_view = self._dialog.findChild(QtWidgets.QListView, "listView")
-
-            file_panes: list[QtWidgets.QAbstractItemView] = []
-            for candidate in (tree_view, list_view):
-                if candidate is not None and candidate.isVisible():
-                    file_panes.append(candidate)
+            sidebar, file_panes = self._navigation_views()
 
             target: Optional[QtWidgets.QWidget]
             if go_right:
