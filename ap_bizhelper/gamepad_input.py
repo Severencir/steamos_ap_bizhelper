@@ -286,19 +286,28 @@ if QT_AVAILABLE:
 
             return visible_sidebar, file_panes
 
-        def _target_widget(self) -> Optional[QtWidgets.QWidget]:
-            if self._dialog and self._dialog.isVisible():
-                focused = self._dialog.focusWidget()
-                if focused:
-                    return focused
+        def _target_widget(self, *, prefer_navigation: bool = False) -> Optional[QtWidgets.QWidget]:
+            if not self._dialog or not self._dialog.isVisible():
+                return None
 
-                sidebar, file_panes = self._navigation_views()
+            focused = self._dialog.focusWidget()
+            sidebar, file_panes = self._navigation_views()
+
+            if prefer_navigation:
+                if focused in ([sidebar] if sidebar else []) or focused in file_panes:
+                    return focused
                 if sidebar:
                     return sidebar
                 if file_panes:
                     return file_panes[0]
-                return self._dialog
-            return None
+
+            if focused:
+                return focused
+            if sidebar:
+                return sidebar
+            if file_panes:
+                return file_panes[0]
+            return self._dialog
 
         def _post_key(
             self,
@@ -307,7 +316,15 @@ if QT_AVAILABLE:
             *,
             modifiers: QtCore.Qt.KeyboardModifiers = QtCore.Qt.NoModifier,
         ) -> None:
-            target = self._target_widget()
+            target = self._target_widget(
+                prefer_navigation=qt_key
+                in (
+                    QtCore.Qt.Key_Left,
+                    QtCore.Qt.Key_Right,
+                    QtCore.Qt.Key_Up,
+                    QtCore.Qt.Key_Down,
+                )
+            )
             if target is None:
                 return
 
