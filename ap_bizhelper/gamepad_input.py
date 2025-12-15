@@ -49,6 +49,8 @@ SDL_CONTROLLERDEVICEREMOVED = 0x654
 
 SDL_CONTROLLER_AXIS_LEFTX = 0
 SDL_CONTROLLER_AXIS_LEFTY = 1
+SDL_CONTROLLER_AXIS_TRIGGERLEFT = 4
+SDL_CONTROLLER_AXIS_TRIGGERRIGHT = 5
 
 SDL_CONTROLLER_BUTTON_A = 0
 SDL_CONTROLLER_BUTTON_B = 1
@@ -169,6 +171,8 @@ if QT_AVAILABLE:
                 "right": False,
                 "up": False,
                 "down": False,
+                "ltrigger": False,
+                "rtrigger": False,
             }
             self._button_state: Dict[int, bool] = {}
             self._timer: Optional[QtCore.QTimer] = None
@@ -269,7 +273,13 @@ if QT_AVAILABLE:
                 return self._dialog
             return None
 
-        def _post_key(self, qt_key: int, pressed: bool) -> None:
+        def _post_key(
+            self,
+            qt_key: int,
+            pressed: bool,
+            *,
+            modifiers: QtCore.Qt.KeyboardModifiers = QtCore.Qt.NoModifier,
+        ) -> None:
             target = self._target_widget()
             if target is None:
                 return
@@ -288,7 +298,7 @@ if QT_AVAILABLE:
                 self._ensure_file_view_selection(target)
 
             event_type = QtCore.QEvent.KeyPress if pressed else QtCore.QEvent.KeyRelease
-            ev = QtGui.QKeyEvent(event_type, qt_key, QtCore.Qt.NoModifier)
+            ev = QtGui.QKeyEvent(event_type, qt_key, modifiers)
             QtWidgets.QApplication.postEvent(target, ev)
 
         def _ensure_file_view_selection(self, widget: QtWidgets.QWidget) -> None:
@@ -350,6 +360,20 @@ if QT_AVAILABLE:
 
         def _handle_axis(self, axis_event: SDL_ControllerAxisEvent) -> None:
             value = axis_event.value
+
+            trigger_map = {
+                SDL_CONTROLLER_AXIS_TRIGGERLEFT: ("ltrigger", QtCore.Qt.Key_Left),
+                SDL_CONTROLLER_AXIS_TRIGGERRIGHT: ("rtrigger", QtCore.Qt.Key_Right),
+            }
+
+            if axis_event.axis in trigger_map:
+                state_key, qt_key = trigger_map[axis_event.axis]
+                active = value >= self.AXIS_THRESHOLD
+                if self._axis_state.get(state_key) != active:
+                    self._axis_state[state_key] = active
+                    self._post_key(qt_key, active, modifiers=QtCore.Qt.AltModifier)
+                return
+
             direction: Optional[str] = None
             if axis_event.axis == SDL_CONTROLLER_AXIS_LEFTX:
                 if value <= -self.AXIS_THRESHOLD:
@@ -382,7 +406,9 @@ if QT_AVAILABLE:
                 SDL_CONTROLLER_BUTTON_LEFTSHOULDER: False,
                 SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: True,
                 SDL_CONTROLLER_BUTTON_X: True,
-                SDL_CONTROLLER_BUTTON_Y: False,
+            }
+            shortcut_map: Dict[int, tuple[int, QtCore.Qt.KeyboardModifiers]] = {
+                SDL_CONTROLLER_BUTTON_Y: (QtCore.Qt.Key_Up, QtCore.Qt.AltModifier),
             }
             key_map: Dict[int, int] = {
                 SDL_CONTROLLER_BUTTON_DPAD_UP: QtCore.Qt.Key_Up,
@@ -397,6 +423,11 @@ if QT_AVAILABLE:
 
             if button in focus_map and pressed:
                 self._change_focus(next_focus=focus_map[button])
+                return
+
+            if button in shortcut_map:
+                key, modifiers = shortcut_map[button]
+                self._post_key(key, pressed, modifiers=modifiers)
                 return
 
             if button in key_map:
