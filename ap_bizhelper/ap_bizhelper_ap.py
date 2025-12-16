@@ -287,6 +287,7 @@ def _qt_question_dialog(
     button_row.addStretch()
     ok_button = QtWidgets.QPushButton(ok_label)
     ok_button.setDefault(True)
+    ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
     button_row.addWidget(ok_button)
     extra_button = None
     if extra_label:
@@ -304,7 +305,6 @@ def _qt_question_dialog(
         extra_button.clicked.connect(lambda: dialog.done(extra_result))
 
     dialog.setLayout(layout)
-    dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
     _enable_dialog_gamepad(
         dialog,
         affirmative=ok_button,
@@ -379,7 +379,7 @@ def _sidebar_urls() -> list["QtCore.QUrl"]:
 def _widen_file_dialog_sidebar(
     dialog: "QtWidgets.QFileDialog", settings_obj: Dict[str, Any]
 ) -> None:
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 
     splitter = dialog.findChild(QtWidgets.QSplitter)
     if splitter is None:
@@ -650,7 +650,7 @@ def _select_file_dialog(
 def info_dialog(message: str) -> None:
     _ensure_qt_available()
     APP_LOGGER.log_dialog("Information", message, backend="qt", location="info-dialog")
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 
     _ensure_qt_app()
     box = QtWidgets.QMessageBox()
@@ -659,6 +659,7 @@ def info_dialog(message: str) -> None:
     box.setText(message)
     ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
     box.setDefaultButton(QtWidgets.QMessageBox.Ok)
+    ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
     _enable_dialog_gamepad(
         box, affirmative=ok_button, negative=ok_button, default=ok_button
     )
@@ -670,7 +671,7 @@ def error_dialog(message: str) -> None:
     APP_LOGGER.log_dialog(
         "Error", message, level="ERROR", backend="qt", location="error-dialog"
     )
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 
     _ensure_qt_app()
     box = QtWidgets.QMessageBox()
@@ -679,6 +680,7 @@ def error_dialog(message: str) -> None:
     box.setText(message)
     ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
     box.setDefaultButton(QtWidgets.QMessageBox.Ok)
+    ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
     _enable_dialog_gamepad(
         box, affirmative=ok_button, negative=ok_button, default=ok_button
     )
