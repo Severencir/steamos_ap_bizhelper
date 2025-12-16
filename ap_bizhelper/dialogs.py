@@ -619,6 +619,10 @@ def checklist_dialog(
     )
     dialog.setLayout(layout)
 
+    if checkboxes:
+        dialog.setTabOrder(ok_button, cancel_button)
+        dialog.setTabOrder(cancel_button, checkboxes[0])
+
     result = dialog.exec()
     if result != QtWidgets.QDialog.Accepted:
         return None
