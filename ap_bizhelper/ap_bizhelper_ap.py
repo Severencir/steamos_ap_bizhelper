@@ -47,7 +47,11 @@ _QT_FILE_DIALOG_SIDEBAR_WIDTH = 400
 _QT_FILE_DIALOG_COLUMN_SCALE = 1.8
 _QT_FILE_DIALOG_DEFAULT_SHRINK = 0.95
 _QT_IMPORT_ERROR: Optional[BaseException] = None
-_DEFAULT_SETTINGS = dialogs.DIALOG_DEFAULTS
+_DEFAULT_SETTINGS: Dict[str, Any] = {
+    # Base font scaling used by the new dialogs helpers.
+    "QT_FONT_SCALE": 1.4,
+    "QT_MIN_POINT_SIZE": 12,
+}
 
 
 def _ensure_dirs() -> None:
@@ -581,16 +585,15 @@ def _select_file_dialog(
     return selection
 
 
-def info_dialog(message: str) -> None:
-    dialogs.info_dialog(message, logger=APP_LOGGER)
+def info_dialog(message: str, *, title: str = "ap-bizhelper") -> None:
+    dialogs.info_dialog(title=title, text=message)
 
 
-def error_dialog(message: str) -> None:
-    dialogs.error_dialog(message, logger=APP_LOGGER)
+def error_dialog(message: str, *, title: str = "ap-bizhelper") -> None:
+    dialogs.error_dialog(title=title, text=message)
 
 
 # Centralize dialog helpers through the shared module.
-_qt_question_dialog = dialogs.question_dialog
 _qt_file_dialog = dialogs.file_dialog
 _enable_dialog_gamepad = dialogs.enable_dialog_gamepad
 _preferred_start_dir = dialogs.preferred_start_dir

@@ -12,15 +12,13 @@ from urllib.parse import quote, unquote, urlparse
 from pathlib import Path
 from typing import Optional, Set, Tuple
 
-from .ap_bizhelper_ap import AP_APPIMAGE_DEFAULT, ensure_appimage
+from . import dialogs
+from .ap_bizhelper_ap import AP_APPIMAGE_DEFAULT, _qt_question_dialog, ensure_appimage
 from .dialogs import (
     enable_dialog_gamepad as _enable_dialog_gamepad,
     ensure_qt_app as _ensure_qt_app,
     ensure_qt_available as _ensure_qt_available,
-    question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
-    error_dialog,
-    info_dialog,
 )
 from .ap_bizhelper_bizhawk import ensure_bizhawk_and_proton
 from .ap_bizhelper_config import (
@@ -40,6 +38,14 @@ from .ap_bizhelper_worlds import ensure_apworld_for_patch
 
 
 APP_LOGGER = get_app_logger()
+
+
+def info_dialog(message: str, *, title: str = "ap-bizhelper") -> None:
+    dialogs.info_dialog(title=title, text=message)
+
+
+def error_dialog(message: str, *, title: str = "ap-bizhelper") -> None:
+    dialogs.error_dialog(title=title, text=message)
 
 
 def _steam_game_id_from_env() -> Optional[str]:

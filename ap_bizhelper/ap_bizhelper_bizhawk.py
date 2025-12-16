@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.resources as resources
 import json
 import os
 import re
-import importlib.resources as resources
 import shutil
 import subprocess
 import sys
@@ -15,13 +15,9 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from . import dialogs
 from .ap_bizhelper_ap import download_with_progress
-from .dialogs import (
-    question_dialog as _qt_question_dialog,
-    select_file_dialog as _select_file_dialog,
-    error_dialog,
-    info_dialog,
-)
+from .dialogs import question_dialog as _qt_question_dialog, select_file_dialog as _select_file_dialog
 from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
@@ -57,6 +53,14 @@ def _load_settings() -> Dict[str, Any]:
 def _save_settings(settings: Dict[str, Any]) -> None:
     _ensure_dirs()
     _save_shared_settings(settings)
+
+
+def info_dialog(message: str, *, title: str = "BizHawk setup") -> None:
+    dialogs.info_dialog(title=title, text=message)
+
+
+def error_dialog(message: str, *, title: str = "BizHawk setup") -> None:
+    dialogs.error_dialog(title=title, text=message)
 
 
 def _github_latest_bizhawk() -> Tuple[str, str]:

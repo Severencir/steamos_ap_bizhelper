@@ -12,11 +12,11 @@ except ImportError:  # pragma: no cover - fallback when executed outside the pac
     from .ap_bizhelper_config import load_settings as _load_shared_settings
 
 from ap_bizhelper.logging_utils import RUNNER_LOG_ENV, create_component_logger
+from ap_bizhelper import dialogs
 from ap_bizhelper.dialogs import (
     enable_dialog_gamepad as _enable_dialog_gamepad,
     ensure_qt_app as _ensure_qt_app,
     ensure_qt_available as _ensure_qt_available,
-    error_dialog as _shared_error_dialog,
 )
 
 
@@ -27,7 +27,7 @@ def _load_settings():
 def error_dialog(msg: str) -> None:
     """Show an error using PySide6 message boxes."""
     RUNNER_LOGGER.log(f"Error dialog requested: {msg}", level="ERROR", include_context=True)
-    _shared_error_dialog(msg, title="BizHawk runner error", logger=RUNNER_LOGGER)
+    dialogs.error_dialog(title="BizHawk runner error", text=msg)
 
 
 _SETTINGS_CACHE = None
