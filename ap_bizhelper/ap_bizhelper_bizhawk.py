@@ -15,10 +15,10 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .ap_bizhelper_ap import (
-    _qt_question_dialog,
-    _select_file_dialog,
-    download_with_progress,
+from .ap_bizhelper_ap import download_with_progress
+from .dialogs import (
+    question_dialog as _qt_question_dialog,
+    select_file_dialog as _select_file_dialog,
     error_dialog,
     info_dialog,
 )
