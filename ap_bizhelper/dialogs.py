@@ -611,6 +611,13 @@ def checklist_dialog(
     button_row.addStretch()
     layout.addLayout(button_row)
 
+    def _prime_focus() -> None:
+        ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+        ok_button.pressed.disconnect(_prime_focus)
+        cancel_button.pressed.disconnect(_prime_focus)
+
+    ok_button.pressed.connect(_prime_focus)
+    cancel_button.pressed.connect(_prime_focus)
     ok_button.clicked.connect(dialog.accept)
     cancel_button.clicked.connect(dialog.reject)
 
