@@ -544,7 +544,26 @@ if QT_AVAILABLE:
             checkboxes = [
                 cb for cb in self._dialog.findChildren(QtWidgets.QCheckBox) if cb.isVisible()
             ]
+            for checkbox in checkboxes:
+                self._ensure_checkbox_focus_style(checkbox)
             return checkboxes
+
+        def _ensure_checkbox_focus_style(self, checkbox: QtWidgets.QCheckBox) -> None:
+            style = checkbox.styleSheet()
+            marker = "/* ap-bizhelper-checkbox-focus */"
+            if marker in style:
+                return
+
+            focus_style = (
+                f"{style}\n"
+                f"{marker}\n"
+                "QCheckBox:focus {"
+                "outline: 2px solid #3daee9;"
+                "outline-offset: 2px;"
+                "border-radius: 4px;"
+                "}\n"
+            )
+            checkbox.setStyleSheet(focus_style)
 
         def _has_multiple_buttons(self) -> bool:
             return len(self._button_targets()) > 1
@@ -590,7 +609,11 @@ if QT_AVAILABLE:
                 target_index = 0 if go_next else len(checkboxes) - 1
             else:
                 step = 1 if go_next else -1
-                target_index = max(0, min(len(checkboxes) - 1, current_index + step))
+                target_index = current_index + step
+
+                # Allow button navigation when attempting to move past the edges.
+                if target_index < 0 or target_index >= len(checkboxes):
+                    return False
 
             try:
                 target_cb = checkboxes[target_index]
