@@ -421,11 +421,18 @@ class ZenityShim:
                 pass
 
         layout = QtWidgets.QVBoxLayout(dialog)
-        text = self._extract_option(argv, "--text=")
-        if text:
-            label = QtWidgets.QLabel(text)
-            label.setWordWrap(True)
-            layout.addWidget(label)
+
+        ok_label = self._extract_option(argv, "--ok-label=") or "OK"
+        cancel_label = self._extract_option(argv, "--cancel-label=") or "Cancel"
+        button_row = QtWidgets.QHBoxLayout()
+        button_row.addStretch()
+        ok_button = QtWidgets.QPushButton(ok_label)
+        ok_button.setDefault(True)
+        button_row.addWidget(ok_button)
+        cancel_button = QtWidgets.QPushButton(cancel_label)
+        button_row.addWidget(cancel_button)
+        button_row.addStretch()
+        layout.addLayout(button_row)
 
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
@@ -440,19 +447,14 @@ class ZenityShim:
             checkboxes.append(cb)
         container_layout.addStretch()
         scroll.setWidget(container)
-        layout.addWidget(scroll)
-
-        ok_label = self._extract_option(argv, "--ok-label=") or "OK"
-        cancel_label = self._extract_option(argv, "--cancel-label=") or "Cancel"
-        button_row = QtWidgets.QHBoxLayout()
-        button_row.addStretch()
-        ok_button = QtWidgets.QPushButton(ok_label)
-        ok_button.setDefault(True)
-        button_row.addWidget(ok_button)
-        cancel_button = QtWidgets.QPushButton(cancel_label)
-        button_row.addWidget(cancel_button)
-        button_row.addStretch()
-        layout.addLayout(button_row)
+        insert_position = 0
+        text = self._extract_option(argv, "--text=")
+        if text:
+            label = QtWidgets.QLabel(text)
+            label.setWordWrap(True)
+            layout.insertWidget(insert_position, label)
+            insert_position += 1
+        layout.insertWidget(insert_position, scroll)
 
         ok_button.clicked.connect(dialog.accept)
         cancel_button.clicked.connect(dialog.reject)
