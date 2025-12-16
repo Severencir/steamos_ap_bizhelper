@@ -325,14 +325,10 @@ if QT_AVAILABLE:
             ):
                 go_next = qt_key in (QtCore.Qt.Key_Right, QtCore.Qt.Key_Down)
 
-                if self._checkbox_targets() and self._move_between_checkboxes(
+                if not self._is_file_dialog() and self._move_between_controls(
                     go_next=go_next, origin=target
                 ):
                     return
-
-                if self._has_multiple_buttons() and not self._is_file_dialog():
-                    if self._move_between_buttons(go_next=go_next):
-                        return
 
             if pressed and qt_key in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right):
                 toggled = self._toggle_file_dialog_pane(go_right=qt_key == QtCore.Qt.Key_Right)
@@ -533,9 +529,23 @@ if QT_AVAILABLE:
             buttons: list[QtWidgets.QAbstractButton] = []
             for key in ("affirmative", "special", "negative", "default"):
                 button = self._action_buttons.get(key)
-                if button is not None and button not in buttons:
+                if (
+                    button is not None
+                    and button not in buttons
+                    and (not hasattr(button, "isVisible") or button.isVisible())
+                ):
                     buttons.append(button)
             return buttons
+
+        def _navigation_targets(self) -> list[QtWidgets.QWidget]:
+            buttons = self._button_targets()
+            checkboxes = self._checkbox_targets()
+
+            widgets: list[QtWidgets.QWidget] = []
+            for widget in (*buttons, *checkboxes):
+                if widget not in widgets:
+                    widgets.append(widget)
+            return widgets
 
         def _checkbox_targets(self) -> list[QtWidgets.QCheckBox]:
             if not self._dialog:
@@ -565,60 +575,28 @@ if QT_AVAILABLE:
             )
             checkbox.setStyleSheet(focus_style)
 
-        def _has_multiple_buttons(self) -> bool:
-            return len(self._button_targets()) > 1
-
-        def _move_between_buttons(self, *, go_next: bool) -> bool:
-            buttons = self._button_targets()
-            if len(buttons) < 2:
-                return False
-
-            focused = self._dialog.focusWidget() if self._dialog else None
-            try:
-                current_index = buttons.index(focused) if focused is not None else -1
-            except ValueError:
-                current_index = -1
-
-            if current_index < 0:
-                target_index = 0
-            else:
-                step = 1 if go_next else -1
-                target_index = max(0, min(len(buttons) - 1, current_index + step))
-
-            target_button = buttons[target_index]
-            try:
-                target_button.setFocus()
-                self._last_target = target_button
-                return True
-            except Exception:
-                return False
-
-        def _move_between_checkboxes(
+        def _move_between_controls(
             self, *, go_next: bool, origin: QtWidgets.QWidget
         ) -> bool:
-            checkboxes = self._checkbox_targets()
-            if not checkboxes:
+            widgets = self._navigation_targets()
+            if len(widgets) < 2:
                 return False
 
             try:
-                current_index = checkboxes.index(origin)  # type: ignore[arg-type]
+                current_index = widgets.index(origin)  # type: ignore[arg-type]
             except ValueError:
                 current_index = -1
 
             if current_index < 0:
-                target_index = 0 if go_next else len(checkboxes) - 1
+                target_index = 0 if go_next else len(widgets) - 1
             else:
                 step = 1 if go_next else -1
-                target_index = current_index + step
-
-                # Allow button navigation when attempting to move past the edges.
-                if target_index < 0 or target_index >= len(checkboxes):
-                    return False
+                target_index = (current_index + step) % len(widgets)
 
             try:
-                target_cb = checkboxes[target_index]
-                target_cb.setFocus()
-                self._last_target = target_cb
+                target_widget = widgets[target_index]
+                target_widget.setFocus()
+                self._last_target = target_widget
                 return True
             except Exception:
                 return False
