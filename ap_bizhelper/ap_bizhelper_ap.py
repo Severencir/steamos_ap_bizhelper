@@ -40,9 +40,9 @@ _QT_FILE_DIALOG_WIDTH = 1280
 _QT_FILE_DIALOG_HEIGHT = 800
 _QT_FILE_DIALOG_MAXIMIZE = True
 _QT_FILE_DIALOG_NAME_WIDTH = 850
-_QT_FILE_DIALOG_TYPE_WIDTH = 0
-_QT_FILE_DIALOG_SIZE_WIDTH = 250
-_QT_FILE_DIALOG_DATE_WIDTH = 300
+_QT_FILE_DIALOG_TYPE_WIDTH = 300
+_QT_FILE_DIALOG_SIZE_WIDTH = 300
+_QT_FILE_DIALOG_DATE_WIDTH = 0
 _QT_FILE_DIALOG_SIDEBAR_WIDTH = 400
 _QT_FILE_DIALOG_COLUMN_SCALE = 1.8
 _QT_FILE_DIALOG_DEFAULT_SHRINK = 0.95
@@ -56,7 +56,20 @@ def _ensure_dirs() -> None:
 
 
 def _load_settings() -> Dict[str, Any]:
-    return {**_DEFAULT_SETTINGS, **_load_shared_settings()}
+    settings = _load_shared_settings()
+    merged_settings = {**_DEFAULT_SETTINGS, **settings}
+
+    needs_save = not SETTINGS_FILE.exists()
+    if not needs_save:
+        for key in _DEFAULT_SETTINGS:
+            if key not in settings:
+                needs_save = True
+                break
+
+    if needs_save:
+        _save_settings(merged_settings)
+
+    return merged_settings
 
 
 def _save_settings(settings: Dict[str, Any]) -> None:
