@@ -449,7 +449,6 @@ class ZenityShim:
         button_row.addStretch()
         ok_button = QtWidgets.QPushButton(ok_label)
         ok_button.setDefault(True)
-        ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
         button_row.addWidget(ok_button)
         cancel_button = QtWidgets.QPushButton(cancel_label)
         button_row.addWidget(cancel_button)
@@ -463,6 +462,13 @@ class ZenityShim:
             dialog, affirmative=ok_button, negative=cancel_button, default=ok_button
         )
         dialog.setLayout(layout)
+
+        QtCore.QTimer.singleShot(
+            0,
+            lambda: ok_button.setFocus(
+                QtCore.Qt.FocusReason.ActiveWindowFocusReason
+            ),
+        )
 
         result = dialog.exec()
         if result != QtWidgets.QDialog.Accepted:
