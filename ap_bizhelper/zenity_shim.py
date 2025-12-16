@@ -333,7 +333,7 @@ class ZenityShim:
         return None
 
     def _handle_question(self, argv: Sequence[str]) -> int:
-        from PySide6 import QtWidgets  # type: ignore
+        from PySide6 import QtCore, QtWidgets  # type: ignore
         from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app, _qt_question_dialog
 
         _ensure_qt_app()
@@ -359,7 +359,7 @@ class ZenityShim:
         return 1
 
     def _handle_message(self, argv: Sequence[str], *, level: str) -> int:
-        from PySide6 import QtWidgets  # type: ignore
+        from PySide6 import QtCore, QtWidgets  # type: ignore
         from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
         _ensure_qt_app()
@@ -373,6 +373,7 @@ class ZenityShim:
         box.setText(self._extract_option(argv, "--text=") or "")
         ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
         box.setDefaultButton(QtWidgets.QMessageBox.Ok)
+        ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
         _enable_dialog_gamepad(
             box, affirmative=ok_button, negative=ok_button, default=ok_button
         )
@@ -403,7 +404,7 @@ class ZenityShim:
         return rows
 
     def _handle_checklist(self, argv: Sequence[str]) -> int:
-        from PySide6 import QtWidgets  # type: ignore
+        from PySide6 import QtCore, QtWidgets  # type: ignore
         from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
         items = self._parse_checklist_items(argv)
@@ -448,6 +449,7 @@ class ZenityShim:
         button_row.addStretch()
         ok_button = QtWidgets.QPushButton(ok_label)
         ok_button.setDefault(True)
+        ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
         button_row.addWidget(ok_button)
         cancel_button = QtWidgets.QPushButton(cancel_label)
         button_row.addWidget(cancel_button)
@@ -477,7 +479,7 @@ class ZenityShim:
         return 0
 
     def _handle_progress(self, argv: Sequence[str]) -> int:
-        from PySide6 import QtWidgets  # type: ignore
+        from PySide6 import QtCore, QtWidgets  # type: ignore
         from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
         _ensure_qt_app()
@@ -498,6 +500,8 @@ class ZenityShim:
             negative=cancel_button,
             default=cancel_button,
         )
+        if cancel_button is not None:
+            cancel_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
 
         app = QtWidgets.QApplication.instance()
         if app is None:
@@ -633,7 +637,7 @@ class KDialogShim:
             return self._fallback(argv, "The requested kdialog mode is not supported by the shim.")
 
     def _handle_yesno(self, argv: Sequence[str]) -> int:
-        from PySide6 import QtWidgets  # type: ignore
+        from PySide6 import QtCore, QtWidgets  # type: ignore
         from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app, _qt_question_dialog
 
         _ensure_qt_app()
@@ -653,7 +657,7 @@ class KDialogShim:
         return 0 if choice == "ok" else 1
 
     def _handle_message(self, argv: Sequence[str]) -> int:
-        from PySide6 import QtWidgets  # type: ignore
+        from PySide6 import QtCore, QtWidgets  # type: ignore
         from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
         _ensure_qt_app()
@@ -673,6 +677,7 @@ class KDialogShim:
         )
         ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
         box.setDefaultButton(QtWidgets.QMessageBox.Ok)
+        ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
         _enable_dialog_gamepad(
             box, affirmative=ok_button, negative=ok_button, default=ok_button
         )
