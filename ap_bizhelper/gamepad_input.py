@@ -325,14 +325,6 @@ if QT_AVAILABLE:
             ):
                 go_next = qt_key in (QtCore.Qt.Key_Right, QtCore.Qt.Key_Down)
 
-                if (
-                    isinstance(target, QtWidgets.QAbstractButton)
-                    and self._has_multiple_buttons()
-                    and not self._is_file_dialog()
-                    and self._move_between_buttons(go_next=go_next)
-                ):
-                    return
-
                 if self._checkbox_targets() and self._move_between_checkboxes(
                     go_next=go_next, origin=target
                 ):
