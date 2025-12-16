@@ -569,7 +569,7 @@ def checklist_dialog(
     cancel_label: str = "Cancel",
     height: Optional[int] = None,
 ) -> Optional[List[str]]:
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 
     ensure_qt_app()
     dialog = QtWidgets.QDialog()
@@ -618,6 +618,7 @@ def checklist_dialog(
         dialog, affirmative=ok_button, negative=cancel_button, default=ok_button
     )
     dialog.setLayout(layout)
+    ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
 
     result = dialog.exec()
     if result != QtWidgets.QDialog.Accepted:
