@@ -12,14 +12,13 @@ from urllib.parse import quote, unquote, urlparse
 from pathlib import Path
 from typing import Optional, Set, Tuple
 
-from .ap_bizhelper_ap import (
-    AP_APPIMAGE_DEFAULT,
-    _enable_dialog_gamepad,
-    _ensure_qt_app,
-    _ensure_qt_available,
-    _select_file_dialog,
-    _qt_question_dialog,
-    ensure_appimage,
+from .ap_bizhelper_ap import AP_APPIMAGE_DEFAULT, ensure_appimage
+from .dialogs import (
+    enable_dialog_gamepad as _enable_dialog_gamepad,
+    ensure_qt_app as _ensure_qt_app,
+    ensure_qt_available as _ensure_qt_available,
+    question_dialog as _qt_question_dialog,
+    select_file_dialog as _select_file_dialog,
     error_dialog,
     info_dialog,
 )
@@ -35,7 +34,7 @@ from .ap_bizhelper_config import (
     set_ext_behavior,
     set_ext_association,
 )
-from .zenity_shim import prepare_zenity_shim_env
+from .dialog_shim import prepare_dialog_shim_env
 from .logging_utils import RUNNER_LOG_ENV, get_app_logger
 from .ap_bizhelper_worlds import ensure_apworld_for_patch
 
@@ -963,7 +962,7 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
             include_context=True,
             mirror_console=True,
         )
-        shim_env = prepare_zenity_shim_env(APP_LOGGER)
+        shim_env = prepare_dialog_shim_env(APP_LOGGER)
         launch_env = APP_LOGGER.session_environ(env=os.environ.copy())
         if shim_env:
             launch_env.update(shim_env)

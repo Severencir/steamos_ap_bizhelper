@@ -12,6 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from . import dialogs
 from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
@@ -46,19 +47,7 @@ _QT_FILE_DIALOG_SIDEBAR_WIDTH = 400
 _QT_FILE_DIALOG_COLUMN_SCALE = 1.8
 _QT_FILE_DIALOG_DEFAULT_SHRINK = 0.95
 _QT_IMPORT_ERROR: Optional[BaseException] = None
-_DEFAULT_SETTINGS = {
-    "QT_FONT_SCALE": _QT_FONT_SCALE,
-    "QT_MIN_POINT_SIZE": _QT_MIN_POINT_SIZE,
-    "QT_FILE_NAME_FONT_SCALE": _QT_FILE_NAME_FONT_SCALE,
-    "QT_FILE_DIALOG_WIDTH": _QT_FILE_DIALOG_WIDTH,
-    "QT_FILE_DIALOG_HEIGHT": _QT_FILE_DIALOG_HEIGHT,
-    "QT_FILE_DIALOG_MAXIMIZE": _QT_FILE_DIALOG_MAXIMIZE,
-    "QT_FILE_DIALOG_NAME_WIDTH": _QT_FILE_DIALOG_NAME_WIDTH,
-    "QT_FILE_DIALOG_TYPE_WIDTH": _QT_FILE_DIALOG_TYPE_WIDTH,
-    "QT_FILE_DIALOG_SIZE_WIDTH": _QT_FILE_DIALOG_SIZE_WIDTH,
-    "QT_FILE_DIALOG_DATE_WIDTH": _QT_FILE_DIALOG_DATE_WIDTH,
-    "QT_FILE_DIALOG_SIDEBAR_WIDTH": _QT_FILE_DIALOG_SIDEBAR_WIDTH,
-}
+_DEFAULT_SETTINGS = dialogs.DIALOG_DEFAULTS
 
 
 def _ensure_dirs() -> None:
@@ -77,23 +66,9 @@ def _save_settings(settings: Dict[str, Any]) -> None:
 
 
 def _ensure_qt_available() -> None:
-    global _QT_IMPORT_ERROR
-
-    if _QT_IMPORT_ERROR is not None:
-        APP_LOGGER.log(
-            "PySide6 failed to load; runtime dialogs are unavailable.",
-            level="ERROR",
-            include_context=True,
-            mirror_console=True,
-            stream="stderr",
-            location="qt-deps",
-        )
-        raise RuntimeError("PySide6 is required for ap-bizhelper") from _QT_IMPORT_ERROR
-
     try:
-        from PySide6 import QtWidgets  # noqa: F401
-    except Exception as exc:  # pragma: no cover - import guard
-        _QT_IMPORT_ERROR = exc
+        dialogs.ensure_qt_available()
+    except Exception as exc:
         APP_LOGGER.log(
             f"PySide6 is required but could not be imported: {exc}",
             level="ERROR",
@@ -102,7 +77,7 @@ def _ensure_qt_available() -> None:
             stream="stderr",
             location="qt-deps",
         )
-        raise RuntimeError("PySide6 is required for ap-bizhelper") from exc
+        raise
 
 
 def _coerce_font_setting(
@@ -177,61 +152,7 @@ def _detect_global_scale() -> float:
 
 
 def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApplication":
-    global _QT_APP, _QT_BASE_FONT
-
-    _ensure_qt_available()
-    from PySide6 import QtGui, QtWidgets
-
-    def _scaled_font(
-        font: "QtGui.QFont",
-        scale: float,
-        *,
-        min_point_size: Optional[int] = None,
-        min_pixel_size: Optional[int] = None,
-        fallback_point_size: Optional[int] = None,
-    ) -> "QtGui.QFont":
-        scaled_font = QtGui.QFont(font)
-        if font.pointSize() > 0:
-            new_size = int(font.pointSize() * scale)
-            if min_point_size is not None:
-                new_size = max(new_size, min_point_size)
-            scaled_font.setPointSize(new_size)
-        elif font.pixelSize() > 0:
-            new_size = int(font.pixelSize() * scale)
-            if min_pixel_size is not None:
-                new_size = max(new_size, min_pixel_size)
-            scaled_font.setPixelSize(new_size)
-        elif fallback_point_size is not None:
-            scaled_font.setPointSize(fallback_point_size)
-        return scaled_font
-
-    app = _QT_APP or QtWidgets.QApplication.instance()
-    if app is None:
-        app = QtWidgets.QApplication(sys.argv[:1] or ["ap-bizhelper"])
-        _QT_BASE_FONT = app.font()
-    elif _QT_BASE_FONT is None:
-        _QT_BASE_FONT = app.font()
-
-    settings_obj = {**_DEFAULT_SETTINGS, **(settings or _load_settings())}
-    font_scale = _coerce_font_setting(settings_obj, "QT_FONT_SCALE", _QT_FONT_SCALE, minimum=0.1)
-    global_scale = _detect_global_scale()
-    normalized_font_scale = font_scale / global_scale
-    min_point_size = _coerce_font_setting(
-        settings_obj, "QT_MIN_POINT_SIZE", _QT_MIN_POINT_SIZE, minimum=1
-    )
-    font: QtGui.QFont = QtGui.QFont(_QT_BASE_FONT) if _QT_BASE_FONT else app.font()
-    min_scaled_point_size = int(min_point_size * normalized_font_scale)
-    scaled_font = _scaled_font(
-        font,
-        normalized_font_scale,
-        min_point_size=min_scaled_point_size,
-        min_pixel_size=min_scaled_point_size,
-        fallback_point_size=min_scaled_point_size,
-    )
-    app.setFont(scaled_font)
-
-    _QT_APP = app
-    return app
+    return dialogs.ensure_qt_app(settings)
 
 
 def _enable_dialog_gamepad(
@@ -648,41 +569,19 @@ def _select_file_dialog(
 
 
 def info_dialog(message: str) -> None:
-    _ensure_qt_available()
-    APP_LOGGER.log_dialog("Information", message, backend="qt", location="info-dialog")
-    from PySide6 import QtWidgets
-
-    _ensure_qt_app()
-    box = QtWidgets.QMessageBox()
-    box.setIcon(QtWidgets.QMessageBox.Information)
-    box.setWindowTitle("Information")
-    box.setText(message)
-    ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
-    box.setDefaultButton(QtWidgets.QMessageBox.Ok)
-    _enable_dialog_gamepad(
-        box, affirmative=ok_button, negative=ok_button, default=ok_button
-    )
-    box.exec()
+    dialogs.info_dialog(message, logger=APP_LOGGER)
 
 
 def error_dialog(message: str) -> None:
-    _ensure_qt_available()
-    APP_LOGGER.log_dialog(
-        "Error", message, level="ERROR", backend="qt", location="error-dialog"
-    )
-    from PySide6 import QtWidgets
+    dialogs.error_dialog(message, logger=APP_LOGGER)
 
-    _ensure_qt_app()
-    box = QtWidgets.QMessageBox()
-    box.setIcon(QtWidgets.QMessageBox.Critical)
-    box.setWindowTitle("Error")
-    box.setText(message)
-    ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
-    box.setDefaultButton(QtWidgets.QMessageBox.Ok)
-    _enable_dialog_gamepad(
-        box, affirmative=ok_button, negative=ok_button, default=ok_button
-    )
-    box.exec()
+
+# Centralize dialog helpers through the shared module.
+_qt_question_dialog = dialogs.question_dialog
+_qt_file_dialog = dialogs.file_dialog
+_enable_dialog_gamepad = dialogs.enable_dialog_gamepad
+_preferred_start_dir = dialogs.preferred_start_dir
+_remember_file_dialog_dir = dialogs.remember_file_dialog_dir
 
 def choose_install_action(title: str, text: str, select_label: str = "Select") -> str:
     """

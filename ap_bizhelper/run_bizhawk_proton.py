@@ -12,10 +12,11 @@ except ImportError:  # pragma: no cover - fallback when executed outside the pac
     from .ap_bizhelper_config import load_settings as _load_shared_settings
 
 from ap_bizhelper.logging_utils import RUNNER_LOG_ENV, create_component_logger
-from ap_bizhelper.ap_bizhelper_ap import (
-    _enable_dialog_gamepad,
-    _ensure_qt_app,
-    _ensure_qt_available,
+from ap_bizhelper.dialogs import (
+    enable_dialog_gamepad as _enable_dialog_gamepad,
+    ensure_qt_app as _ensure_qt_app,
+    ensure_qt_available as _ensure_qt_available,
+    error_dialog as _shared_error_dialog,
 )
 
 
@@ -26,20 +27,7 @@ def _load_settings():
 def error_dialog(msg: str) -> None:
     """Show an error using PySide6 message boxes."""
     RUNNER_LOGGER.log(f"Error dialog requested: {msg}", level="ERROR", include_context=True)
-    _ensure_qt_available()
-    from PySide6 import QtWidgets
-
-    _ensure_qt_app()
-    box = QtWidgets.QMessageBox()
-    box.setIcon(QtWidgets.QMessageBox.Critical)
-    box.setWindowTitle("BizHawk runner error")
-    box.setText(msg)
-    ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
-    box.setDefaultButton(QtWidgets.QMessageBox.Ok)
-    _enable_dialog_gamepad(
-        box, affirmative=ok_button, negative=ok_button, default=ok_button
-    )
-    box.exec()
+    _shared_error_dialog(msg, title="BizHawk runner error", logger=RUNNER_LOGGER)
 
 
 _SETTINGS_CACHE = None

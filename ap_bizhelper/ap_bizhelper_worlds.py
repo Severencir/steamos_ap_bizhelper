@@ -12,12 +12,10 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .ap_bizhelper_ap import (
-    APP_LOGGER,
-    _qt_question_dialog,
-    _select_file_dialog,
-    choose_install_action,
-    download_with_progress,
+from .ap_bizhelper_ap import APP_LOGGER, choose_install_action, download_with_progress
+from .dialogs import (
+    question_dialog as _qt_question_dialog,
+    select_file_dialog as _select_file_dialog,
     error_dialog,
     info_dialog,
 )

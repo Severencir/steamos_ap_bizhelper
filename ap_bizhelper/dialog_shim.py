@@ -1,13 +1,13 @@
-"""Zenity-compatible shim that proxies to PySide6 dialogs when possible.
+"""Desktop dialog shim that proxies to PySide6 dialogs when possible.
 
 This module provides two entry points:
 
 * ``shim_main``: CLI handler invoked by the temporary ``zenity`` script.
-* ``prepare_zenity_shim_env``: helper to build an environment pointing ``PATH``
+* ``prepare_dialog_shim_env``: helper to build an environment pointing ``PATH``
   at the shim so launched applications use it instead of the system zenity.
 
-Unsupported commands fall back to the real ``zenity`` binary when present so
-the shim stays transparent during gaps in coverage.
+Unsupported commands fall back to the real binaries when present so the shim
+stays transparent during gaps in coverage.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from ap_bizhelper import dialogs
 from .logging_utils import (
     SHIM_LOG_ENV,
     AppLogger,
@@ -281,9 +282,7 @@ class ZenityShim:
         if self._qt_available():
             try:
                 from PySide6 import QtWidgets  # type: ignore
-                from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app
-
-                _ensure_qt_app()
+                dialogs.ensure_qt_app()
                 box = QtWidgets.QMessageBox()
                 box.setIcon(QtWidgets.QMessageBox.Critical)
                 box.setWindowTitle("Zenity Shim Error")
@@ -334,16 +333,15 @@ class ZenityShim:
 
     def _handle_question(self, argv: Sequence[str]) -> int:
         from PySide6 import QtWidgets  # type: ignore
-        from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app, _qt_question_dialog
 
-        _ensure_qt_app()
+        dialogs.ensure_qt_app()
         title = self._extract_option(argv, "--title=") or "Question"
         text = self._extract_option(argv, "--text=") or ""
         ok_label = self._extract_option(argv, "--ok-label=") or "OK"
         cancel_label = self._extract_option(argv, "--cancel-label=") or "Cancel"
         extra_label = self._extract_option(argv, "--extra-button=")
 
-        choice = _qt_question_dialog(
+        choice = dialogs.question_dialog(
             title=title, text=text, ok_label=ok_label, cancel_label=cancel_label, extra_label=extra_label
         )
         self.logger.log(
@@ -360,9 +358,8 @@ class ZenityShim:
 
     def _handle_message(self, argv: Sequence[str], *, level: str) -> int:
         from PySide6 import QtWidgets  # type: ignore
-        from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
-        _ensure_qt_app()
+        dialogs.ensure_qt_app()
         box = QtWidgets.QMessageBox()
         if level == "error":
             box.setIcon(QtWidgets.QMessageBox.Critical)
@@ -373,7 +370,7 @@ class ZenityShim:
         box.setText(self._extract_option(argv, "--text=") or "")
         ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
         box.setDefaultButton(QtWidgets.QMessageBox.Ok)
-        _enable_dialog_gamepad(
+        dialogs.enable_dialog_gamepad(
             box, affirmative=ok_button, negative=ok_button, default=ok_button
         )
         box.exec()
@@ -404,13 +401,12 @@ class ZenityShim:
 
     def _handle_checklist(self, argv: Sequence[str]) -> int:
         from PySide6 import QtWidgets  # type: ignore
-        from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
         items = self._parse_checklist_items(argv)
         if items is None:
             return self._fallback(argv, "The checklist arguments could not be parsed.")
 
-        _ensure_qt_app()
+        dialogs.ensure_qt_app()
         dialog = QtWidgets.QDialog()
         dialog.setWindowTitle(self._extract_option(argv, "--title=") or "Select items")
         maybe_height = self._extract_option(argv, "--height=")
@@ -457,7 +453,7 @@ class ZenityShim:
         ok_button.clicked.connect(dialog.accept)
         cancel_button.clicked.connect(dialog.reject)
 
-        _enable_dialog_gamepad(
+        dialogs.enable_dialog_gamepad(
             dialog, affirmative=ok_button, negative=cancel_button, default=ok_button
         )
         dialog.setLayout(layout)
@@ -478,9 +474,8 @@ class ZenityShim:
 
     def _handle_progress(self, argv: Sequence[str]) -> int:
         from PySide6 import QtWidgets  # type: ignore
-        from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
-        _ensure_qt_app()
+        dialogs.ensure_qt_app()
         dialog = QtWidgets.QProgressDialog()
         dialog.setWindowTitle(self._extract_option(argv, "--title=") or "Progress")
         dialog.setLabelText(self._extract_option(argv, "--text=") or "")
@@ -492,7 +487,7 @@ class ZenityShim:
         dialog.show()
 
         cancel_button = dialog.findChild(QtWidgets.QPushButton)
-        _enable_dialog_gamepad(
+        dialogs.enable_dialog_gamepad(
             dialog,
             affirmative=cancel_button,
             negative=cancel_button,
@@ -634,15 +629,14 @@ class KDialogShim:
 
     def _handle_yesno(self, argv: Sequence[str]) -> int:
         from PySide6 import QtWidgets  # type: ignore
-        from ap_bizhelper.ap_bizhelper_ap import _ensure_qt_app, _qt_question_dialog
 
-        _ensure_qt_app()
+        dialogs.ensure_qt_app()
         text = self._extract_value(argv, "--yesno") or self._extract_value(
             argv, "--warningyesno"
         )
         title = self._extract_value(argv, "--title") or "Question"
         QtWidgets.QApplication.instance()
-        choice = _qt_question_dialog(
+        choice = dialogs.question_dialog(
             title=title, text=text or "", ok_label="Yes", cancel_label="No"
         )
         self.logger.log(
@@ -654,9 +648,8 @@ class KDialogShim:
 
     def _handle_message(self, argv: Sequence[str]) -> int:
         from PySide6 import QtWidgets  # type: ignore
-        from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
-        _ensure_qt_app()
+        dialogs.ensure_qt_app()
         box = QtWidgets.QMessageBox()
         box.setWindowTitle(self._extract_value(argv, "--title") or "Message")
         if "--error" in argv:
@@ -673,7 +666,7 @@ class KDialogShim:
         )
         ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
         box.setDefaultButton(QtWidgets.QMessageBox.Ok)
-        _enable_dialog_gamepad(
+        dialogs.enable_dialog_gamepad(
             box, affirmative=ok_button, negative=ok_button, default=ok_button
         )
         box.exec()
@@ -685,14 +678,6 @@ class KDialogShim:
         return 0
 
     def _handle_getopenfilename(self, argv: Sequence[str]) -> int:
-        from ap_bizhelper.ap_bizhelper_ap import (
-            _load_settings,
-            _preferred_start_dir,
-            _qt_file_dialog,
-            _remember_file_dialog_dir,
-            _save_settings,
-        )
-
         try:
             start_index = argv.index("--getopenfilename") + 1
             start_dir = Path(argv[start_index]) if start_index < len(argv) else Path.cwd()
@@ -706,18 +691,13 @@ class KDialogShim:
         except ValueError:
             pass
 
-        settings = _load_settings()
-        start_dir = _preferred_start_dir(start_dir, settings, "shim")
-
-        selection = _qt_file_dialog(
+        selection = dialogs.select_file_dialog(
             title=self._extract_value(argv, "--title") or "Select file",
-            start_dir=start_dir,
+            dialog_key="shim",
+            initial=start_dir,
             file_filter=file_filter,
-            settings=settings,
         )
         if selection:
-            _remember_file_dialog_dir(settings, selection, "shim")
-            _save_settings(settings)
             sys.stdout.write(str(selection) + "\n")
             self.logger.log(
                 f"kdialog file selection: {selection}", include_context=True, location="kdialog-open"
@@ -766,26 +746,14 @@ class PortalShim:
             return self._fallback(argv)
 
     def _handle_choose_file(self, argv: Sequence[str]) -> int:
-        from ap_bizhelper.ap_bizhelper_ap import (
-            _load_settings,
-            _preferred_start_dir,
-            _qt_file_dialog,
-            _remember_file_dialog_dir,
-            _save_settings,
-        )
-
         start_dir = Path(argv[1]) if len(argv) > 1 else Path.cwd()
-        settings = _load_settings()
-        start_dir = _preferred_start_dir(start_dir, settings, "shim")
-        selection = _qt_file_dialog(
+        selection = dialogs.select_file_dialog(
             title="Select file",
-            start_dir=start_dir,
+            dialog_key="shim",
+            initial=start_dir,
             file_filter=None,
-            settings=settings,
         )
         if selection:
-            _remember_file_dialog_dir(settings, selection, "shim")
-            _save_settings(settings)
             sys.stdout.write(str(selection) + "\n")
             self.logger.log(
                 f"portal file selection: {selection}", include_context=True, location="portal"
@@ -810,11 +778,11 @@ class PortalShim:
         )
         return 127
 
-def prepare_zenity_shim_env(logger: Optional[AppLogger] = None) -> Optional[Dict[str, str]]:
-    """Create a temporary zenity shim script and return environment overrides.
+def prepare_dialog_shim_env(logger: Optional[AppLogger] = None) -> Optional[Dict[str, str]]:
+    """Create a temporary dialog shim script and return environment overrides.
 
     The returned mapping can be merged into a subprocess environment to force
-    child processes to use the shimmed zenity. If the shim cannot be created,
+    child processes to use the shimmed tools. If the shim cannot be created,
     ``None`` is returned.
     """
 
@@ -834,7 +802,7 @@ def prepare_zenity_shim_env(logger: Optional[AppLogger] = None) -> Optional[Dict
 
     zenity_path = shim_dir / "zenity"
     zenity_content = """#!/usr/bin/env python3
-from ap_bizhelper.zenity_shim import shim_main
+from ap_bizhelper.dialog_shim import shim_main
 if __name__ == "__main__":
     shim_main()
 """
@@ -843,7 +811,7 @@ if __name__ == "__main__":
 
     kdialog_path = shim_dir / "kdialog"
     kdialog_content = """#!/usr/bin/env python3
-from ap_bizhelper.zenity_shim import kdialog_main
+from ap_bizhelper.dialog_shim import kdialog_main
 if __name__ == "__main__":
     kdialog_main()
 """
@@ -852,7 +820,7 @@ if __name__ == "__main__":
 
     portal_path = shim_dir / "xdg-desktop-portal"
     portal_content = """#!/usr/bin/env python3
-from ap_bizhelper.zenity_shim import portal_file_chooser_main
+from ap_bizhelper.dialog_shim import portal_file_chooser_main
 if __name__ == "__main__":
     portal_file_chooser_main()
 """
@@ -883,6 +851,10 @@ if __name__ == "__main__":
             env[SHIM_LOG_ENV] = os.environ[SHIM_LOG_ENV]
     env.update({k: v for k, v in session_env.items() if v})
     return env
+
+
+# Backwards compatibility
+prepare_zenity_shim_env = prepare_dialog_shim_env
 
 
 def shim_main() -> None:
