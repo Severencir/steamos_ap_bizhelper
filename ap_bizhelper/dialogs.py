@@ -618,7 +618,27 @@ def checklist_dialog(
         dialog, affirmative=ok_button, negative=cancel_button, default=ok_button
     )
     dialog.setLayout(layout)
-    ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+    scroll.setFocusPolicy(QtCore.Qt.NoFocus)
+    container.setFocusPolicy(QtCore.Qt.NoFocus)
+    
+    QtWidgets.QWidget.setTabOrder(ok_button, cancel_button)
+    prev = cancel_button
+    for cb in checkboxes:
+        QtWidgets.QWidget.setTabOrder(prev, cb)
+        prev = cb
+    if checkboxes:
+        QtWidgets.QWidget.setTabOrder(checkboxes[-1], ok_button)
+    else:
+        QtWidgets.QWidget.setTabOrder(cancel_button, ok_button)
+        
+    QtCore.QTimer.singleShot(
+        0,
+        lambda: ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason),
+    )
+    
+    dialog.activateWindow()
+    dialog.raise_()
+
 
     result = dialog.exec()
     if result != QtWidgets.QDialog.Accepted:
