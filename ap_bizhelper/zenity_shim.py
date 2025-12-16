@@ -403,7 +403,7 @@ class ZenityShim:
         return rows
 
     def _handle_checklist(self, argv: Sequence[str]) -> int:
-        from PySide6 import QtWidgets  # type: ignore
+        from PySide6 import QtCore, QtWidgets  # type: ignore
         from ap_bizhelper.ap_bizhelper_ap import _enable_dialog_gamepad, _ensure_qt_app
 
         items = self._parse_checklist_items(argv)
@@ -459,6 +459,9 @@ class ZenityShim:
 
         _enable_dialog_gamepad(
             dialog, affirmative=ok_button, negative=cancel_button, default=ok_button
+        )
+        QtCore.QTimer.singleShot(
+            0, lambda: ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
         )
         dialog.setLayout(layout)
 
