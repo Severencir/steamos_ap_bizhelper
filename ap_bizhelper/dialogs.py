@@ -618,7 +618,10 @@ def checklist_dialog(
         dialog, affirmative=ok_button, negative=cancel_button, default=ok_button
     )
     dialog.setLayout(layout)
-    ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+    dialog.setFocusProxy(ok_button)
+    QtCore.QTimer.singleShot(
+        0, lambda: ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+    )
 
     result = dialog.exec()
     if result != QtWidgets.QDialog.Accepted:
