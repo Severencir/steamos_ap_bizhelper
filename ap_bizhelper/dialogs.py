@@ -1,448 +1,349 @@
 from __future__ import annotations
 
-"""Shared dialog helpers built on PySide6.
+"""
+dialogs.py — small, controller-friendly PySide6 dialog helpers.
 
-This module centralizes dialog rendering so the main app, shims, and helpers can
-reuse consistent widgets. Callers can opt into persistent directory tracking by
-passing load/save callbacks for file dialogs.
+This is a *rebuilt* version of the original module with two priorities:
+1) Simplicity (less "clever" UI tweaking, fewer side effects, fewer globals)
+2) Predictable focus behavior for D-pad / arrow-key navigation
+
+Key behavior you asked for (checklist dialog)
+- Initial focus is on the OK button (not the first checkbox)
+- D-pad / arrow keys cycle through BOTH buttons and checkboxes
+- Order and wrap:
+    OK -> Cancel -> checkbox 1 -> ... -> checkbox N -> OK
+
+Integration notes
+- This module is self-contained: it does not require your prior config/logging modules.
+- If your project has a `.gamepad_input` module with:
+      install_gamepad_navigation(widget, actions={...})
+  then `enable_dialog_gamepad(...)` will hook it up; otherwise it's a no-op.
+- If you want persistent "last directory" behavior for file dialogs, pass a mutable
+  `settings` dict; we update keys inside it.
+
+Settings dictionary keys used (all optional)
+- "QT_FONT_SCALE": float (default 1.4)
+- "QT_MIN_POINT_SIZE": int (default 12)
+- "LAST_FILE_DIALOG_DIR": str
+- "LAST_FILE_DIALOG_DIRS": dict[str, str]  (per-dialog key -> dir)
+
+Typical usage
+    from . import dialogs
+
+    dialogs.ensure_qt_app({"QT_FONT_SCALE": 1.4, "QT_MIN_POINT_SIZE": 12})
+
+    picked = dialogs.checklist_dialog(
+        title="Select items",
+        text="Choose:",
+        items=[(True, "A"), (False, "B")],
+        settings=my_settings,
+        dialog_key="export_items",
+    )
 """
 
-import importlib.util
 import os
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .ap_bizhelper_config import load_settings as _load_shared_settings, save_settings as _save_shared_settings
-from .logging_utils import AppLogger, get_app_logger
+# ---- Qt bootstrap ------------------------------------------------------------
 
-DOWNLOADS_DIR = Path(os.path.expanduser("~/Downloads"))
-DIALOG_DEFAULTS = {
-    "QT_FONT_SCALE": 1.5,
-    "QT_MIN_POINT_SIZE": 12,
-    "QT_FILE_NAME_FONT_SCALE": 1.8,
-    "QT_FILE_DIALOG_WIDTH": 1280,
-    "QT_FILE_DIALOG_HEIGHT": 800,
-    "QT_FILE_DIALOG_MAXIMIZE": True,
-    "QT_FILE_DIALOG_NAME_WIDTH": 850,
-    "QT_FILE_DIALOG_TYPE_WIDTH": 300,
-    "QT_FILE_DIALOG_SIZE_WIDTH": 300,
-    "QT_FILE_DIALOG_DATE_WIDTH": 0,
-    "QT_FILE_DIALOG_SIDEBAR_WIDTH": 400,
-}
-
-_QT_APP: Optional["QtWidgets.QApplication"] = None
-_QT_BASE_FONT: Optional["QtGui.QFont"] = None
 _QT_IMPORT_ERROR: Optional[BaseException] = None
 
 
-def merge_dialog_settings(settings: Optional[Dict[str, object]] = None) -> Dict[str, object]:
-    return {**DIALOG_DEFAULTS, **(settings or {})}
-
-
-def _coerce_font_setting(
-    settings: Dict[str, object], key: str, default: float, *, minimum: Optional[float] = None
-) -> float:
-    value = settings.get(key, default)
-    try:
-        numeric_value = float(value)
-    except Exception:
-        return default
-    if minimum is not None:
-        numeric_value = max(numeric_value, minimum)
-    return numeric_value
-
-
-def _coerce_int_setting(
-    settings: Dict[str, object], key: str, default: int, *, minimum: Optional[int] = None
-) -> int:
-    value = settings.get(key, default)
-    try:
-        numeric_value = int(value)
-    except Exception:
-        return default
-    if minimum is not None:
-        numeric_value = max(numeric_value, minimum)
-    return numeric_value
-
-
-def _coerce_bool_setting(settings: Dict[str, object], key: str, default: bool) -> bool:
-    value = settings.get(key, default)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "off"}:
-            return False
-    return default
-
-
 def ensure_qt_available() -> None:
+    """Raise a clear error if PySide6 isn't installed."""
     global _QT_IMPORT_ERROR
-
     if _QT_IMPORT_ERROR is not None:
-        raise RuntimeError("PySide6 is required for ap-bizhelper") from _QT_IMPORT_ERROR
-
+        raise RuntimeError("PySide6 is required to show dialogs") from _QT_IMPORT_ERROR
     try:
-        from PySide6 import QtWidgets  # noqa: F401
-    except Exception as exc:  # pragma: no cover - import guard
+        import PySide6  # noqa: F401
+    except Exception as exc:  # pragma: no cover
         _QT_IMPORT_ERROR = exc
-        raise RuntimeError("PySide6 is required for ap-bizhelper") from exc
+        raise RuntimeError("PySide6 is required to show dialogs") from exc
 
 
-def _detect_global_scale() -> float:
-    ensure_qt_available()
-    from PySide6 import QtGui
+def merge_dialog_settings(settings: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    """
+    Compatibility helper: returns a mutable dict of settings.
+    - If `settings` is provided, it's returned (and may be mutated by file dialogs).
+    - Otherwise a new dict is returned.
 
-    try:
-        screen = QtGui.QGuiApplication.primaryScreen()
-    except Exception:
-        return 1.0
-
-    if screen is None:
-        return 1.0
-
-    dpi_scale = 1.0
-    try:
-        logical_dpi = float(screen.logicalDotsPerInch())
-        if logical_dpi > 0:
-            dpi_scale = logical_dpi / 96.0
-    except Exception:
-        dpi_scale = 1.0
-
-    try:
-        pixel_ratio = float(screen.devicePixelRatio())
-        if pixel_ratio > 0:
-            dpi_scale = max(dpi_scale, pixel_ratio)
-    except Exception:
-        pass
-
-    return max(dpi_scale, 0.1)
+    The old module merged app-wide config; this rebuild intentionally does not.
+    """
+    return settings if settings is not None else {}
 
 
 def ensure_qt_app(settings: Optional[Dict[str, object]] = None) -> "QtWidgets.QApplication":
-    global _QT_APP, _QT_BASE_FONT
+    """
+    Ensure a QApplication exists, and apply a minimal global font scaling.
 
+    This function is intentionally conservative:
+    - it does not attempt DPI normalization
+    - it does not alter platform theme/style
+    """
     ensure_qt_available()
     from PySide6 import QtGui, QtWidgets
 
-    def _scaled_font(
-        font: "QtGui.QFont",
-        scale: float,
-        *,
-        min_point_size: Optional[int] = None,
-        min_pixel_size: Optional[int] = None,
-        fallback_point_size: Optional[int] = None,
-    ) -> "QtGui.QFont":
-        scaled_font = QtGui.QFont(font)
-        if font.pointSize() > 0:
-            new_size = int(font.pointSize() * scale)
-            if min_point_size is not None:
-                new_size = max(new_size, min_point_size)
-            scaled_font.setPointSize(new_size)
-        elif font.pixelSize() > 0:
-            new_size = int(font.pixelSize() * scale)
-            if min_pixel_size is not None:
-                new_size = max(new_size, min_pixel_size)
-            scaled_font.setPixelSize(new_size)
-        elif fallback_point_size is not None:
-            scaled_font.setPointSize(fallback_point_size)
-        return scaled_font
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-    if _QT_APP is not None:
-        return _QT_APP
+    s = merge_dialog_settings(settings)
+    font_scale = float(s.get("QT_FONT_SCALE", 1.4) or 1.4)
+    min_pt = int(s.get("QT_MIN_POINT_SIZE", 12) or 12)
 
-    try:
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    except Exception as exc:  # pragma: no cover - runtime guard
-        raise RuntimeError("PySide6 application could not be created") from exc
+    base = app.font()
+    scaled = QtGui.QFont(base)
 
-    if _QT_BASE_FONT is None:
-        _QT_BASE_FONT = app.font()
+    # Prefer point size when available; otherwise scale pixels.
+    if base.pointSize() > 0:
+        scaled.setPointSize(max(int(base.pointSize() * font_scale), min_pt))
+    elif base.pixelSize() > 0:
+        scaled.setPixelSize(max(int(base.pixelSize() * font_scale), min_pt))
+    else:
+        scaled.setPointSize(min_pt)
 
-    settings_obj = merge_dialog_settings(settings)
-    font_scale = _coerce_font_setting(settings_obj, "QT_FONT_SCALE", float(DIALOG_DEFAULTS["QT_FONT_SCALE"]), minimum=0.1)
-    global_scale = _detect_global_scale()
-    normalized_font_scale = font_scale / global_scale
-    min_point_size = _coerce_font_setting(
-        settings_obj, "QT_MIN_POINT_SIZE", float(DIALOG_DEFAULTS["QT_MIN_POINT_SIZE"]), minimum=1
-    )
-    font: QtGui.QFont = QtGui.QFont(_QT_BASE_FONT) if _QT_BASE_FONT else app.font()
-    min_scaled_point_size = int(min_point_size * normalized_font_scale)
-    scaled_font = _scaled_font(
-        font,
-        normalized_font_scale,
-        min_point_size=min_scaled_point_size,
-        min_pixel_size=min_scaled_point_size,
-        fallback_point_size=min_scaled_point_size,
-    )
-    app.setFont(scaled_font)
-
-    _QT_APP = app
+    app.setFont(scaled)
     return app
 
 
-def enable_dialog_gamepad(
-    dialog: "QtWidgets.QDialog | QtWidgets.QMessageBox",
-    *,
-    affirmative: Optional["QtWidgets.QAbstractButton"] = None,
-    negative: Optional["QtWidgets.QAbstractButton"] = None,
-    special: Optional["QtWidgets.QAbstractButton"] = None,
-    default: Optional["QtWidgets.QAbstractButton"] = None,
-) -> Optional["object"]:
-    """Attach controller navigation to ``dialog`` if available."""
+# ---- Optional gamepad hook ---------------------------------------------------
 
+def enable_dialog_gamepad(dialog: "QtWidgets.QWidget", actions: dict) -> Optional[object]:
+    """
+    If your project provides `.gamepad_input.install_gamepad_navigation`,
+    call it and return the created layer object. Otherwise return None.
+
+    actions is an app-defined mapping; typically includes:
+      {"affirmative": ok_button, "negative": cancel_button, "default": ok_button}
+    """
     try:
-        from . import gamepad_input
+        from . import gamepad_input  # type: ignore
 
-        layer = gamepad_input.install_gamepad_navigation(
-            dialog,
-            actions={
-                "affirmative": affirmative,
-                "negative": negative,
-                "special": special,
-                "default": default,
-            },
-        )
-        if layer is not None:
-            dialog.finished.connect(layer.shutdown)  # type: ignore[attr-defined]
+        layer = gamepad_input.install_gamepad_navigation(dialog, actions=actions)
+        try:
+            dialog.destroyed.connect(lambda *_: getattr(layer, "shutdown", lambda: None)())  # type: ignore
+        except Exception:
+            pass
         return layer
-    except Exception:  # pragma: no cover - optional dependency
+    except Exception:
         return None
 
 
-def _sidebar_urls() -> list["QtCore.QUrl"]:
-    ensure_qt_available()
+# ---- Focus + navigation helpers ---------------------------------------------
+
+def _defer_focus(widget: "QtWidgets.QWidget") -> None:
+    """Set focus after the dialog is shown, so Qt doesn't steal it back."""
     from PySide6 import QtCore
 
-    paths = [
-        Path(os.path.expanduser("~")),
-        DOWNLOADS_DIR,
-        Path("/"),
-    ]
-    urls = []
-    for p in paths:
-        if p.exists():
-            try:
-                urls.append(QtCore.QUrl.fromLocalFile(p.as_posix()))
-            except Exception:
-                continue
-    return urls
+    QtCore.QTimer.singleShot(
+        0, lambda: widget.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+    )
 
 
-def _widen_file_dialog_sidebar(dialog: "QtWidgets.QFileDialog", settings: Dict[str, object]) -> None:
-    try:
-        from PySide6 import QtWidgets
+def _set_tab_cycle(widgets: Sequence["QtWidgets.QWidget"]) -> None:
+    """
+    Create an explicit tab-order *cycle* (wrap to start).
 
-        sidebar = dialog.findChild(QtWidgets.QListView, "sidebar")
-        if sidebar is None:
-            return
-        width = _coerce_int_setting(
-            settings, "QT_FILE_DIALOG_SIDEBAR_WIDTH", int(DIALOG_DEFAULTS["QT_FILE_DIALOG_SIDEBAR_WIDTH"]), minimum=0
-        )
-        if width > 0:
-            sidebar.setFixedWidth(width)
-    except Exception:
+    widgets: [w0, w1, ..., wn]
+      w0 -> w1 -> ... -> wn -> w0
+    """
+    from PySide6 import QtWidgets
+
+    if len(widgets) < 2:
         return
+    for a, b in zip(widgets, widgets[1:]):
+        QtWidgets.QWidget.setTabOrder(a, b)
+    QtWidgets.QWidget.setTabOrder(widgets[-1], widgets[0])
 
 
-def _configure_file_view_columns(dialog: "QtWidgets.QFileDialog", settings: Dict[str, object]) -> None:
-    try:
-        from PySide6 import QtCore, QtWidgets
+def _make_arrow_keys_follow_tab_order(dialog: "QtWidgets.QDialog") -> None:
+    """
+    Force arrow keys (and most DPads that produce arrow key events) to move focus
+    using the tab order chain, not geometric "nearest" navigation.
+    """
+    from PySide6 import QtCore
 
-        tree_view = dialog.findChild(QtWidgets.QTreeView, "treeView")
-        if tree_view is None:
-            return
-        header: Optional["QtWidgets.QHeaderView"] = tree_view.header()
-        if header is None:
-            return
-        dialog.setLabelText(QtWidgets.QFileDialog.LookIn, "Look in:")
-        name_width = _coerce_int_setting(
-            settings, "QT_FILE_DIALOG_NAME_WIDTH", int(DIALOG_DEFAULTS["QT_FILE_DIALOG_NAME_WIDTH"]), minimum=0
-        )
-        if name_width > 0:
-            header.resizeSection(0, name_width)
-        type_width = _coerce_int_setting(
-            settings, "QT_FILE_DIALOG_TYPE_WIDTH", int(DIALOG_DEFAULTS["QT_FILE_DIALOG_TYPE_WIDTH"]), minimum=0
-        )
-        if type_width > 0:
-            header.resizeSection(1, type_width)
-        size_width = _coerce_int_setting(
-            settings, "QT_FILE_DIALOG_SIZE_WIDTH", int(DIALOG_DEFAULTS["QT_FILE_DIALOG_SIZE_WIDTH"]), minimum=0
-        )
-        if size_width > 0:
-            header.resizeSection(2, size_width)
-        date_width = _coerce_int_setting(
-            settings, "QT_FILE_DIALOG_DATE_WIDTH", int(DIALOG_DEFAULTS["QT_FILE_DIALOG_DATE_WIDTH"]), minimum=0
-        )
-        if date_width > 0:
-            header.resizeSection(3, date_width)
-        header.setStretchLastSection(True)
-        try:
-            header.setSectionResizeMode(QtWidgets.QHeaderView.Fixed)
-            header.setSectionResizeMode(0, QtWidgets.QHeaderView.Interactive)
-        except Exception:
-            pass
-        try:
-            tree_view.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        except Exception:
-            pass
-        try:
-            tree_view.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-        except Exception:
-            pass
-    except Exception:
-        return
+    class _Filter(QtCore.QObject):
+        def eventFilter(self, obj, event) -> bool:  # type: ignore[override]
+            if event.type() == QtCore.QEvent.KeyPress:
+                key = event.key()
+                if key in (QtCore.Qt.Key_Right, QtCore.Qt.Key_Down):
+                    dialog.focusNextPrevChild(True)
+                    return True
+                if key in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Up):
+                    dialog.focusNextPrevChild(False)
+                    return True
+            return False
+
+    dialog.installEventFilter(_Filter(dialog))
 
 
-def _focus_file_view(dialog: "QtWidgets.QFileDialog") -> None:
-    try:
-        from PySide6 import QtCore, QtWidgets
+def _downloads_dir() -> Path:
+    # Cross-platform-ish "Downloads" guess; not guaranteed.
+    home = Path.home()
+    cand = home / "Downloads"
+    return cand if cand.exists() else home
 
-        tree_view = dialog.findChild(QtWidgets.QTreeView, "treeView")
-        if tree_view is None:
-            return
-        model = tree_view.model()
-        selection_model = tree_view.selectionModel()
-        if not model or not selection_model:
-            return
-        current_index = tree_view.currentIndex()
-        if not current_index.isValid() and model.rowCount() > 0:
-            first_index = model.index(0, 0)
-            if first_index.isValid():
-                tree_view.setCurrentIndex(first_index)
-                selection_model.select(
-                    first_index,
-                    QtCore.QItemSelectionModel.Select | QtCore.QItemSelectionModel.Rows,
-                )
-        tree_view.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-    except Exception:
-        return
 
+# ---- Message dialogs ---------------------------------------------------------
 
 def question_dialog(
-    *, title: str, text: str, ok_label: str, cancel_label: str, extra_label: Optional[str] = None
-) -> str:
-    from PySide6 import QtCore, QtWidgets
+    title: str,
+    text: str,
+    *,
+    ok_label: str = "OK",
+    cancel_label: str = "Cancel",
+    attach_gamepad: bool = True,
+    settings: Optional[Dict[str, object]] = None,
+) -> bool:
+    """Return True if OK, False if Cancel."""
+    ensure_qt_app(settings)
+    from PySide6 import QtWidgets
 
-    ensure_qt_app()
-    dialog = QtWidgets.QDialog()
-    dialog.setWindowTitle(title)
-    layout = QtWidgets.QVBoxLayout(dialog)
+    dlg = QtWidgets.QDialog()
+    dlg.setWindowTitle(title)
+
+    layout = QtWidgets.QVBoxLayout(dlg)
 
     label = QtWidgets.QLabel(text)
     label.setWordWrap(True)
     layout.addWidget(label)
 
-    button_row = QtWidgets.QHBoxLayout()
-    button_row.addStretch()
-    ok_button = QtWidgets.QPushButton(ok_label)
-    ok_button.setDefault(True)
-    button_row.addWidget(ok_button)
-    extra_button = None
-    if extra_label:
-        extra_button = QtWidgets.QPushButton(extra_label)
-        button_row.addWidget(extra_button)
-    cancel_button = QtWidgets.QPushButton(cancel_label)
-    button_row.addWidget(cancel_button)
-    button_row.addStretch()
-    layout.addLayout(button_row)
+    row = QtWidgets.QHBoxLayout()
+    row.addStretch(1)
+    ok_btn = QtWidgets.QPushButton(ok_label)
+    ok_btn.setDefault(True)
+    cancel_btn = QtWidgets.QPushButton(cancel_label)
+    row.addWidget(ok_btn)
+    row.addWidget(cancel_btn)
+    row.addStretch(1)
+    layout.addLayout(row)
 
-    ok_button.clicked.connect(dialog.accept)
-    cancel_button.clicked.connect(dialog.reject)
-    extra_result = QtWidgets.QDialog.Accepted + 1
-    if extra_button is not None:
-        extra_button.clicked.connect(lambda: dialog.done(extra_result))
+    ok_btn.clicked.connect(dlg.accept)
+    cancel_btn.clicked.connect(dlg.reject)
 
-    dialog.setLayout(layout)
-    dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-    enable_dialog_gamepad(
-        dialog,
-        affirmative=ok_button,
-        negative=cancel_button,
-        special=extra_button,
-        default=ok_button,
-    )
+    _set_tab_cycle([ok_btn, cancel_btn])
+    _make_arrow_keys_follow_tab_order(dlg)
 
-    result = dialog.exec()
-    if result == QtWidgets.QDialog.Accepted:
-        return "ok"
-    if result == extra_result:
-        return "extra"
-    return "cancel"
+    if attach_gamepad:
+        enable_dialog_gamepad(dlg, {"affirmative": ok_btn, "negative": cancel_btn, "default": ok_btn})
+
+    _defer_focus(ok_btn)
+    return dlg.exec() == QtWidgets.QDialog.Accepted
 
 
-def info_dialog(message: str, *, title: str = "Information", logger: Optional[AppLogger] = None) -> None:
-    ensure_qt_available()
-    app_logger = logger or get_app_logger()
-    app_logger.log_dialog(title, message, backend="qt", location="info-dialog")
+def info_dialog(
+    title: str,
+    text: str,
+    *,
+    ok_label: str = "OK",
+    attach_gamepad: bool = True,
+    settings: Optional[Dict[str, object]] = None,
+) -> None:
+    ensure_qt_app(settings)
     from PySide6 import QtWidgets
 
-    ensure_qt_app()
     box = QtWidgets.QMessageBox()
+    box.setWindowTitle(title)
     box.setIcon(QtWidgets.QMessageBox.Information)
-    box.setWindowTitle(title)
-    box.setText(message)
-    ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
-    box.setDefaultButton(QtWidgets.QMessageBox.Ok)
-    enable_dialog_gamepad(
-        box, affirmative=ok_button, negative=ok_button, default=ok_button
-    )
+    box.setText(text)
+    ok_btn = box.addButton(ok_label, QtWidgets.QMessageBox.AcceptRole)
+    box.setDefaultButton(ok_btn)
+
+    if attach_gamepad:
+        enable_dialog_gamepad(box, {"affirmative": ok_btn, "negative": ok_btn, "default": ok_btn})
+
+    _defer_focus(ok_btn)
     box.exec()
 
 
-def error_dialog(message: str, *, title: str = "Error", logger: Optional[AppLogger] = None) -> None:
-    ensure_qt_available()
-    app_logger = logger or get_app_logger()
-    app_logger.log_dialog(title, message, level="ERROR", backend="qt", location="error-dialog")
+def error_dialog(
+    title: str,
+    text: str,
+    *,
+    ok_label: str = "OK",
+    attach_gamepad: bool = True,
+    settings: Optional[Dict[str, object]] = None,
+) -> None:
+    ensure_qt_app(settings)
     from PySide6 import QtWidgets
 
-    ensure_qt_app()
     box = QtWidgets.QMessageBox()
-    box.setIcon(QtWidgets.QMessageBox.Critical)
     box.setWindowTitle(title)
-    box.setText(message)
-    ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
-    box.setDefaultButton(QtWidgets.QMessageBox.Ok)
-    enable_dialog_gamepad(
-        box, affirmative=ok_button, negative=ok_button, default=ok_button
-    )
+    box.setIcon(QtWidgets.QMessageBox.Critical)
+    box.setText(text)
+    ok_btn = box.addButton(ok_label, QtWidgets.QMessageBox.AcceptRole)
+    box.setDefaultButton(ok_btn)
+
+    if attach_gamepad:
+        enable_dialog_gamepad(box, {"affirmative": ok_btn, "negative": ok_btn, "default": ok_btn})
+
+    _defer_focus(ok_btn)
     box.exec()
 
+
+# ---- File dialog directory helpers ------------------------------------------
 
 def preferred_start_dir(initial: Optional[Path], settings: Dict[str, object], dialog_key: str) -> Path:
-    last_dir_setting = str(settings.get("LAST_FILE_DIALOG_DIR", "") or "")
-    per_dialog_dir = str(settings.get("LAST_FILE_DIALOG_DIRS", {}).get(dialog_key, "") or "")
+    """
+    Decide an initial directory for file dialogs.
+
+    Priority:
+      1) explicit initial (if not HOME)
+      2) per-dialog remembered dir (LAST_FILE_DIALOG_DIRS[dialog_key])
+      3) global remembered dir (LAST_FILE_DIALOG_DIR)
+      4) ~/Downloads if present
+      5) HOME
+    """
+    home = Path.home()
+
+    per_map = settings.get("LAST_FILE_DIALOG_DIRS", {}) or {}
+    per_dir = ""
+    if isinstance(per_map, dict):
+        per_dir = str(per_map.get(dialog_key, "") or "")
+
+    global_dir = str(settings.get("LAST_FILE_DIALOG_DIR", "") or "")
 
     candidates = [
-        initial if initial and initial.expanduser() != Path.home() else None,
-        Path(per_dialog_dir) if per_dialog_dir else None,
-        Path(last_dir_setting) if last_dir_setting else None,
-        DOWNLOADS_DIR if DOWNLOADS_DIR.exists() else None,
-        initial if initial else None,
-        Path.home(),
+        initial if initial and initial.expanduser().resolve() != home.resolve() else None,
+        Path(per_dir) if per_dir else None,
+        Path(global_dir) if global_dir else None,
+        _downloads_dir(),
+        home,
     ]
-    for candidate in candidates:
-        if candidate is None:
+
+    for c in candidates:
+        if c is None:
             continue
-        candidate_path = candidate.expanduser()
-        if candidate_path.is_file():
-            candidate_path = candidate_path.parent
-        if candidate_path.exists():
-            return candidate_path
-    return Path.home()
+        try:
+            p = c.expanduser()
+            if p.exists():
+                return p
+        except Exception:
+            continue
+    return home
 
 
-def remember_file_dialog_dir(settings: Dict[str, object], selection: Path, dialog_key: str) -> None:
-    parent = selection.parent if selection.is_file() else selection
-    dialog_dirs = settings.get("LAST_FILE_DIALOG_DIRS", {})
-    dialog_dirs[dialog_key] = str(parent)
-    settings["LAST_FILE_DIALOG_DIRS"] = dialog_dirs
-    settings["LAST_FILE_DIALOG_DIR"] = str(parent)
+def remember_file_dialog_dir(chosen_path: Optional[Path], settings: Dict[str, object], dialog_key: str) -> None:
+    """Update settings dict with the directory of the chosen file/folder."""
+    if not chosen_path:
+        return
+    try:
+        d = chosen_path.expanduser()
+        if d.is_file():
+            d = d.parent
+    except Exception:
+        return
 
+    settings["LAST_FILE_DIALOG_DIR"] = str(d)
+
+    per = settings.get("LAST_FILE_DIALOG_DIRS")
+    if not isinstance(per, dict):
+        per = {}
+        settings["LAST_FILE_DIALOG_DIRS"] = per
+    per[dialog_key] = str(d)
+
+
+# ---- File dialogs ------------------------------------------------------------
 
 def file_dialog(
     *,
@@ -450,137 +351,105 @@ def file_dialog(
     start_dir: Path,
     file_filter: Optional[str] = None,
     settings: Optional[Dict[str, object]] = None,
+    dialog_key: str = "file_dialog",
+    use_non_native: bool = True,
 ) -> Optional[Path]:
-    from PySide6 import QtCore, QtGui, QtWidgets
+    """
+    Simple "open existing file" dialog.
 
-    settings_obj = merge_dialog_settings(settings)
-    ensure_qt_app(settings_obj)
-    global_scale = _detect_global_scale()
-    filter_text = file_filter or "All Files (*)"
-    dialog = QtWidgets.QFileDialog()
-    dialog.setWindowTitle(title)
-    dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptOpen)
-    dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
-    dialog.setDirectory(str(start_dir))
-    dialog.setNameFilter(filter_text)
-    dialog.setViewMode(QtWidgets.QFileDialog.Detail)
-    dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
-    dialog.setOption(QtWidgets.QFileDialog.ReadOnly, False)
-    width = _coerce_int_setting(
-        settings_obj, "QT_FILE_DIALOG_WIDTH", int(DIALOG_DEFAULTS["QT_FILE_DIALOG_WIDTH"]), minimum=0
-    )
-    height = _coerce_int_setting(
-        settings_obj, "QT_FILE_DIALOG_HEIGHT", int(DIALOG_DEFAULTS["QT_FILE_DIALOG_HEIGHT"]), minimum=0
-    )
-    if width > 0 and height > 0:
-        dialog.resize(width, height)
-    if hasattr(QtGui.QGuiApplication, "setNavigationMode") and hasattr(QtCore.Qt, "NavigationModeKeypadDirectional"):
-        QtGui.QGuiApplication.setNavigationMode(
-            QtCore.Qt.NavigationModeKeypadDirectional
-        )
+    If `settings` is provided, we remember the chosen directory under dialog_key.
+    """
+    ensure_qt_app(settings)
+    from PySide6 import QtWidgets
 
-    def _scale_file_name_font(widget: "QtWidgets.QWidget") -> None:
-        base_font = widget.font()
-        scaled_font = QtGui.QFont(base_font)
-        name_font_scale = _coerce_font_setting(
-            settings_obj, "QT_FILE_NAME_FONT_SCALE", float(DIALOG_DEFAULTS["QT_FILE_NAME_FONT_SCALE"]), minimum=0.1
-        )
-        effective_name_font_scale = name_font_scale / global_scale
-        if base_font.pointSize() > 0:
-            scaled_font.setPointSize(
-                int(
-                    base_font.pointSize()
-                    * effective_name_font_scale
-                )
-            )
-        elif base_font.pixelSize() > 0:
-            scaled_font.setPixelSize(
-                int(
-                    base_font.pixelSize()
-                    * effective_name_font_scale
-                )
-            )
-        widget.setFont(scaled_font)
+    s = merge_dialog_settings(settings)
+    start = preferred_start_dir(start_dir, s, dialog_key)
 
-    for view_name in ("listView", "treeView"):
-        file_view = dialog.findChild(QtWidgets.QWidget, view_name)
-        if file_view is not None:
-            _scale_file_name_font(file_view)
+    dlg = QtWidgets.QFileDialog()
+    dlg.setWindowTitle(title)
+    dlg.setAcceptMode(QtWidgets.QFileDialog.AcceptOpen)
+    dlg.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+    dlg.setDirectory(str(start))
+    dlg.setNameFilter(file_filter or "All Files (*)")
+    if use_non_native:
+        dlg.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
 
-    sidebar_urls = _sidebar_urls()
-    if sidebar_urls:
-        dialog.setSidebarUrls(sidebar_urls)
-    _widen_file_dialog_sidebar(dialog, settings_obj)
-    if _coerce_bool_setting(
-        settings_obj, "QT_FILE_DIALOG_MAXIMIZE", bool(DIALOG_DEFAULTS["QT_FILE_DIALOG_MAXIMIZE"])
-    ):
-        dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
-    _configure_file_view_columns(dialog, settings_obj)
-    _focus_file_view(dialog)
-    try:
-        QtCore.QTimer.singleShot(0, lambda: _focus_file_view(dialog))
-    except Exception:
-        pass
-    dialog.activateWindow()
-    dialog.raise_()
-    dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-    gamepad_layer = enable_dialog_gamepad(dialog)
-    if dialog.exec() == QtWidgets.QDialog.Accepted:
-        selected_files = dialog.selectedFiles()
-        if selected_files:
-            if gamepad_layer is not None:
-                gamepad_layer.shutdown()
-            return Path(selected_files[0])
-    if gamepad_layer is not None:
-        gamepad_layer.shutdown()
-    return None
+    if dlg.exec() != QtWidgets.QDialog.Accepted:
+        return None
+
+    files = dlg.selectedFiles()
+    if not files:
+        return None
+
+    chosen = Path(files[0])
+    remember_file_dialog_dir(chosen, s, dialog_key)
+    return chosen
 
 
 def select_file_dialog(
     *,
     title: str,
-    dialog_key: str,
     initial: Optional[Path] = None,
     file_filter: Optional[str] = None,
     settings: Optional[Dict[str, object]] = None,
-    save_settings: bool = True,
+    dialog_key: str = "select_file",
+    use_non_native: bool = True,
 ) -> Optional[Path]:
-    settings_obj = merge_dialog_settings(settings or _load_shared_settings())
-    start_dir = preferred_start_dir(initial, settings_obj, dialog_key)
-
-    selection = file_dialog(
-        title=title, start_dir=start_dir, file_filter=file_filter, settings=settings_obj
+    """
+    Convenience wrapper around file_dialog where `initial` is optional.
+    """
+    start = initial if initial is not None else Path.home()
+    return file_dialog(
+        title=title,
+        start_dir=start,
+        file_filter=file_filter,
+        settings=settings,
+        dialog_key=dialog_key,
+        use_non_native=use_non_native,
     )
 
-    if selection:
-        remember_file_dialog_dir(settings_obj, selection, dialog_key)
-        if save_settings:
-            _save_shared_settings(settings_obj)
 
-    return selection
-
+# ---- Checklist dialog --------------------------------------------------------
 
 def checklist_dialog(
-    title: str,
-    text: Optional[str],
-    items: Iterable[Tuple[bool, str]],
     *,
+    title: str,
+    items: Iterable[Tuple[bool, str]],
+    text: Optional[str] = None,
     ok_label: str = "OK",
     cancel_label: str = "Cancel",
     height: Optional[int] = None,
+    attach_gamepad: bool = True,
+    settings: Optional[Dict[str, object]] = None,
+    dialog_key: str = "checklist",
 ) -> Optional[List[str]]:
+    """
+    Controller-friendly checklist dialog.
+
+    Focus behavior:
+      - initial focus: OK
+      - Right/Down: next by tab order
+      - Left/Up: previous by tab order
+      - wraps: OK -> Cancel -> cb1..cbN -> OK
+
+    Returns:
+      None if cancelled
+      else list[str] of checked labels
+    """
+    ensure_qt_app(settings)
     from PySide6 import QtCore, QtWidgets
 
-    ensure_qt_app()
-    dialog = QtWidgets.QDialog()
-    dialog.setWindowTitle(title or "Select items")
-    if height:
+    dlg = QtWidgets.QDialog()
+    dlg.setWindowTitle(title or "Select items")
+
+    if height is not None:
         try:
-            dialog.resize(dialog.width(), int(height))
-        except ValueError:
+            dlg.resize(dlg.width(), int(height))
+        except Exception:
             pass
 
-    layout = QtWidgets.QVBoxLayout(dialog)
+    layout = QtWidgets.QVBoxLayout(dlg)
+
     if text:
         label = QtWidgets.QLabel(text)
         label.setWordWrap(True)
@@ -588,115 +457,125 @@ def checklist_dialog(
 
     scroll = QtWidgets.QScrollArea()
     scroll.setWidgetResizable(True)
+    # Critical: avoid the scroll container taking initial focus
+    scroll.setFocusPolicy(QtCore.Qt.NoFocus)
+
     container = QtWidgets.QWidget()
-    container_layout = QtWidgets.QVBoxLayout(container)
+    container.setFocusPolicy(QtCore.Qt.NoFocus)
+    v = QtWidgets.QVBoxLayout(container)
+    v.setContentsMargins(0, 0, 0, 0)
 
     checkboxes: List[QtWidgets.QCheckBox] = []
     for checked, label_text in items:
         cb = QtWidgets.QCheckBox(label_text)
-        cb.setChecked(checked)
-        container_layout.addWidget(cb)
+        cb.setChecked(bool(checked))
+        cb.setFocusPolicy(QtCore.Qt.StrongFocus)
+        v.addWidget(cb)
         checkboxes.append(cb)
-    container_layout.addStretch()
+
+    v.addStretch(1)
     scroll.setWidget(container)
     layout.addWidget(scroll)
 
-    button_row = QtWidgets.QHBoxLayout()
-    button_row.addStretch()
-    ok_button = QtWidgets.QPushButton(ok_label)
-    ok_button.setDefault(True)
-    button_row.addWidget(ok_button)
-    cancel_button = QtWidgets.QPushButton(cancel_label)
-    button_row.addWidget(cancel_button)
-    button_row.addStretch()
-    layout.addLayout(button_row)
+    row = QtWidgets.QHBoxLayout()
+    row.addStretch(1)
+    ok_btn = QtWidgets.QPushButton(ok_label)
+    ok_btn.setDefault(True)
+    cancel_btn = QtWidgets.QPushButton(cancel_label)
+    row.addWidget(ok_btn)
+    row.addWidget(cancel_btn)
+    row.addStretch(1)
+    layout.addLayout(row)
 
-    ok_button.clicked.connect(dialog.accept)
-    cancel_button.clicked.connect(dialog.reject)
+    ok_btn.clicked.connect(dlg.accept)
+    cancel_btn.clicked.connect(dlg.reject)
 
-    enable_dialog_gamepad(
-        dialog, affirmative=ok_button, negative=cancel_button, default=ok_button
-    )
-    dialog.setLayout(layout)
-    scroll.setFocusPolicy(QtCore.Qt.NoFocus)
-    container.setFocusPolicy(QtCore.Qt.NoFocus)
-    
-    QtWidgets.QWidget.setTabOrder(ok_button, cancel_button)
-    prev = cancel_button
-    for cb in checkboxes:
-        QtWidgets.QWidget.setTabOrder(prev, cb)
-        prev = cb
-    if checkboxes:
-        QtWidgets.QWidget.setTabOrder(checkboxes[-1], ok_button)
-    else:
-        QtWidgets.QWidget.setTabOrder(cancel_button, ok_button)
-        
-    QtCore.QTimer.singleShot(
-        0,
-        lambda: ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason),
-    )
-    
-    dialog.activateWindow()
-    dialog.raise_()
+    # The exact cycle you requested:
+    cycle: List[QtWidgets.QWidget] = [ok_btn, cancel_btn, *checkboxes]
+    _set_tab_cycle(cycle)
+    _make_arrow_keys_follow_tab_order(dlg)
 
+    if attach_gamepad:
+        enable_dialog_gamepad(dlg, {"affirmative": ok_btn, "negative": cancel_btn, "default": ok_btn})
 
-    result = dialog.exec()
-    if result != QtWidgets.QDialog.Accepted:
+    _defer_focus(ok_btn)
+
+    if dlg.exec() != QtWidgets.QDialog.Accepted:
         return None
 
-    return [cb.text() for cb in checkboxes if cb.isChecked()]
+    chosen = [cb.text() for cb in checkboxes if cb.isChecked()]
 
+    # Optional: remember last directory-like choice? Not applicable here,
+    # but we keep dialog_key/settings parameters for symmetry.
+    _ = dialog_key  # unused
+
+    return chosen
+
+
+# ---- Progress dialog ---------------------------------------------------------
 
 def progress_dialog_from_stream(
-    title: str, text: str, stream: Iterable[str], *, cancel_label: str = "Cancel"
+    *,
+    title: str,
+    text: str,
+    stream: Iterable[str],
+    cancel_label: str = "Cancel",
+    attach_gamepad: bool = True,
+    settings: Optional[Dict[str, object]] = None,
 ) -> int:
+    """
+    Stream-driven progress dialog.
+
+    `stream` should yield lines that are either:
+      - a number 0..100 (interpreted as percent)
+      - or anything else (ignored)
+
+    Returns:
+      0 on success
+      1 if cancelled
+    """
+    ensure_qt_app(settings)
     from PySide6 import QtWidgets
 
-    ensure_qt_app()
-    dialog = QtWidgets.QProgressDialog()
-    dialog.setWindowTitle(title or "Progress")
-    dialog.setLabelText(text)
-    dialog.setCancelButtonText(cancel_label)
-    dialog.setRange(0, 100)
-    dialog.setValue(0)
-    dialog.setAutoClose(True)
-    dialog.setAutoReset(True)
-    dialog.show()
+    dlg = QtWidgets.QProgressDialog()
+    dlg.setWindowTitle(title or "Progress")
+    dlg.setLabelText(text)
+    dlg.setCancelButtonText(cancel_label)
+    dlg.setRange(0, 100)
+    dlg.setValue(0)
+    dlg.setAutoClose(True)
+    dlg.setAutoReset(True)
+    dlg.show()
 
-    cancel_button = dialog.findChild(QtWidgets.QPushButton)
-    enable_dialog_gamepad(
-        dialog,
-        affirmative=cancel_button,
-        negative=cancel_button,
-        default=cancel_button,
-    )
+    # Try to find the cancel button for gamepad mapping.
+    cancel_btn = dlg.findChild(QtWidgets.QPushButton)
+    if attach_gamepad and cancel_btn is not None:
+        enable_dialog_gamepad(dlg, {"affirmative": cancel_btn, "negative": cancel_btn, "default": cancel_btn})
 
     app = QtWidgets.QApplication.instance()
     if app is None:
         return 1
 
-    def is_cancelled() -> bool:
+    def pump() -> bool:
         app.processEvents()
-        return dialog.wasCanceled()
+        return not dlg.wasCanceled()
 
     for line in stream:
-        if is_cancelled():
-            dialog.cancel()
+        if not pump():
+            dlg.cancel()
             return 1
-        value = line.strip()
-        if not value:
+        s = (line or "").strip()
+        if not s:
             continue
         try:
-            percent = int(float(value))
-        except ValueError:
+            pct = int(float(s))
+        except Exception:
             continue
-        dialog.setValue(max(0, min(100, percent)))
-        if is_cancelled():
-            dialog.cancel()
+        dlg.setValue(max(0, min(100, pct)))
+        if not pump():
+            dlg.cancel()
             return 1
-    dialog.setValue(100)
-    app.processEvents()
-    if dialog.wasCanceled():
-        dialog.cancel()
-        return 1
-    return 0
+
+    dlg.setValue(100)
+    pump()
+    return 0 if not dlg.wasCanceled() else 1
