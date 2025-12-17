@@ -9,6 +9,7 @@ passing load/save callbacks for file dialogs.
 
 import importlib.util
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -33,6 +34,24 @@ DIALOG_DEFAULTS = {
 _QT_APP: Optional["QtWidgets.QApplication"] = None
 _QT_BASE_FONT: Optional["QtGui.QFont"] = None
 _QT_IMPORT_ERROR: Optional[BaseException] = None
+
+
+DialogButtonRole = str
+
+
+@dataclass
+class DialogButtonSpec:
+    label: str
+    role: DialogButtonRole = "neutral"
+    is_default: bool = False
+
+
+@dataclass
+class DialogResult:
+    label: Optional[str]
+    role: Optional[DialogButtonRole]
+    checklist: List[str]
+    progress_cancelled: bool = False
 
 
 def merge_dialog_settings(settings: Optional[Dict[str, object]] = None) -> Dict[str, object]:
@@ -214,6 +233,215 @@ def enable_dialog_gamepad(
         return None
 
 
+def _icon_for_level(icon: Optional[str], QtWidgets) -> Optional["QtGui.QPixmap"]:
+    if not icon:
+        return None
+    normalized = icon.lower()
+    icon_map = {
+        "info": QtWidgets.QMessageBox.Information,
+        "information": QtWidgets.QMessageBox.Information,
+        "error": QtWidgets.QMessageBox.Critical,
+        "critical": QtWidgets.QMessageBox.Critical,
+        "warning": QtWidgets.QMessageBox.Warning,
+        "question": QtWidgets.QMessageBox.Question,
+    }
+    if normalized not in icon_map:
+        return None
+    message_icon = QtWidgets.QMessageBox().iconPixmap()
+    try:
+        msg_box = QtWidgets.QMessageBox(icon_map[normalized], "", "")
+        message_icon = msg_box.iconPixmap()
+    except Exception:
+        pass
+    return message_icon
+
+
+def modular_dialog(
+    *,
+    title: str,
+    text: Optional[str] = None,
+    buttons: Sequence[DialogButtonSpec],
+    checklist: Optional[Iterable[Tuple[bool, str]]] = None,
+    progress_stream: Optional[Iterable[str]] = None,
+    icon: Optional[str] = None,
+    height: Optional[int] = None,
+) -> DialogResult:
+    from PySide6 import QtCore, QtGui, QtWidgets
+
+    if not buttons:
+        raise ValueError("At least one button must be provided to modular_dialog")
+
+    ensure_qt_app()
+    dialog = QtWidgets.QDialog()
+    dialog.setWindowTitle(title)
+    if height is not None:
+        try:
+            dialog.resize(dialog.width(), int(height))
+        except Exception:
+            pass
+    layout = QtWidgets.QVBoxLayout(dialog)
+
+    header_layout = QtWidgets.QHBoxLayout()
+    icon_pixmap = _icon_for_level(icon, QtWidgets)
+    if icon_pixmap is not None:
+        icon_label = QtWidgets.QLabel()
+        icon_label.setPixmap(icon_pixmap)
+        header_layout.addWidget(icon_label, alignment=QtCore.Qt.AlignmentFlag.AlignTop)
+
+    if text:
+        text_label = QtWidgets.QLabel(text)
+        text_label.setWordWrap(True)
+        header_layout.addWidget(text_label)
+
+    if header_layout.count():
+        layout.addLayout(header_layout)
+
+    checklist_boxes: list[QtWidgets.QCheckBox] = []
+    if checklist is not None:
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QtWidgets.QWidget()
+        container_layout = QtWidgets.QVBoxLayout(container)
+        scroll.setFocusPolicy(QtCore.Qt.NoFocus)
+        container.setFocusPolicy(QtCore.Qt.NoFocus)
+
+        for checked, label_text in checklist:
+            cb = QtWidgets.QCheckBox(label_text)
+            cb.setChecked(checked)
+            container_layout.addWidget(cb)
+            checklist_boxes.append(cb)
+        container_layout.addStretch()
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+
+    progress_bar: Optional[QtWidgets.QProgressBar] = None
+    if progress_stream is not None:
+        progress_bar = QtWidgets.QProgressBar()
+        progress_bar.setRange(0, 100)
+        progress_bar.setValue(0)
+        layout.addWidget(progress_bar)
+
+    button_row = QtWidgets.QHBoxLayout()
+    button_row.addStretch()
+    qt_buttons: list[Tuple[QtWidgets.QPushButton, DialogButtonSpec]] = []
+    default_button: Optional[QtWidgets.QPushButton] = None
+    for idx, button_spec in enumerate(buttons):
+        btn = QtWidgets.QPushButton(button_spec.label)
+        if button_spec.is_default or (default_button is None and idx == 0):
+            btn.setDefault(True)
+            default_button = btn
+        button_row.addWidget(btn)
+        qt_buttons.append((btn, button_spec))
+    button_row.addStretch()
+    layout.addLayout(button_row)
+
+    if qt_buttons:
+        for (first_button, _), (second_button, _) in zip(qt_buttons, qt_buttons[1:]):
+            QtWidgets.QWidget.setTabOrder(first_button, second_button)
+        if checklist_boxes:
+            QtWidgets.QWidget.setTabOrder(qt_buttons[-1][0], checklist_boxes[0])
+            for prev, current in zip(checklist_boxes, checklist_boxes[1:]):
+                QtWidgets.QWidget.setTabOrder(prev, current)
+            QtWidgets.QWidget.setTabOrder(checklist_boxes[-1], qt_buttons[0][0])
+
+    result = DialogResult(label=None, role=None, checklist=[], progress_cancelled=False)
+
+    def _record_selection(button_spec: DialogButtonSpec) -> None:
+        result.label = button_spec.label
+        result.role = button_spec.role
+
+    for button, spec in qt_buttons:
+        button.clicked.connect(lambda _=False, s=spec: (_record_selection(s), dialog.accept()))
+
+    def _handle_reject() -> None:
+        if result.role is None:
+            negative_spec = next((spec for _, spec in qt_buttons if spec.role == "negative"), None)
+            if negative_spec:
+                _record_selection(negative_spec)
+            result.progress_cancelled = True
+
+    dialog.rejected.connect(_handle_reject)
+
+    positive_spec = next((spec for _, spec in qt_buttons if spec.role == "positive"), None)
+    negative_spec = next((spec for _, spec in qt_buttons if spec.role == "negative"), None)
+    special_spec = next((spec for _, spec in qt_buttons if spec.role == "special"), None)
+    positive_button = next((btn for btn, spec in qt_buttons if spec.role == "positive"), None)
+    negative_button = next((btn for btn, spec in qt_buttons if spec.role == "negative"), None)
+    special_button = next((btn for btn, spec in qt_buttons if spec.role == "special"), None)
+    enable_dialog_gamepad(
+        dialog,
+        affirmative=positive_button,
+        negative=negative_button,
+        special=special_button,
+        default=default_button,
+    )
+
+    if default_button is not None:
+        try:
+            QtCore.QTimer.singleShot(
+                0,
+                lambda: default_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason),
+            )
+        except Exception:
+            pass
+
+    def _capture_checklist() -> None:
+        result.checklist = [cb.text() for cb in checklist_boxes if cb.isChecked()]
+
+    if progress_stream is None:
+        dialog.activateWindow()
+        dialog.raise_()
+        exec_result = dialog.exec()
+        _capture_checklist()
+        if result.role is None:
+            default_spec = next((spec for _, spec in qt_buttons if spec.is_default), None)
+            if default_spec is None:
+                default_spec = qt_buttons[0][1]
+            if exec_result == QtWidgets.QDialog.Accepted:
+                _record_selection(default_spec)
+            elif exec_result == QtWidgets.QDialog.Rejected:
+                fallback_negative = negative_spec or default_spec
+                _record_selection(fallback_negative)
+                result.progress_cancelled = True
+        return result
+
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return result
+
+    dialog.setWindowModality(QtCore.Qt.ApplicationModal)
+    dialog.show()
+
+    for line in progress_stream:
+        app.processEvents()
+        if result.role == "negative" or result.progress_cancelled:
+            result.progress_cancelled = True
+            break
+        if not dialog.isVisible():
+            result.progress_cancelled = True
+            break
+        if progress_bar is not None:
+            value = line.strip()
+            if not value:
+                continue
+            try:
+                percent = int(float(value))
+            except ValueError:
+                continue
+            progress_bar.setValue(max(0, min(100, percent)))
+
+    if progress_bar is not None and not result.progress_cancelled:
+        progress_bar.setValue(100)
+    app.processEvents()
+
+    if result.role is None and not result.progress_cancelled:
+        completion_spec = positive_spec or next((spec for _, spec in qt_buttons if spec.is_default), qt_buttons[0][1])
+        _record_selection(completion_spec)
+    _capture_checklist()
+    dialog.close()
+    return result
+
+
 def _sidebar_urls() -> list["QtCore.QUrl"]:
     ensure_qt_available()
     from PySide6 import QtCore
@@ -326,51 +554,21 @@ def _focus_file_view(dialog: "QtWidgets.QFileDialog") -> None:
 def question_dialog(
     *, title: str, text: str, ok_label: str, cancel_label: str, extra_label: Optional[str] = None
 ) -> str:
-    from PySide6 import QtCore, QtWidgets
-
-    ensure_qt_app()
-    dialog = QtWidgets.QDialog()
-    dialog.setWindowTitle(title)
-    layout = QtWidgets.QVBoxLayout(dialog)
-
-    label = QtWidgets.QLabel(text)
-    label.setWordWrap(True)
-    layout.addWidget(label)
-
-    button_row = QtWidgets.QHBoxLayout()
-    button_row.addStretch()
-    ok_button = QtWidgets.QPushButton(ok_label)
-    ok_button.setDefault(True)
-    button_row.addWidget(ok_button)
-    extra_button = None
+    buttons = [DialogButtonSpec(ok_label, role="positive", is_default=True)]
     if extra_label:
-        extra_button = QtWidgets.QPushButton(extra_label)
-        button_row.addWidget(extra_button)
-    cancel_button = QtWidgets.QPushButton(cancel_label)
-    button_row.addWidget(cancel_button)
-    button_row.addStretch()
-    layout.addLayout(button_row)
+        buttons.append(DialogButtonSpec(extra_label, role="special"))
+    buttons.append(DialogButtonSpec(cancel_label, role="negative"))
 
-    ok_button.clicked.connect(dialog.accept)
-    cancel_button.clicked.connect(dialog.reject)
-    extra_result = QtWidgets.QDialog.Accepted + 1
-    if extra_button is not None:
-        extra_button.clicked.connect(lambda: dialog.done(extra_result))
-
-    dialog.setLayout(layout)
-    dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-    enable_dialog_gamepad(
-        dialog,
-        affirmative=ok_button,
-        negative=cancel_button,
-        special=extra_button,
-        default=ok_button,
+    result = modular_dialog(
+        title=title,
+        text=text,
+        icon="question",
+        buttons=buttons,
     )
 
-    result = dialog.exec()
-    if result == QtWidgets.QDialog.Accepted:
+    if result.role == "positive":
         return "ok"
-    if result == extra_result:
+    if result.role == "special":
         return "extra"
     return "cancel"
 
@@ -379,38 +577,24 @@ def info_dialog(message: str, *, title: str = "Information", logger: Optional[Ap
     ensure_qt_available()
     app_logger = logger or get_app_logger()
     app_logger.log_dialog(title, message, backend="qt", location="info-dialog")
-    from PySide6 import QtWidgets
-
-    ensure_qt_app()
-    box = QtWidgets.QMessageBox()
-    box.setIcon(QtWidgets.QMessageBox.Information)
-    box.setWindowTitle(title)
-    box.setText(message)
-    ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
-    box.setDefaultButton(QtWidgets.QMessageBox.Ok)
-    enable_dialog_gamepad(
-        box, affirmative=ok_button, negative=ok_button, default=ok_button
+    modular_dialog(
+        title=title,
+        text=message,
+        icon="info",
+        buttons=[DialogButtonSpec("OK", role="positive", is_default=True)],
     )
-    box.exec()
 
 
 def error_dialog(message: str, *, title: str = "Error", logger: Optional[AppLogger] = None) -> None:
     ensure_qt_available()
     app_logger = logger or get_app_logger()
     app_logger.log_dialog(title, message, level="ERROR", backend="qt", location="error-dialog")
-    from PySide6 import QtWidgets
-
-    ensure_qt_app()
-    box = QtWidgets.QMessageBox()
-    box.setIcon(QtWidgets.QMessageBox.Critical)
-    box.setWindowTitle(title)
-    box.setText(message)
-    ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
-    box.setDefaultButton(QtWidgets.QMessageBox.Ok)
-    enable_dialog_gamepad(
-        box, affirmative=ok_button, negative=ok_button, default=ok_button
+    modular_dialog(
+        title=title,
+        text=message,
+        icon="error",
+        buttons=[DialogButtonSpec("OK", role="positive", is_default=True)],
     )
-    box.exec()
 
 
 def preferred_start_dir(initial: Optional[Path], settings: Dict[str, object], dialog_key: str) -> Path:
@@ -569,151 +753,39 @@ def checklist_dialog(
     cancel_label: str = "Cancel",
     height: Optional[int] = None,
 ) -> Optional[List[str]]:
-    from PySide6 import QtCore, QtWidgets
+    button_specs = [
+        DialogButtonSpec(ok_label, role="positive", is_default=True),
+        DialogButtonSpec(cancel_label, role="negative"),
+    ]
 
-    ensure_qt_app()
-    dialog = QtWidgets.QDialog()
-    dialog.setWindowTitle(title or "Select items")
-    if height:
-        try:
-            dialog.resize(dialog.width(), int(height))
-        except ValueError:
-            pass
-
-    layout = QtWidgets.QVBoxLayout(dialog)
-    if text:
-        label = QtWidgets.QLabel(text)
-        label.setWordWrap(True)
-        layout.addWidget(label)
-
-    scroll = QtWidgets.QScrollArea()
-    scroll.setWidgetResizable(True)
-    container = QtWidgets.QWidget()
-    container_layout = QtWidgets.QVBoxLayout(container)
-
-    checkboxes: List[QtWidgets.QCheckBox] = []
-    for checked, label_text in items:
-        cb = QtWidgets.QCheckBox(label_text)
-        cb.setChecked(checked)
-        container_layout.addWidget(cb)
-        checkboxes.append(cb)
-    container_layout.addStretch()
-    scroll.setWidget(container)
-    layout.addWidget(scroll)
-
-    button_row = QtWidgets.QHBoxLayout()
-    button_row.addStretch()
-    ok_button = QtWidgets.QPushButton(ok_label)
-    ok_button.setDefault(True)
-    button_row.addWidget(ok_button)
-    cancel_button = QtWidgets.QPushButton(cancel_label)
-    button_row.addWidget(cancel_button)
-    button_row.addStretch()
-    layout.addLayout(button_row)
-
-    ok_button.clicked.connect(dialog.accept)
-    cancel_button.clicked.connect(dialog.reject)
-
-    enable_dialog_gamepad(
-        dialog, affirmative=ok_button, negative=cancel_button, default=ok_button
+    dialog = modular_dialog(
+        title=title or "Select items",
+        text=text,
+        buttons=button_specs,
+        checklist=items,
+        height=height,
     )
-    dialog.setLayout(layout)
-    scroll.setFocusPolicy(QtCore.Qt.NoFocus)
-    container.setFocusPolicy(QtCore.Qt.NoFocus)
 
-    # Build the tab chain starting at the OK button so D-pad navigation follows the
-    # expected order (OK -> checkboxes -> Cancel -> OK).
-    if checkboxes:
-        QtWidgets.QWidget.setTabOrder(cancel_button, ok_button)
-        QtWidgets.QWidget.setTabOrder(ok_button, checkboxes[0])
-        for prev, current in zip(checkboxes, checkboxes[1:]):
-            QtWidgets.QWidget.setTabOrder(prev, current)
-        QtWidgets.QWidget.setTabOrder(checkboxes[-1], cancel_button)
-    else:
-        QtWidgets.QWidget.setTabOrder(cancel_button, ok_button)
-        QtWidgets.QWidget.setTabOrder(ok_button, cancel_button)
-
-    def _schedule_initial_focus() -> None:
-        QtCore.QTimer.singleShot(
-            0,
-            lambda: ok_button.setFocus(
-                QtCore.Qt.FocusReason.ActiveWindowFocusReason
-            ),
-        )
-
-    class _FocusFilter(QtCore.QObject):
-        def eventFilter(self, obj, event):
-            if obj is dialog and event.type() in (
-                QtCore.QEvent.Show,
-                QtCore.QEvent.ShowToParent,
-            ):
-                _schedule_initial_focus()
-            return super().eventFilter(obj, event)
-
-    focus_filter = _FocusFilter(dialog)
-    dialog.installEventFilter(focus_filter)
-    dialog._focus_filter = focus_filter  # Prevent garbage collection.
-
-    dialog.activateWindow()
-    dialog.raise_()
-
-    result = dialog.exec()
-    if result != QtWidgets.QDialog.Accepted:
+    if dialog.role != "positive":
         return None
-
-    return [cb.text() for cb in checkboxes if cb.isChecked()]
+    return dialog.checklist
 
 
 def progress_dialog_from_stream(
     title: str, text: str, stream: Iterable[str], *, cancel_label: str = "Cancel"
 ) -> int:
-    from PySide6 import QtWidgets
+    buttons = [
+        DialogButtonSpec(cancel_label, role="negative", is_default=True),
+        DialogButtonSpec("Close", role="positive"),
+    ]
 
-    ensure_qt_app()
-    dialog = QtWidgets.QProgressDialog()
-    dialog.setWindowTitle(title or "Progress")
-    dialog.setLabelText(text)
-    dialog.setCancelButtonText(cancel_label)
-    dialog.setRange(0, 100)
-    dialog.setValue(0)
-    dialog.setAutoClose(True)
-    dialog.setAutoReset(True)
-    dialog.show()
-
-    cancel_button = dialog.findChild(QtWidgets.QPushButton)
-    enable_dialog_gamepad(
-        dialog,
-        affirmative=cancel_button,
-        negative=cancel_button,
-        default=cancel_button,
+    result = modular_dialog(
+        title=title or "Progress",
+        text=text,
+        buttons=buttons,
+        progress_stream=stream,
     )
 
-    app = QtWidgets.QApplication.instance()
-    if app is None:
-        return 1
-
-    def is_cancelled() -> bool:
-        app.processEvents()
-        return dialog.wasCanceled()
-
-    for line in stream:
-        if is_cancelled():
-            dialog.cancel()
-            return 1
-        value = line.strip()
-        if not value:
-            continue
-        try:
-            percent = int(float(value))
-        except ValueError:
-            continue
-        dialog.setValue(max(0, min(100, percent)))
-        if is_cancelled():
-            dialog.cancel()
-            return 1
-    dialog.setValue(100)
-    app.processEvents()
-    if dialog.wasCanceled():
-        dialog.cancel()
+    if result.progress_cancelled or result.role == "negative":
         return 1
     return 0

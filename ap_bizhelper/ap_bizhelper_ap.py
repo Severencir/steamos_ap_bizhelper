@@ -10,7 +10,7 @@ import subprocess
 import sys
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from . import dialogs
 from .ap_bizhelper_config import (
@@ -201,58 +201,6 @@ def _enable_dialog_gamepad(
             location="gamepad",
         )
     return None
-
-
-def _qt_question_dialog(
-    *, title: str, text: str, ok_label: str, cancel_label: str, extra_label: Optional[str] = None
-) -> str:
-    from PySide6 import QtCore, QtWidgets
-
-    _ensure_qt_app()
-    dialog = QtWidgets.QDialog()
-    dialog.setWindowTitle(title)
-    layout = QtWidgets.QVBoxLayout(dialog)
-
-    label = QtWidgets.QLabel(text)
-    label.setWordWrap(True)
-    layout.addWidget(label)
-
-    button_row = QtWidgets.QHBoxLayout()
-    button_row.addStretch()
-    ok_button = QtWidgets.QPushButton(ok_label)
-    ok_button.setDefault(True)
-    button_row.addWidget(ok_button)
-    extra_button = None
-    if extra_label:
-        extra_button = QtWidgets.QPushButton(extra_label)
-        button_row.addWidget(extra_button)
-    cancel_button = QtWidgets.QPushButton(cancel_label)
-    button_row.addWidget(cancel_button)
-    button_row.addStretch()
-    layout.addLayout(button_row)
-
-    ok_button.clicked.connect(dialog.accept)
-    cancel_button.clicked.connect(dialog.reject)
-    extra_result = QtWidgets.QDialog.Accepted + 1
-    if extra_button is not None:
-        extra_button.clicked.connect(lambda: dialog.done(extra_result))
-
-    dialog.setLayout(layout)
-    dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-    _enable_dialog_gamepad(
-        dialog,
-        affirmative=ok_button,
-        negative=cancel_button,
-        special=extra_button,
-        default=ok_button,
-    )
-
-    result = dialog.exec()
-    if result == QtWidgets.QDialog.Accepted:
-        return "ok"
-    if result == extra_result:
-        return "extra"
-    return "cancel"
 
 
 def _dialog_dir_map(settings: Dict[str, Any]) -> Dict[str, str]:
@@ -693,7 +641,6 @@ def download_with_progress(
 
     _ensure_dirs()
     _ensure_qt_available()
-    from PySide6 import QtWidgets
 
     if dest.exists():
         try:
@@ -701,61 +648,51 @@ def download_with_progress(
         except Exception:
             pass
 
-    _ensure_qt_app()
-    dialog = QtWidgets.QProgressDialog()
-    dialog.setWindowTitle(title)
-    dialog.setLabelText(text)
-    dialog.setRange(0, 100)
-    dialog.setValue(0)
-    dialog.setAutoClose(True)
-    dialog.setAutoReset(True)
-    dialog.setCancelButtonText("Cancel")
-    dialog.show()
+    req = urllib.request.Request(url, headers={"User-Agent": "ap-bizhelper/1.0"})
 
-    cancel_button = dialog.findChild(QtWidgets.QPushButton)
-    _enable_dialog_gamepad(
-        dialog,
-        affirmative=cancel_button,
-        negative=cancel_button,
-        default=cancel_button,
+    def _download_stream() -> Iterable[str]:
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp, dest.open("wb") as f:
+                total_str = resp.headers.get("Content-Length") or "0"
+                try:
+                    total = int(total_str)
+                except ValueError:
+                    total = 0
+                downloaded = 0
+                chunk_size = 65536
+                while True:
+                    chunk = resp.read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total > 0:
+                        percent = max(0, min(100, int(downloaded * 100 / total)))
+                        yield str(percent)
+        except GeneratorExit:
+            if dest.exists():
+                try:
+                    dest.unlink()
+                except Exception:
+                    pass
+            raise
+        except Exception:
+            if dest.exists():
+                try:
+                    dest.unlink()
+                except Exception:
+                    pass
+            raise
+
+    result = dialogs.progress_dialog_from_stream(
+        title=title,
+        text=text,
+        stream=_download_stream(),
+        cancel_label="Cancel",
     )
 
-    app = QtWidgets.QApplication.instance()
-    if app is None:
-        raise RuntimeError("QApplication unavailable for download progress dialog")
-
-    req = urllib.request.Request(url, headers={"User-Agent": "ap-bizhelper/1.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=300) as resp, dest.open("wb") as f:
-            total_str = resp.headers.get("Content-Length") or "0"
-            try:
-                total = int(total_str)
-            except ValueError:
-                total = 0
-            downloaded = 0
-            chunk_size = 65536
-            while True:
-                if dialog.wasCanceled():
-                    raise RuntimeError("Download cancelled by user")
-                chunk = resp.read(chunk_size)
-                if not chunk:
-                    break
-                f.write(chunk)
-                downloaded += len(chunk)
-                if total > 0:
-                    percent = max(0, min(100, int(downloaded * 100 / total)))
-                    dialog.setValue(percent)
-                app.processEvents()
-            dialog.setValue(100)
-            app.processEvents()
-    except Exception:
-        if dest.exists():
-            try:
-                dest.unlink()
-            except Exception:
-                pass
-        dialog.cancel()
-        raise
+    if result != 0:
+        raise RuntimeError("Download cancelled by user")
 
     try:
         dest.chmod(dest.stat().st_mode | 0o111)
