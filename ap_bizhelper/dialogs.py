@@ -620,25 +620,42 @@ def checklist_dialog(
     dialog.setLayout(layout)
     scroll.setFocusPolicy(QtCore.Qt.NoFocus)
     container.setFocusPolicy(QtCore.Qt.NoFocus)
-    
-    QtWidgets.QWidget.setTabOrder(ok_button, cancel_button)
-    prev = cancel_button
-    for cb in checkboxes:
-        QtWidgets.QWidget.setTabOrder(prev, cb)
-        prev = cb
+
+    # Build the tab chain starting at the OK button so D-pad navigation follows the
+    # expected order (OK -> checkboxes -> Cancel -> OK).
     if checkboxes:
-        QtWidgets.QWidget.setTabOrder(checkboxes[-1], ok_button)
+        QtWidgets.QWidget.setTabOrder(cancel_button, ok_button)
+        QtWidgets.QWidget.setTabOrder(ok_button, checkboxes[0])
+        for prev, current in zip(checkboxes, checkboxes[1:]):
+            QtWidgets.QWidget.setTabOrder(prev, current)
+        QtWidgets.QWidget.setTabOrder(checkboxes[-1], cancel_button)
     else:
         QtWidgets.QWidget.setTabOrder(cancel_button, ok_button)
-        
-    QtCore.QTimer.singleShot(
-        0,
-        lambda: ok_button.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason),
-    )
-    
+        QtWidgets.QWidget.setTabOrder(ok_button, cancel_button)
+
+    def _schedule_initial_focus() -> None:
+        QtCore.QTimer.singleShot(
+            0,
+            lambda: ok_button.setFocus(
+                QtCore.Qt.FocusReason.ActiveWindowFocusReason
+            ),
+        )
+
+    class _FocusFilter(QtCore.QObject):
+        def eventFilter(self, obj, event):
+            if obj is dialog and event.type() in (
+                QtCore.QEvent.Show,
+                QtCore.QEvent.ShowToParent,
+            ):
+                _schedule_initial_focus()
+            return super().eventFilter(obj, event)
+
+    focus_filter = _FocusFilter(dialog)
+    dialog.installEventFilter(focus_filter)
+    dialog._focus_filter = focus_filter  # Prevent garbage collection.
+
     dialog.activateWindow()
     dialog.raise_()
-
 
     result = dialog.exec()
     if result != QtWidgets.QDialog.Accepted:
