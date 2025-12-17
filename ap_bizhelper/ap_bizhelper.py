@@ -303,11 +303,12 @@ def _prompt_setup_choices(
     if not any((show_archipelago, show_bizhawk)):
         return False, False, False
 
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 
     _ensure_qt_app()
     dialog = QtWidgets.QDialog()
     dialog.setWindowTitle("Download setup")
+    dialog.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
     layout = QtWidgets.QVBoxLayout(dialog)
     label = QtWidgets.QLabel("Select which components to download and configure.")
     layout.addWidget(label)
