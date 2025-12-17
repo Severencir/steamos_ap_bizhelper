@@ -281,13 +281,7 @@ class ZenityShim:
     def _show_error_dialog(self, message: str) -> None:
         if self._qt_available():
             try:
-                from PySide6 import QtWidgets  # type: ignore
-                dialogs.ensure_qt_app()
-                box = QtWidgets.QMessageBox()
-                box.setIcon(QtWidgets.QMessageBox.Critical)
-                box.setWindowTitle("Zenity Shim Error")
-                box.setText(message)
-                box.exec()
+                dialogs.error_dialog(message, title="Zenity Shim Error")
                 return
             except Exception:
                 self.logger.log(
@@ -357,25 +351,14 @@ class ZenityShim:
         return 1
 
     def _handle_message(self, argv: Sequence[str], *, level: str) -> int:
-        from PySide6 import QtWidgets  # type: ignore
-
-        dialogs.ensure_qt_app()
-        box = QtWidgets.QMessageBox()
+        title = self._extract_option(argv, "--title=") or ("Error" if level == "error" else "Information")
+        text = self._extract_option(argv, "--text=") or ""
         if level == "error":
-            box.setIcon(QtWidgets.QMessageBox.Critical)
-            box.setWindowTitle(self._extract_option(argv, "--title=") or "Error")
+            dialogs.error_dialog(text, title=title)
         else:
-            box.setIcon(QtWidgets.QMessageBox.Information)
-            box.setWindowTitle(self._extract_option(argv, "--title=") or "Information")
-        box.setText(self._extract_option(argv, "--text=") or "")
-        ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
-        box.setDefaultButton(QtWidgets.QMessageBox.Ok)
-        dialogs.enable_dialog_gamepad(
-            box, affirmative=ok_button, negative=ok_button, default=ok_button
-        )
-        box.exec()
+            dialogs.info_dialog(text, title=title)
         self.logger.log(
-            f"Displayed {level} message dialog with title={box.windowTitle()!r}",
+            f"Displayed {level} message dialog with title={title!r}",
             include_context=True,
             location=f"message-{level}",
         )
@@ -400,72 +383,31 @@ class ZenityShim:
         return rows
 
     def _handle_checklist(self, argv: Sequence[str]) -> int:
-        from PySide6 import QtWidgets  # type: ignore
-
         items = self._parse_checklist_items(argv)
         if items is None:
             return self._fallback(argv, "The checklist arguments could not be parsed.")
 
-        dialogs.ensure_qt_app()
-        dialog = QtWidgets.QDialog()
-        dialog.setWindowTitle(self._extract_option(argv, "--title=") or "Select items")
         maybe_height = self._extract_option(argv, "--height=")
-        if maybe_height:
-            try:
-                dialog.resize(dialog.width(), int(maybe_height))
-            except ValueError:
-                pass
-
-        layout = QtWidgets.QVBoxLayout(dialog)
-        text = self._extract_option(argv, "--text=")
-        if text:
-            label = QtWidgets.QLabel(text)
-            label.setWordWrap(True)
-            layout.addWidget(label)
-
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        container = QtWidgets.QWidget()
-        container_layout = QtWidgets.QVBoxLayout(container)
-
-        checkboxes: List[QtWidgets.QCheckBox] = []
-        for checked, label_text in items:
-            cb = QtWidgets.QCheckBox(label_text)
-            cb.setChecked(checked)
-            container_layout.addWidget(cb)
-            checkboxes.append(cb)
-        container_layout.addStretch()
-        scroll.setWidget(container)
-        layout.addWidget(scroll)
+        try:
+            height = int(maybe_height) if maybe_height is not None else None
+        except ValueError:
+            height = None
 
         ok_label = self._extract_option(argv, "--ok-label=") or "OK"
         cancel_label = self._extract_option(argv, "--cancel-label=") or "Cancel"
-        button_row = QtWidgets.QHBoxLayout()
-        button_row.addStretch()
-        ok_button = QtWidgets.QPushButton(ok_label)
-        ok_button.setDefault(True)
-        button_row.addWidget(ok_button)
-        cancel_button = QtWidgets.QPushButton(cancel_label)
-        button_row.addWidget(cancel_button)
-        button_row.addStretch()
-        layout.addLayout(button_row)
-
-        ok_button.clicked.connect(dialog.accept)
-        cancel_button.clicked.connect(dialog.reject)
-
-        dialogs.enable_dialog_gamepad(
-            dialog, affirmative=ok_button, negative=cancel_button, default=ok_button
+        selected = dialogs.checklist_dialog(
+            self._extract_option(argv, "--title=") or "Select items",
+            self._extract_option(argv, "--text="),
+            items,
+            ok_label=ok_label,
+            cancel_label=cancel_label,
+            height=height,
         )
-        dialog.setLayout(layout)
-
-        result = dialog.exec()
-        if result != QtWidgets.QDialog.Accepted:
+        if selected is None:
             self.logger.log(
                 "Checklist dialog cancelled by user.", include_context=True, location="checklist"
             )
             return 1
-
-        selected = [cb.text() for cb in checkboxes if cb.isChecked()]
         sys.stdout.write("|".join(selected) + "\n")
         self.logger.log(
             f"Checklist selections: {selected}", include_context=True, location="checklist"
@@ -473,60 +415,18 @@ class ZenityShim:
         return 0
 
     def _handle_progress(self, argv: Sequence[str]) -> int:
-        from PySide6 import QtWidgets  # type: ignore
-
-        dialogs.ensure_qt_app()
-        dialog = QtWidgets.QProgressDialog()
-        dialog.setWindowTitle(self._extract_option(argv, "--title=") or "Progress")
-        dialog.setLabelText(self._extract_option(argv, "--text=") or "")
-        dialog.setCancelButtonText("Cancel")
-        dialog.setRange(0, 100)
-        dialog.setValue(0)
-        dialog.setAutoClose(True)
-        dialog.setAutoReset(True)
-        dialog.show()
-
-        cancel_button = dialog.findChild(QtWidgets.QPushButton)
-        dialogs.enable_dialog_gamepad(
-            dialog,
-            affirmative=cancel_button,
-            negative=cancel_button,
-            default=cancel_button,
+        result = dialogs.progress_dialog_from_stream(
+            self._extract_option(argv, "--title=") or "Progress",
+            self._extract_option(argv, "--text=") or "",
+            sys.stdin,
         )
-
-        app = QtWidgets.QApplication.instance()
-        if app is None:
-            return 1
-
-        def is_cancelled() -> bool:
-            app.processEvents()
-            return dialog.wasCanceled()
-
-        for line in sys.stdin:
-            if is_cancelled():
-                dialog.cancel()
-                return 1
-            value = line.strip()
-            if not value:
-                continue
-            try:
-                percent = int(float(value))
-            except ValueError:
-                continue
-            dialog.setValue(max(0, min(100, percent)))
-            if is_cancelled():
-                dialog.cancel()
-                return 1
-        dialog.setValue(100)
-        app.processEvents()
-        if dialog.wasCanceled():
-            dialog.cancel()
+        if result != 0:
             self.logger.log(
                 "Progress dialog cancelled by user before completion.",
                 include_context=True,
                 location="progress",
             )
-            return 1
+            return result
         self.logger.log("Progress dialog completed", include_context=True, location="progress")
         return 0
 
@@ -647,31 +547,19 @@ class KDialogShim:
         return 0 if choice == "ok" else 1
 
     def _handle_message(self, argv: Sequence[str]) -> int:
-        from PySide6 import QtWidgets  # type: ignore
-
-        dialogs.ensure_qt_app()
-        box = QtWidgets.QMessageBox()
-        box.setWindowTitle(self._extract_value(argv, "--title") or "Message")
-        if "--error" in argv:
-            box.setIcon(QtWidgets.QMessageBox.Critical)
-        elif "--sorry" in argv:
-            box.setIcon(QtWidgets.QMessageBox.Warning)
-        else:
-            box.setIcon(QtWidgets.QMessageBox.Information)
-        box.setText(
+        title = self._extract_value(argv, "--title") or "Message"
+        message = (
             self._extract_value(argv, "--msgbox")
             or self._extract_value(argv, "--error")
             or self._extract_value(argv, "--sorry")
             or ""
         )
-        ok_button = box.addButton(QtWidgets.QMessageBox.Ok)
-        box.setDefaultButton(QtWidgets.QMessageBox.Ok)
-        dialogs.enable_dialog_gamepad(
-            box, affirmative=ok_button, negative=ok_button, default=ok_button
-        )
-        box.exec()
+        if "--error" in argv:
+            dialogs.error_dialog(message, title=title)
+        else:
+            dialogs.info_dialog(message, title=title)
         self.logger.log(
-            f"kdialog message displayed with title={box.windowTitle()!r}",
+            f"kdialog message displayed with title={title!r}",
             include_context=True,
             location="kdialog-message",
         )
