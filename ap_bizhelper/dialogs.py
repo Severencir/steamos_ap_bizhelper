@@ -18,9 +18,9 @@ from .logging_utils import AppLogger, get_app_logger
 
 DOWNLOADS_DIR = Path(os.path.expanduser("~/Downloads"))
 DIALOG_DEFAULTS = {
-    "QT_FONT_SCALE": 1,
+    "QT_FONT_SCALE": 1.5,
     "QT_MIN_POINT_SIZE": 12,
-    "QT_FILE_NAME_FONT_SCALE": 1.4,
+    "QT_FILE_NAME_FONT_SCALE": 1.8,
     "QT_FILE_ICON_SIZE": 48,
     "QT_FILE_DIALOG_WIDTH": 1280,
     "QT_FILE_DIALOG_HEIGHT": 800,
