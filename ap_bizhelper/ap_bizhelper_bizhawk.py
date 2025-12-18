@@ -15,7 +15,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .ap_bizhelper_ap import download_with_progress
+from .ap_bizhelper_ap import _normalize_asset_digest, download_with_progress
 from .dialogs import (
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
@@ -59,9 +59,9 @@ def _save_settings(settings: Dict[str, Any]) -> None:
     _save_shared_settings(settings)
 
 
-def _github_latest_bizhawk() -> Tuple[str, str]:
+def _github_latest_bizhawk() -> Tuple[str, str, str, str]:
     """
-    Return (download_url, version_tag) for the latest BizHawk Windows x64 zip.
+    Return (download_url, version_tag, digest, digest_algorithm) for the latest BizHawk Windows x64 zip.
     """
     import urllib.request
 
@@ -73,13 +73,25 @@ def _github_latest_bizhawk() -> Tuple[str, str]:
     tag = j.get("tag_name") or ""
     assets = j.get("assets") or []
 
+    def _asset_digest(asset: dict[str, Any]) -> Tuple[str, str]:
+        digest = asset.get("digest")
+        name = asset.get("name") or "(unknown)"
+        if not digest:
+            raise RuntimeError(f"BizHawk asset missing digest: {name}")
+        try:
+            algo, normalized = _normalize_asset_digest(digest)
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid digest for asset {name}: {exc}") from exc
+        return algo, normalized
+
     # Prefer assets whose name clearly ends with 'win-x64.zip'
     for asset in assets:
         name = asset.get("name") or ""
         if name.endswith("win-x64.zip"):
             url = asset.get("browser_download_url")
             if url:
-                return url, tag
+                algo, digest = _asset_digest(asset)
+                return url, tag, digest, algo
 
     # Fallback: look for anything containing 'win-x64' and ending in .zip
     pattern = re.compile(r"win-x64.*\.zip$")
@@ -88,13 +100,14 @@ def _github_latest_bizhawk() -> Tuple[str, str]:
         if pattern.search(name):
             url = asset.get("browser_download_url")
             if url:
-                return url, tag
+                algo, digest = _asset_digest(asset)
+                return url, tag, digest, algo
 
     raise RuntimeError("Could not find BizHawk win-x64 zip asset in latest release.")
 
 
-def _archipelago_release(tag: Optional[str] = None) -> Tuple[str, str]:
-    """Return (download_url, version_tag) for an Archipelago source archive."""
+def _archipelago_release(tag: Optional[str] = None) -> Tuple[str, str, str, str]:
+    """Return (download_url, version_tag, digest, digest_algorithm) for an Archipelago source archive."""
 
     import urllib.request
 
@@ -104,12 +117,32 @@ def _archipelago_release(tag: Optional[str] = None) -> Tuple[str, str]:
         data = resp.read().decode("utf-8")
     j = json.loads(data)
 
-    tar_url = j.get("tarball_url") or j.get("zipball_url")
-    if not tar_url:
-        raise RuntimeError("Could not locate Archipelago source archive download URL.")
-
     tag_name = j.get("tag_name") or (tag or "")
-    return tar_url, tag_name
+    assets = j.get("assets") or []
+
+    def _select_archive(asset: dict[str, Any]) -> Optional[Tuple[str, str, str]]:
+        name = asset.get("name") or ""
+        url = asset.get("browser_download_url")
+        if not name or not url:
+            return None
+        if not (name.endswith(".tar.gz") or name.endswith(".zip")):
+            return None
+        digest = asset.get("digest")
+        if not digest:
+            raise RuntimeError(f"Archipelago release asset missing digest: {name}")
+        try:
+            algo, normalized = _normalize_asset_digest(digest)
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid digest for asset {name}: {exc}") from exc
+        return url, normalized, algo
+
+    for asset in assets:
+        archive = _select_archive(asset)
+        if archive:
+            url, digest, algo = archive
+            return url, tag_name, digest, algo
+
+    raise RuntimeError("Could not locate Archipelago source archive download URL.")
 
 
 def _preserve_bizhawk_config() -> Optional[Path]:
@@ -161,7 +194,9 @@ def _extract_bizhawk_archive(archive: Path, version: str, preserved_config: Opti
     return exe
 
 
-def download_and_extract_bizhawk(url: str, version: str) -> Path:
+def download_and_extract_bizhawk(
+    url: str, version: str, *, expected_digest: str, digest_algorithm: str
+) -> Path:
     """
     Download the BizHawk Windows zip and extract it into BIZHAWK_WIN_DIR.
 
@@ -183,6 +218,9 @@ def download_and_extract_bizhawk(url: str, version: str) -> Path:
             tmp_path,
             title="BizHawk download",
             text=f"Downloading BizHawk {version}...",
+            expected_hash=expected_digest,
+            hash_name=digest_algorithm,
+            require_hash=True,
         )
 
         return _extract_bizhawk_archive(tmp_path, version, preserved_config)
@@ -287,7 +325,7 @@ def _stage_archipelago_connectors(
 ) -> str:
     """Download Archipelago source and copy data/lua into bizhawk_dir/connectors."""
 
-    url, tag = _archipelago_release(ap_version or None)
+    url, tag, digest, digest_algo = _archipelago_release(ap_version or None)
     suffix = ".tar.gz" if "tar" in url else ".zip"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmpf:
         tmp_path = Path(tmpf.name)
@@ -298,6 +336,9 @@ def _stage_archipelago_connectors(
             tmp_path,
             title="Archipelago connectors",
             text=f"Downloading Archipelago connectors ({tag})...",
+            expected_hash=digest,
+            hash_name=digest_algo,
+            require_hash=True,
         )
 
         _apply_archipelago_connector_archive(tmp_path, bizhawk_dir)
@@ -628,7 +669,7 @@ def maybe_update_bizhawk(
         return bizhawk_exe, False
 
     try:
-        url, latest_ver = _github_latest_bizhawk()
+        url, latest_ver, latest_digest, latest_algo = _github_latest_bizhawk()
     except Exception:
         return bizhawk_exe, False
 
@@ -654,7 +695,9 @@ def maybe_update_bizhawk(
 
     # Update now
     try:
-        new_exe = download_and_extract_bizhawk(url, latest_ver)
+        new_exe = download_and_extract_bizhawk(
+            url, latest_ver, expected_digest=latest_digest, digest_algorithm=latest_algo
+        )
     except Exception as e:
         error_dialog(f"BizHawk update failed: {e}")
         return bizhawk_exe, False
@@ -745,12 +788,14 @@ def ensure_bizhawk_and_proton(
         cached_exe: Optional[Path] = None
         if download_selected and (exe is None or not exe.is_file()):
             try:
-                url, ver = _github_latest_bizhawk()
+                url, ver, digest, digest_algo = _github_latest_bizhawk()
             except Exception as e:
                 error_dialog(f"Failed to query latest BizHawk release: {e}")
                 return None
             try:
-                exe = download_and_extract_bizhawk(url, ver)
+                exe = download_and_extract_bizhawk(
+                    url, ver, expected_digest=digest, digest_algorithm=digest_algo
+                )
             except Exception as e:
                 error_dialog(f"BizHawk download failed or was cancelled: {e}")
                 return None
