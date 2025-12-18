@@ -18,19 +18,19 @@ from .logging_utils import AppLogger, get_app_logger
 
 DOWNLOADS_DIR = Path(os.path.expanduser("~/Downloads"))
 DIALOG_DEFAULTS = {
-    "QT_FONT_SCALE": 1.5,
+    "QT_FONT_SCALE": 1,
     "QT_MIN_POINT_SIZE": 12,
-    "QT_FILE_NAME_FONT_SCALE": 1.8,
-    "QT_FILE_ICON_SIZE": 96,
+    "QT_FILE_NAME_FONT_SCALE": 1.4,
+    "QT_FILE_ICON_SIZE": 48,
     "QT_FILE_DIALOG_WIDTH": 1280,
     "QT_FILE_DIALOG_HEIGHT": 800,
     "QT_FILE_DIALOG_MAXIMIZE": True,
     "QT_FILE_DIALOG_NAME_WIDTH": 850,
-    "QT_FILE_DIALOG_TYPE_WIDTH": 300,
-    "QT_FILE_DIALOG_SIZE_WIDTH": 300,
+    "QT_FILE_DIALOG_TYPE_WIDTH": 200,
+    "QT_FILE_DIALOG_SIZE_WIDTH": 200,
     "QT_FILE_DIALOG_DATE_WIDTH": 0,
-    "QT_FILE_DIALOG_SIDEBAR_WIDTH": 400,
-    "QT_FILE_DIALOG_SIDEBAR_ICON_SIZE": 64,
+    "QT_FILE_DIALOG_SIDEBAR_WIDTH": 200,
+    "QT_FILE_DIALOG_SIDEBAR_ICON_SIZE": 32,
 }
 
 _QT_APP: Optional["QtWidgets.QApplication"] = None
@@ -479,8 +479,9 @@ def _widen_file_dialog_sidebar(dialog: "QtWidgets.QFileDialog", settings: Dict[s
         width = _coerce_int_setting(
             settings, "QT_FILE_DIALOG_SIDEBAR_WIDTH", int(DIALOG_DEFAULTS["QT_FILE_DIALOG_SIDEBAR_WIDTH"]), minimum=0
         )
-        if width > 0:
-            sidebar.setFixedWidth(width)
+        if width <= 0:
+            return
+
         icon_size = _coerce_int_setting(
             settings,
             "QT_FILE_DIALOG_SIDEBAR_ICON_SIZE",
@@ -492,6 +493,60 @@ def _widen_file_dialog_sidebar(dialog: "QtWidgets.QFileDialog", settings: Dict[s
                 sidebar.setIconSize(QtCore.QSize(icon_size, icon_size))
             except Exception:
                 pass
+
+        splitter: Optional[QtWidgets.QSplitter] = None
+        parent = sidebar.parent()
+        while parent is not None:
+            if isinstance(parent, QtWidgets.QSplitter):
+                splitter = parent
+                break
+            parent = parent.parent()
+        if splitter is None:
+            splitter = dialog.findChild(QtWidgets.QSplitter)
+
+        if splitter is None:
+            sidebar.setFixedWidth(width)
+            sidebar.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
+            return
+
+        sidebar_index = splitter.indexOf(sidebar)
+        if sidebar_index < 0:
+            sidebar_index = 0
+
+        total_width = splitter.size().width()
+        try:
+            sizes = splitter.sizes()
+        except Exception:
+            sizes = []
+
+        total_width = max(total_width, sum(sizes))
+        if total_width <= 0:
+            total_width = width * max(2, splitter.count())
+
+        remaining = max(total_width - width, width)
+        other_count = max(splitter.count() - 1, 1)
+        per_other = max(int(remaining / other_count), 1)
+
+        new_sizes = [per_other for _ in range(splitter.count())]
+        if sidebar_index < len(new_sizes):
+            new_sizes[sidebar_index] = width
+
+        try:
+            splitter.setSizes(new_sizes)
+        except Exception:
+            pass
+
+        try:
+            sidebar.setFixedWidth(width)
+            sidebar.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
+        except Exception:
+            pass
+
+        for idx in range(splitter.count()):
+            try:
+                splitter.setStretchFactor(idx, 1 if idx != sidebar_index else 0)
+            except Exception:
+                continue
     except Exception:
         return
 

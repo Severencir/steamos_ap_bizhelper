@@ -33,17 +33,17 @@ GITHUB_API_LATEST = "https://api.github.com/repos/ArchipelagoMW/Archipelago/rele
 
 _QT_APP: Optional["QtWidgets.QApplication"] = None
 _QT_BASE_FONT: Optional["QtGui.QFont"] = None
-_QT_FONT_SCALE = 1.5
+_QT_FONT_SCALE = 1
 _QT_MIN_POINT_SIZE = 12
-_QT_FILE_NAME_FONT_SCALE = 1.8
+_QT_FILE_NAME_FONT_SCALE = 1.4
 _QT_FILE_DIALOG_WIDTH = 1280
 _QT_FILE_DIALOG_HEIGHT = 800
 _QT_FILE_DIALOG_MAXIMIZE = True
 _QT_FILE_DIALOG_NAME_WIDTH = 850
-_QT_FILE_DIALOG_TYPE_WIDTH = 300
-_QT_FILE_DIALOG_SIZE_WIDTH = 300
+_QT_FILE_DIALOG_TYPE_WIDTH = 200
+_QT_FILE_DIALOG_SIZE_WIDTH = 200
 _QT_FILE_DIALOG_DATE_WIDTH = 0
-_QT_FILE_DIALOG_SIDEBAR_WIDTH = 400
+_QT_FILE_DIALOG_SIDEBAR_WIDTH = 200
 _QT_FILE_DIALOG_COLUMN_SCALE = 1.8
 _QT_FILE_DIALOG_DEFAULT_SHRINK = 0.95
 _QT_IMPORT_ERROR: Optional[BaseException] = None
@@ -263,27 +263,68 @@ def _widen_file_dialog_sidebar(
 ) -> None:
     from PySide6 import QtWidgets
 
-    splitter = dialog.findChild(QtWidgets.QSplitter)
-    if splitter is None:
+    sidebar = dialog.findChild(QtWidgets.QListView, "sidebar")
+    width = _coerce_int_setting(
+        settings_obj, "QT_FILE_DIALOG_SIDEBAR_WIDTH", _QT_FILE_DIALOG_SIDEBAR_WIDTH, minimum=0
+    )
+    if sidebar is None or width <= 0:
         return
+
+    splitter: Optional[QtWidgets.QSplitter] = None
+    parent = sidebar.parent()
+    while parent is not None:
+        if isinstance(parent, QtWidgets.QSplitter):
+            splitter = parent
+            break
+        parent = parent.parent()
+    if splitter is None:
+        splitter = dialog.findChild(QtWidgets.QSplitter)
+
+    if splitter is None:
+        try:
+            sidebar.setFixedWidth(width)
+            sidebar.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
+        except Exception:
+            pass
+        return
+
+    sidebar_index = splitter.indexOf(sidebar)
+    if sidebar_index < 0:
+        sidebar_index = 0
+
     try:
         sizes = splitter.sizes()
     except Exception:
-        return
-    if not sizes or len(sizes) < 2:
-        return
+        sizes = []
+    total_width = splitter.size().width()
+    total_width = max(total_width, sum(sizes))
+    if total_width <= 0:
+        total_width = width * max(2, splitter.count())
 
-    new_sizes = list(sizes)
-    new_sizes[0] = max(
-        1,
-        _coerce_int_setting(
-            settings_obj, "QT_FILE_DIALOG_SIDEBAR_WIDTH", _QT_FILE_DIALOG_SIDEBAR_WIDTH, minimum=1
-        ),
-    )
+    remaining = max(total_width - width, width)
+    other_count = max(splitter.count() - 1, 1)
+    per_other = max(int(remaining / other_count), 1)
+
+    new_sizes = [per_other for _ in range(splitter.count())]
+    if sidebar_index < len(new_sizes):
+        new_sizes[sidebar_index] = width
+
     try:
         splitter.setSizes(new_sizes)
     except Exception:
-        return
+        pass
+
+    try:
+        sidebar.setFixedWidth(width)
+        sidebar.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
+    except Exception:
+        pass
+
+    for idx in range(splitter.count()):
+        try:
+            splitter.setStretchFactor(idx, 1 if idx != sidebar_index else 0)
+        except Exception:
+            continue
 
 
 def _configure_file_view_columns(
