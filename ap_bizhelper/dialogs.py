@@ -21,6 +21,7 @@ DIALOG_DEFAULTS = {
     "QT_FONT_SCALE": 1.5,
     "QT_MIN_POINT_SIZE": 12,
     "QT_FILE_NAME_FONT_SCALE": 1.8,
+    "QT_FILE_ICON_SIZE": 96,
     "QT_FILE_DIALOG_WIDTH": 1280,
     "QT_FILE_DIALOG_HEIGHT": 800,
     "QT_FILE_DIALOG_MAXIMIZE": True,
@@ -29,6 +30,7 @@ DIALOG_DEFAULTS = {
     "QT_FILE_DIALOG_SIZE_WIDTH": 300,
     "QT_FILE_DIALOG_DATE_WIDTH": 0,
     "QT_FILE_DIALOG_SIDEBAR_WIDTH": 400,
+    "QT_FILE_DIALOG_SIDEBAR_ICON_SIZE": 64,
 }
 
 _QT_APP: Optional["QtWidgets.QApplication"] = None
@@ -469,7 +471,7 @@ def _sidebar_urls() -> list["QtCore.QUrl"]:
 
 def _widen_file_dialog_sidebar(dialog: "QtWidgets.QFileDialog", settings: Dict[str, object]) -> None:
     try:
-        from PySide6 import QtWidgets
+        from PySide6 import QtCore, QtWidgets
 
         sidebar = dialog.findChild(QtWidgets.QListView, "sidebar")
         if sidebar is None:
@@ -479,6 +481,17 @@ def _widen_file_dialog_sidebar(dialog: "QtWidgets.QFileDialog", settings: Dict[s
         )
         if width > 0:
             sidebar.setFixedWidth(width)
+        icon_size = _coerce_int_setting(
+            settings,
+            "QT_FILE_DIALOG_SIDEBAR_ICON_SIZE",
+            int(DIALOG_DEFAULTS["QT_FILE_DIALOG_SIDEBAR_ICON_SIZE"]),
+            minimum=0,
+        )
+        if icon_size > 0:
+            try:
+                sidebar.setIconSize(QtCore.QSize(icon_size, icon_size))
+            except Exception:
+                pass
     except Exception:
         return
 
@@ -692,10 +705,23 @@ def file_dialog(
             )
         widget.setFont(scaled_font)
 
+    icon_size_value = _coerce_int_setting(
+        settings_obj,
+        "QT_FILE_ICON_SIZE",
+        int(DIALOG_DEFAULTS["QT_FILE_ICON_SIZE"]),
+        minimum=0,
+    )
+    icon_size = QtCore.QSize(icon_size_value, icon_size_value) if icon_size_value > 0 else None
+
     for view_name in ("listView", "treeView"):
         file_view = dialog.findChild(QtWidgets.QWidget, view_name)
         if file_view is not None:
             _scale_file_name_font(file_view)
+            if icon_size is not None:
+                try:
+                    file_view.setIconSize(icon_size)
+                except Exception:
+                    pass
 
     sidebar_urls = _sidebar_urls()
     if sidebar_urls:

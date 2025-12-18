@@ -286,12 +286,35 @@ def _stage_sni_connectors(bizhawk_dir: Path, download_messages: Optional[list[st
         download_messages.append("Updated BizHawk SNI connectors")
 
 
-def _is_managed_bizhawk(exe: Path) -> bool:
-    try:
-        exe.relative_to(BIZHAWK_WIN_DIR)
-        return True
-    except ValueError:
+def _has_archipelago_connector(connectors_dir: Path) -> bool:
+    connector_path = connectors_dir / "connector_bizhawk_generic.lua"
+    return connector_path.is_file()
+
+
+def _has_sni_connector(sni_dir: Path) -> bool:
+    if not sni_dir.is_dir():
         return False
+    return any(p.is_file() for p in sni_dir.glob("*.lua"))
+
+
+def connectors_need_download(
+    settings: Dict[str, Any], bizhawk_exe: Optional[Path], *, ap_version: Optional[str]
+) -> bool:
+    if bizhawk_exe is None or not bizhawk_exe.is_file():
+        return False
+
+    desired_ap_version = ap_version or ""
+    current_ap_version = str(settings.get("BIZHAWK_AP_CONNECTOR_VERSION", "") or "")
+    connectors_dir = bizhawk_exe.parent / "connectors"
+    if desired_ap_version != current_ap_version or not _has_archipelago_connector(connectors_dir):
+        return True
+
+    current_sni_version = str(settings.get("BIZHAWK_SNI_VERSION", "") or "")
+    sni_dir = bizhawk_exe.parent / "sni"
+    if current_sni_version != SNI_VERSION or not _has_sni_connector(sni_dir):
+        return True
+
+    return False
 
 
 def ensure_connectors(
@@ -301,10 +324,7 @@ def ensure_connectors(
     ap_version: Optional[str],
     download_messages: Optional[list[str]],
 ) -> bool:
-    """Ensure connector directories are present for managed BizHawk installs."""
-
-    if not _is_managed_bizhawk(bizhawk_exe):
-        return False
+    """Ensure connector directories are present for BizHawk installs."""
 
     bizhawk_dir = bizhawk_exe.parent
     updated = False
@@ -312,7 +332,7 @@ def ensure_connectors(
     desired_ap_version = ap_version or ""
     current_ap_version = str(settings.get("BIZHAWK_AP_CONNECTOR_VERSION", "") or "")
     connectors_dir = bizhawk_dir / "connectors"
-    if desired_ap_version != current_ap_version or not connectors_dir.is_dir():
+    if desired_ap_version != current_ap_version or not _has_archipelago_connector(connectors_dir):
         tag = _stage_archipelago_connectors(
             bizhawk_dir, ap_version=ap_version, download_messages=download_messages
         )
@@ -321,7 +341,7 @@ def ensure_connectors(
 
     current_sni_version = str(settings.get("BIZHAWK_SNI_VERSION", "") or "")
     sni_dir = bizhawk_dir / "sni"
-    if current_sni_version != SNI_VERSION or not sni_dir.is_dir():
+    if current_sni_version != SNI_VERSION or not _has_sni_connector(sni_dir):
         _stage_sni_connectors(bizhawk_dir, download_messages)
         settings["BIZHAWK_SNI_VERSION"] = SNI_VERSION
         updated = True
@@ -609,12 +629,16 @@ def ensure_bizhawk_and_proton(
     create_shortcut: bool = False,
     download_messages: Optional[list[str]] = None,
     settings: Optional[Dict[str, Any]] = None,
+    stage_connectors: bool = True,
 ) -> Optional[Tuple[Path, Path, bool]]:
     """
     Ensure BizHawk (Windows) and Proton are configured and runnable.
 
     On success, returns the Path to the BizHawk runner script, the EmuHawk.exe
     path, and a flag indicating whether any downloads occurred.
+
+    When ``stage_connectors`` is False, connector downloads are skipped even if
+    they appear missing or outdated.
 
     On failure or user cancellation, returns None.
     """
@@ -724,18 +748,20 @@ def ensure_bizhawk_and_proton(
     downloaded = downloaded or updated
 
     ap_version = str(settings.get("AP_VERSION", "") or "")
-    try:
-        connectors_updated = ensure_connectors(
-            settings,
-            exe,
-            ap_version=ap_version if ap_version else None,
-            download_messages=download_messages,
-        )
-    except Exception as exc:
-        error_dialog(f"Failed to stage BizHawk connectors: {exc}")
-        return None
+    connectors_updated = False
+    if stage_connectors:
+        try:
+            connectors_updated = ensure_connectors(
+                settings,
+                exe,
+                ap_version=ap_version if ap_version else None,
+                download_messages=download_messages,
+            )
+        except Exception as exc:
+            error_dialog(f"Failed to stage BizHawk connectors: {exc}")
+            return None
 
-    downloaded = downloaded or connectors_updated
+        downloaded = downloaded or connectors_updated
 
     # Create a desktop launcher for the runner only when a download occurred.
     if downloaded:

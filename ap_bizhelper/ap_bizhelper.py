@@ -22,7 +22,7 @@ from .dialogs import (
     error_dialog,
     info_dialog,
 )
-from .ap_bizhelper_bizhawk import ensure_bizhawk_and_proton
+from .ap_bizhelper_bizhawk import connectors_need_download, ensure_bizhawk_and_proton
 from .ap_bizhelper_config import (
     get_all_associations,
     get_association_mode,
@@ -294,14 +294,21 @@ def _needs_bizhawk_download(settings: dict) -> bool:
     )
 
 
+def _needs_connector_download(settings: dict, *, ap_version: str) -> bool:
+    exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+    exe = Path(exe_str) if exe_str else None
+    return connectors_need_download(settings, exe, ap_version=ap_version)
+
+
 def _prompt_setup_choices(
     *,
     allow_archipelago_skip: bool,
     show_archipelago: bool,
     show_bizhawk: bool,
-) -> Tuple[bool, bool, bool]:
-    if not any((show_archipelago, show_bizhawk)):
-        return False, False, False
+    show_connectors: bool,
+) -> Tuple[bool, bool, bool, bool]:
+    if not any((show_archipelago, show_bizhawk, show_connectors)):
+        return False, False, False, False
 
     from PySide6 import QtCore, QtWidgets
 
@@ -325,8 +332,14 @@ def _prompt_setup_choices(
         bizhawk_box.setChecked(True)
         layout.addWidget(bizhawk_box)
 
+    connectors_box = None
+    if show_connectors:
+        connectors_box = QtWidgets.QCheckBox("BizHawk connectors")
+        connectors_box.setChecked(True)
+        layout.addWidget(connectors_box)
+
     shortcut_box = None
-    if show_archipelago or show_bizhawk:
+    if show_archipelago or show_bizhawk or show_connectors:
         shortcut_box = QtWidgets.QCheckBox(
             "Create Desktop shortcuts (Archipelago & BizHawk)"
         )
@@ -355,9 +368,10 @@ def _prompt_setup_choices(
 
     arch = arch_box.isChecked() if arch_box is not None else False
     bizhawk = bizhawk_box.isChecked() if bizhawk_box is not None else False
+    connectors = connectors_box.isChecked() if connectors_box is not None else False
     shortcuts = shortcut_box.isChecked() if shortcut_box is not None else False
 
-    return arch, bizhawk, shortcuts
+    return arch, bizhawk, connectors, shortcuts
 
 
 def _ensure_apworld_for_extension(ext: str) -> None:
@@ -883,16 +897,20 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
     with APP_LOGGER.context("_run_prereqs"):
         need_arch = _needs_archipelago_download(settings)
         need_bizhawk = _needs_bizhawk_download(settings)
+        ap_version = str(settings.get("AP_VERSION", "") or "")
+        need_connectors = need_bizhawk or _needs_connector_download(settings, ap_version=ap_version)
 
-        if any((need_arch, need_bizhawk)):
-            arch, bizhawk, shortcuts = _prompt_setup_choices(
+        if any((need_arch, need_bizhawk, need_connectors)):
+            arch, bizhawk, connectors, shortcuts = _prompt_setup_choices(
                 allow_archipelago_skip=allow_archipelago_skip,
                 show_archipelago=need_arch,
                 show_bizhawk=need_bizhawk,
+                show_connectors=need_connectors,
             )
         else:
             arch = False
             bizhawk = False
+            connectors = False
             shortcuts = False
 
         download_messages: list[str] = []
@@ -914,6 +932,7 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
             create_shortcut=shortcuts,
             download_messages=download_messages,
             settings=settings,
+            stage_connectors=connectors,
         )
         if bizhawk:
             if bizhawk_result is None:
@@ -993,6 +1012,18 @@ def main(argv: list[str]) -> int:
         except RuntimeError:
             return 1
         settings = load_settings()
+
+        try:
+            _ensure_qt_app(settings)
+        except Exception as exc:
+            APP_LOGGER.log(
+                f"Failed to initialize Qt with settings: {exc}",
+                level="ERROR",
+                include_context=True,
+                mirror_console=True,
+                stream="stderr",
+            )
+            return 1
 
         settings_dirty = False
 
