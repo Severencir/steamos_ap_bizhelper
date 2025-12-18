@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
@@ -692,12 +693,6 @@ def download_with_progress(
     _ensure_dirs()
     _ensure_qt_available()
 
-    if dest.exists():
-        try:
-            dest.unlink()
-        except Exception:
-            pass
-
     req = urllib.request.Request(url, headers={"User-Agent": "ap-bizhelper/1.0"})
 
     try:
@@ -706,11 +701,29 @@ def download_with_progress(
         raise RuntimeError(f"Unsupported hash algorithm: {hash_name}") from exc
 
     response_headers: dict[str, str] = {}
+    temp_path: Optional[Path] = None
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{dest.name}.", suffix=".tmp", dir=dest.parent, delete=False
+        ) as tmp:
+            temp_path = Path(tmp.name)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to create temporary download file: {exc}") from exc
+
+    def _cleanup_temp() -> None:
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
 
     def _download_stream() -> Iterable[str]:
         nonlocal response_headers
         try:
-            with urllib.request.urlopen(req, timeout=300) as resp, dest.open("wb") as f:
+            with urllib.request.urlopen(req, timeout=300) as resp, temp_path.open("wb") as f:
                 response_headers = {k.lower(): v for k, v in resp.headers.items()}
                 total_str = resp.headers.get("Content-Length") or "0"
                 try:
@@ -730,18 +743,10 @@ def download_with_progress(
                         percent = max(0, min(100, int(downloaded * 100 / total)))
                         yield str(percent)
         except GeneratorExit:
-            if dest.exists():
-                try:
-                    dest.unlink()
-                except Exception:
-                    pass
+            _cleanup_temp()
             raise
         except Exception:
-            if dest.exists():
-                try:
-                    dest.unlink()
-                except Exception:
-                    pass
+            _cleanup_temp()
             raise
 
     result = dialogs.progress_dialog_from_stream(
@@ -752,6 +757,7 @@ def download_with_progress(
     )
 
     if result != 0:
+        _cleanup_temp()
         raise RuntimeError("Download cancelled by user")
 
     computed_hash = hash_ctx.hexdigest()
@@ -759,11 +765,14 @@ def download_with_progress(
     normalized_expected = (expected_hash or header_hash or "").strip().lower()
     if normalized_expected:
         if normalized_expected != computed_hash.lower():
-            try:
-                dest.unlink()
-            except Exception:
-                pass
+            _cleanup_temp()
             raise RuntimeError("Downloaded file failed hash verification")
+
+    try:
+        temp_path.replace(dest)
+    except Exception:
+        _cleanup_temp()
+        raise
 
     try:
         dest.chmod(dest.stat().st_mode | 0o111)
