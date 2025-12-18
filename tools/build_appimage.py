@@ -172,6 +172,12 @@ def _write_icon(appdir: Path) -> None:
     icon_path.write_bytes(base64.b64decode(ICON_BASE64))
 
 
+def _copy_notice(appdir: Path) -> None:
+    notice_src = PROJECT_ROOT / "NOTICE"
+    if notice_src.exists():
+        shutil.copy2(notice_src, appdir / "NOTICE")
+
+
 def _download_appimagetool() -> Path:
     if APPIMAGE_TOOL_PATH.exists():
         return APPIMAGE_TOOL_PATH
@@ -201,6 +207,7 @@ def build_appimage() -> Path:
     _write_apprun(APPDIR)
     _write_desktop(APPDIR)
     _write_icon(APPDIR)
+    _copy_notice(APPDIR)
     return _build_appimage(APPDIR)
 
 

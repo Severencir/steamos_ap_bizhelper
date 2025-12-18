@@ -35,3 +35,9 @@ python -m ap_bizhelper.ap_bizhelper_config clear-ext-association apbp
 
 Setting the mode to `disabled` stops future prompts and removes the handler entries on the next run; changing back to `prompt` or `enabled` will recreate them for stored extensions.
 
+## Licensing and AppImage obligations
+
+The AppImage bundles PySide6 (Qt for Python) libraries, which are offered under the LGPLv3 with the Qt LGPL Exception 1.1 or under the GPLv3. This package uses the LGPLv3 option. A full licensing notice, including the Qt LGPL Exception 1.1 text plus the complete LGPLv3 and GPLv3 licenses, is stored in `NOTICE` at the repository root and copied into the AppImage.
+
+When running or redistributing the AppImage you may replace or relink the bundled Qt/PySide6 libraries, provided you follow the LGPLv3 requirements (e.g., supplying source or a relinking mechanism and preserving notices). You can extract the AppImage (`./ap-bizhelper.AppImage --appimage-extract`), adjust the libraries under `squashfs-root/usr/lib`, and rebuild the AppImage to run against your modified copies.
+
