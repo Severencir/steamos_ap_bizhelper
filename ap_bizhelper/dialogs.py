@@ -60,6 +60,32 @@ def merge_dialog_settings(settings: Optional[Dict[str, object]] = None) -> Dict[
     return {**DIALOG_DEFAULTS, **(settings or {})}
 
 
+def _load_dialog_settings(settings: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    """Return dialog settings merged with defaults and persist new defaults.
+
+    When ``settings`` is ``None``, the on-disk settings are loaded and any
+    missing dialog defaults are written back immediately so future callers pick
+    up the new baseline values without needing to save a selection first.
+    """
+
+    if settings is not None:
+        return merge_dialog_settings(settings)
+
+    stored_settings = _load_shared_settings()
+    merged_settings = merge_dialog_settings(stored_settings)
+
+    needs_save = False
+    for key, value in DIALOG_DEFAULTS.items():
+        if key not in stored_settings:
+            needs_save = True
+            break
+        # Preserve existing user values; only mark save when defaults are missing.
+    if needs_save:
+        _save_shared_settings(merged_settings)
+
+    return merged_settings
+
+
 def _coerce_font_setting(
     settings: Dict[str, object], key: str, default: float, *, minimum: Optional[float] = None
 ) -> float:
@@ -711,7 +737,7 @@ def file_dialog(
 ) -> Optional[Path]:
     from PySide6 import QtCore, QtGui, QtWidgets
 
-    settings_obj = merge_dialog_settings(settings)
+    settings_obj = _load_dialog_settings(settings)
     ensure_qt_app(settings_obj)
     global_scale = _detect_global_scale()
     filter_text = file_filter or "All Files (*)"
@@ -816,7 +842,7 @@ def select_file_dialog(
     settings: Optional[Dict[str, object]] = None,
     save_settings: bool = True,
 ) -> Optional[Path]:
-    settings_obj = merge_dialog_settings(settings or _load_shared_settings())
+    settings_obj = _load_dialog_settings(settings)
     start_dir = preferred_start_dir(initial, settings_obj, dialog_key)
 
     selection = file_dialog(
