@@ -152,7 +152,7 @@ def _extract_bizhawk_archive(archive: Path, version: str, preserved_config: Opti
             pass
 
     with zipfile.ZipFile(archive, "r") as zf:
-        zf.extractall(BIZHAWK_WIN_DIR)
+        _safe_extract_zip(zf, BIZHAWK_WIN_DIR)
 
     exe = auto_detect_bizhawk_exe({})
     if exe is None:
@@ -200,14 +200,69 @@ def _copy_tree(src: Path, dest: Path) -> None:
     shutil.copytree(src, dest)
 
 
+def _validated_member_path(member_name: str, dest_root: Path) -> Path:
+    candidate = Path(member_name)
+    if candidate.is_absolute():
+        raise RuntimeError(f"Archive entry uses absolute path: {member_name}")
+    if any(part in ("..", "") for part in candidate.parts):
+        raise RuntimeError(f"Archive entry escapes destination: {member_name}")
+
+    resolved = (dest_root / candidate).resolve()
+    if not resolved.is_relative_to(dest_root):
+        raise RuntimeError(f"Archive entry escapes destination: {member_name}")
+
+    return resolved
+
+
+def _safe_extract_tar(tf: tarfile.TarFile, dest_dir: Path) -> None:
+    dest_root = dest_dir.resolve()
+    for member in tf.getmembers():
+        if member.islnk() or member.issym():
+            raise RuntimeError("Archives containing symbolic links are not supported")
+
+        target_path = _validated_member_path(member.name, dest_root)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if member.isdir():
+            target_path.mkdir(parents=True, exist_ok=True)
+            continue
+
+        fileobj = tf.extractfile(member)
+        if fileobj is None:
+            raise RuntimeError(f"Could not read archive member: {member.name}")
+        with fileobj, target_path.open("wb") as out:
+            shutil.copyfileobj(fileobj, out)
+
+
+def _zipinfo_is_symlink(info: zipfile.ZipInfo) -> bool:
+    return (info.external_attr >> 16) & 0o170000 == 0o120000
+
+
+def _safe_extract_zip(zf: zipfile.ZipFile, dest_dir: Path) -> None:
+    dest_root = dest_dir.resolve()
+    for info in zf.infolist():
+        if _zipinfo_is_symlink(info):
+            raise RuntimeError("Archives containing symbolic links are not supported")
+
+        target_path = _validated_member_path(info.filename, dest_root)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if info.is_dir():
+            target_path.mkdir(parents=True, exist_ok=True)
+            continue
+
+        with zf.open(info) as src, target_path.open("wb") as out:
+            shutil.copyfileobj(src, out)
+
+
 def _extract_archive(archive: Path, dest_dir: Path) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     if tarfile.is_tarfile(archive):
         with tarfile.open(archive, "r:*") as tf:
-            tf.extractall(dest_dir)
+            _safe_extract_tar(tf, dest_dir)
     elif zipfile.is_zipfile(archive):
         with zipfile.ZipFile(archive, "r") as zf:
-            zf.extractall(dest_dir)
+            _safe_extract_zip(zf, dest_dir)
     else:
         raise RuntimeError("Unsupported archive format for connectors.")
     return dest_dir

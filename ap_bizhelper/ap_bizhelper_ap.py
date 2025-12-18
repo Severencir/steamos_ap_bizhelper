@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -677,8 +678,16 @@ def download_with_progress(
     *,
     title: str,
     text: str,
+    expected_hash: Optional[str] = None,
+    hash_name: str = "sha256",
 ) -> None:
-    """Download ``url`` to ``dest`` with a PySide6 progress dialog."""
+    """Download ``url`` to ``dest`` with a PySide6 progress dialog.
+
+    When ``expected_hash`` is provided, the downloaded file is validated using
+    the ``hash_name`` algorithm (``sha256`` by default). If the server provides
+    a ``X-Checksum-Sha256`` header, that value is used as the expected hash
+    when one is not explicitly supplied.
+    """
 
     _ensure_dirs()
     _ensure_qt_available()
@@ -691,9 +700,18 @@ def download_with_progress(
 
     req = urllib.request.Request(url, headers={"User-Agent": "ap-bizhelper/1.0"})
 
+    try:
+        hash_ctx = hashlib.new(hash_name)
+    except Exception as exc:
+        raise RuntimeError(f"Unsupported hash algorithm: {hash_name}") from exc
+
+    response_headers: dict[str, str] = {}
+
     def _download_stream() -> Iterable[str]:
+        nonlocal response_headers
         try:
             with urllib.request.urlopen(req, timeout=300) as resp, dest.open("wb") as f:
+                response_headers = {k.lower(): v for k, v in resp.headers.items()}
                 total_str = resp.headers.get("Content-Length") or "0"
                 try:
                     total = int(total_str)
@@ -706,6 +724,7 @@ def download_with_progress(
                     if not chunk:
                         break
                     f.write(chunk)
+                    hash_ctx.update(chunk)
                     downloaded += len(chunk)
                     if total > 0:
                         percent = max(0, min(100, int(downloaded * 100 / total)))
@@ -734,6 +753,17 @@ def download_with_progress(
 
     if result != 0:
         raise RuntimeError("Download cancelled by user")
+
+    computed_hash = hash_ctx.hexdigest()
+    header_hash = response_headers.get("x-checksum-sha256")
+    normalized_expected = (expected_hash or header_hash or "").strip().lower()
+    if normalized_expected:
+        if normalized_expected != computed_hash.lower():
+            try:
+                dest.unlink()
+            except Exception:
+                pass
+            raise RuntimeError("Downloaded file failed hash verification")
 
     try:
         dest.chmod(dest.stat().st_mode | 0o111)
