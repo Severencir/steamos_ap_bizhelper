@@ -758,10 +758,7 @@ def file_dialog(
     )
     if width > 0 and height > 0:
         dialog.resize(width, height)
-    if hasattr(QtGui.QGuiApplication, "setNavigationMode") and hasattr(QtCore.Qt, "NavigationModeKeypadDirectional"):
-        QtGui.QGuiApplication.setNavigationMode(
-            QtCore.Qt.NavigationModeKeypadDirectional
-        )
+
 
     def _scale_file_name_font(widget: "QtWidgets.QWidget") -> None:
         base_font = widget.font()

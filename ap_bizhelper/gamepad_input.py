@@ -31,6 +31,8 @@ APP_LOGGER = get_app_logger()
 
 AP_GAMEPAD_DISABLE = "AP_BIZHELPER_DISABLE_GAMEPAD"
 AP_GAMEPAD_ENABLE = "AP_BIZHELPER_ENABLE_GAMEPAD"
+AP_GAMEPAD_DEBUG = "AP_BIZHELPER_DEBUG_GAMEPAD"
+AP_GAMEPAD_DEBUG_SEND = "AP_BIZHELPER_DEBUG_GAMEPAD_SEND_EVENT"
 
 # Steam exposes one of these when launched from a Steam library entry.
 _STEAM_ENV_KEYS = ("SteamGameId", "SteamGameID", "SteamAppId", "SteamAppID")
@@ -164,6 +166,8 @@ if QT_AVAILABLE:
             super().__init__(dialog)
             self._dialog = dialog
             self._sdl_loader = sdl_loader
+            self._debug = os.environ.get(AP_GAMEPAD_DEBUG, "").strip() == "1"
+            self._debug_send_event = os.environ.get(AP_GAMEPAD_DEBUG_SEND, "").strip() == "1"
             self._sdl: Optional[_SDLWrapper] = None
             self._controller: Optional[int] = None
             self._axis_state: Dict[str, bool] = {
@@ -186,6 +190,123 @@ if QT_AVAILABLE:
                 "default": None,
             }
             self._init_sdl()
+
+        # -----------------------------
+        # Debug helpers
+        # -----------------------------
+
+        def _w(self, w: Optional[QtWidgets.QWidget]) -> str:
+            if w is None:
+                return "<None>"
+            try:
+                return (
+                    f"{w.__class__.__name__}(name={w.objectName()!r}, vis={w.isVisible()}, "
+                    f"en={w.isEnabled()}, focus={w.hasFocus()}, fp={int(w.focusPolicy())})"
+                )
+            except Exception:
+                return f"{w.__class__.__name__}(?)"
+
+        def _chain(self, w: Optional[QtWidgets.QWidget], limit: int = 10) -> str:
+            parts: list[str] = []
+            cur = w
+            for _ in range(limit):
+                if cur is None:
+                    break
+                try:
+                    parts.append(f"{cur.__class__.__name__}({cur.objectName()!r})")
+                except Exception:
+                    parts.append(cur.__class__.__name__)
+                try:
+                    cur = cur.parentWidget()
+                except Exception:
+                    break
+            return " <- ".join(parts) if parts else "<None>"
+
+        def _dump_itemview(self, v: Optional[QtWidgets.QWidget]) -> str:
+            if v is None:
+                return "itemview=<None>"
+            try:
+                if not isinstance(v, QtWidgets.QAbstractItemView):
+                    return f"itemview=<{v.__class__.__name__} not QAbstractItemView>"
+                m = v.model()
+                sm = v.selectionModel()
+                cur = sm.currentIndex() if sm else QtCore.QModelIndex()
+                rc = m.rowCount(v.rootIndex()) if m else -1
+                sel = sm.selectedIndexes() if sm else []
+                sel0 = sel[0] if sel else QtCore.QModelIndex()
+                return (
+                    f"rows={rc} cur=({cur.row()},{cur.column()},{cur.isValid()}) "
+                    f"selCount={len(sel)} sel0=({sel0.row()},{sel0.column()},{sel0.isValid()})"
+                )
+            except Exception as e:
+                return f"itemview=<err {e!r}>"
+
+        def _dump_focus(self, tag: str) -> None:
+            if not self._debug:
+                return
+            try:
+                app_focus = QtWidgets.QApplication.focusWidget()
+            except Exception:
+                app_focus = None
+            dlg_focus = None
+            try:
+                dlg_focus = self._dialog.focusWidget() if self._dialog else None
+            except Exception:
+                dlg_focus = None
+            target = None
+            try:
+                target = self._target_widget()
+            except Exception:
+                target = None
+
+            APP_LOGGER.log(
+                (
+                    f"[{tag}] appFocus={self._w(app_focus)} | dlgFocus={self._w(dlg_focus)} | "
+                    f"target={self._w(target)}\n"
+                    f"    appChain: {self._chain(app_focus)}\n"
+                    f"    dlgChain: {self._chain(dlg_focus)}\n"
+                    f"    tgtChain: {self._chain(target)}"
+                ),
+                level="INFO",
+                location="gp-debug",
+                include_context=True,
+            )
+
+        def _normalize_target(self, w: Optional[QtWidgets.QWidget]) -> Optional[QtWidgets.QWidget]:
+            """Normalize a focused child (often a viewport) back to its item view.
+
+            QFileDialog list/sidebar/tree widgets are typically QAbstractItemView
+            (a QAbstractScrollArea). Focus can land on the viewport child; key
+            navigation handlers live on the view, so we route to the view.
+            """
+
+            if w is None:
+                return None
+            try:
+                # Direct hit.
+                if isinstance(w, QtWidgets.QAbstractItemView):
+                    return w
+
+                # If focus is on the viewport of a scroll area/item view, climb to parent.
+                p = w.parentWidget()
+                if p and isinstance(p, QtWidgets.QAbstractItemView):
+                    try:
+                        if hasattr(p, "viewport") and w is p.viewport():
+                            return p
+                    except Exception:
+                        return p
+
+                # Generic climb: walk up a few parents looking for an item view.
+                cur = w
+                for _ in range(6):
+                    cur = cur.parentWidget() if cur is not None else None
+                    if cur is None:
+                        break
+                    if isinstance(cur, QtWidgets.QAbstractItemView):
+                        return cur
+            except Exception:
+                return w
+            return w
 
         def register_action_buttons(
             self,
@@ -284,23 +405,57 @@ if QT_AVAILABLE:
                     self.shutdown()
                     break
                 elif etype == SDL_CONTROLLERAXISMOTION:
-                    self._handle_axis(event.caxis)
+                    try:
+                        self._handle_axis(event.caxis)
+                    except Exception as e:
+                        try:
+                            APP_LOGGER.log(
+                                f"[poll] axis handler error: {e!r}",
+                                level="ERROR",
+                                location="gamepad",
+                                include_context=True,
+                            )
+                        except Exception:
+                            pass
                 elif etype == SDL_CONTROLLERBUTTONDOWN:
-                    self._handle_button(event.cbutton, pressed=True)
+                    try:
+                        self._handle_button(event.cbutton, pressed=True)
+                    except Exception as e:
+                        try:
+                            APP_LOGGER.log(
+                                f"[poll] button-down handler error: {e!r}",
+                                level="ERROR",
+                                location="gamepad",
+                                include_context=True,
+                            )
+                        except Exception:
+                            pass
                 elif etype == SDL_CONTROLLERBUTTONUP:
-                    self._handle_button(event.cbutton, pressed=False)
+                    try:
+                        self._handle_button(event.cbutton, pressed=False)
+                    except Exception as e:
+                        try:
+                            APP_LOGGER.log(
+                                f"[poll] button-up handler error: {e!r}",
+                                level="ERROR",
+                                location="gamepad",
+                                include_context=True,
+                            )
+                        except Exception:
+                            pass
 
         def _target_widget(self) -> Optional[QtWidgets.QWidget]:
             if self._dialog and self._dialog.isVisible():
                 focused = self._dialog.focusWidget()
+                focused = self._normalize_target(focused)
                 if self._last_target and (
                     focused is self._dialog or focused is self._focus_before_toggle
                 ):
-                    return self._last_target
+                    return self._normalize_target(self._last_target)
                 if focused and focused is not self._dialog:
                     return focused
                 if self._last_target:
-                    return self._last_target
+                    return self._normalize_target(self._last_target)
                 if focused:
                     return focused
                 return self._dialog
@@ -316,6 +471,14 @@ if QT_AVAILABLE:
             target = self._target_widget()
             if target is None:
                 return
+
+            if self._debug and pressed and qt_key in (
+                QtCore.Qt.Key_Left,
+                QtCore.Qt.Key_Right,
+                QtCore.Qt.Key_Up,
+                QtCore.Qt.Key_Down,
+            ):
+                self._dump_focus(f"pre key={qt_key}")
 
             if pressed and qt_key in (
                 QtCore.Qt.Key_Left,
@@ -343,12 +506,202 @@ if QT_AVAILABLE:
             ):
                 self._ensure_file_view_selection(target)
 
+                # QFileDialog's sidebar is a QListView named "sidebar". It can end up
+                # with a selected row but an invalid currentIndex, causing Up/Down to do nothing.
+                if (
+                    pressed
+                    and qt_key in (QtCore.Qt.Key_Up, QtCore.Qt.Key_Down)
+                    and isinstance(target, QtWidgets.QAbstractItemView)
+                    and target.objectName() == "sidebar"
+                ):
+                    try:
+                        self._force_itemview_current(target)
+                        if self._step_itemview(
+                            target, -1 if qt_key == QtCore.Qt.Key_Up else 1
+                        ):
+                            return
+                    except Exception:
+                        # Never break input handling on sidebar quirks.
+                        pass
+
             event_type = QtCore.QEvent.KeyPress if pressed else QtCore.QEvent.KeyRelease
             ev = QtGui.QKeyEvent(event_type, qt_key, modifiers)
-            QtWidgets.QApplication.postEvent(target, ev)
+
+            if self._debug:
+                try:
+                    # PySide6 flag enums aren't always int()-castable (can be KeyboardModifier).
+                    mods_val = getattr(modifiers, "value", None)
+                    mods_repr = hex(int(mods_val)) if mods_val is not None else repr(modifiers)
+                except Exception:
+                    mods_repr = repr(modifiers)
+                try:
+                    APP_LOGGER.log(
+                        f"[post] key={qt_key} pressed={pressed} mods={mods_repr} -> "
+                        f"target={self._w(target)} {self._dump_itemview(target)}",
+                        level="INFO",
+                        location="gp-debug",
+                        include_context=True,
+                    )
+                except Exception:
+                    # Debug logging must never break input handling.
+                    pass
+
+            # In debug mode you can force sendEvent for immediate acceptance info.
+            if self._debug and self._debug_send_event:
+                QtWidgets.QApplication.sendEvent(target, ev)
+                try:
+                    accepted = ev.isAccepted()
+                except Exception:
+                    accepted = None
+                APP_LOGGER.log(
+                    f"[send] accepted={accepted}",
+                    level="INFO",
+                    location="gp-debug",
+                    include_context=True,
+                )
+            else:
+                QtWidgets.QApplication.postEvent(target, ev)
+
+        def _force_itemview_current(self, widget: QtWidgets.QWidget) -> None:
+            """Ensure the target item view has a valid currentIndex.
+
+            QFileDialog's sidebar often ends up with a *selected* row but an
+            invalid currentIndex; arrow navigation is driven by currentIndex.
+            """
+            if not isinstance(widget, QtWidgets.QAbstractItemView):
+                return
+            model = widget.model()
+            selection_model = widget.selectionModel()
+            if model is None or selection_model is None:
+                return
+
+            root_index = widget.rootIndex()
+            try:
+                cur = selection_model.currentIndex()
+            except Exception:
+                cur = QtCore.QModelIndex()
+
+            index = cur if getattr(cur, "isValid", lambda: False)() else None
+            if index is None:
+                try:
+                    sel = selection_model.selectedIndexes()
+                except Exception:
+                    sel = []
+                if sel:
+                    index = sel[0]
+                else:
+                    try:
+                        if model.rowCount(root_index) <= 0:
+                            return
+                        index = model.index(0, 0, root_index)
+                    except Exception:
+                        return
+
+            try:
+                if not index.isValid():
+                    return
+            except Exception:
+                return
+
+            # Set both selection + current; different Qt internals sometimes only
+            # respond to one or the other.
+            flags = (
+                QtCore.QItemSelectionModel.Clear
+                | QtCore.QItemSelectionModel.Select
+                | QtCore.QItemSelectionModel.Current
+            )
+            try:
+                selection_model.setCurrentIndex(index, flags)
+            except Exception:
+                try:
+                    selection_model.select(index, flags)
+                except Exception:
+                    pass
+            try:
+                widget.setCurrentIndex(index)
+            except Exception:
+                pass
+            try:
+                widget.scrollTo(index)
+            except Exception:
+                pass
+
+        def _step_itemview(self, widget: QtWidgets.QWidget, delta_rows: int) -> bool:
+            """Move selection/current in an item view by +/- rows.
+
+            Used as a fallback for QFileDialog's sidebar, which can ignore arrow
+            keys when currentIndex is invalid.
+            """
+            if not isinstance(widget, QtWidgets.QAbstractItemView):
+                return False
+
+            model = widget.model()
+            selection_model = widget.selectionModel()
+            if model is None or selection_model is None:
+                return False
+
+            root_index = widget.rootIndex()
+            try:
+                row_count = model.rowCount(root_index)
+            except Exception:
+                return False
+            if row_count <= 0:
+                return False
+
+            # Base row: prefer currentIndex, fall back to first selected row, else 0.
+            try:
+                cur = selection_model.currentIndex()
+            except Exception:
+                cur = QtCore.QModelIndex()
+
+            if getattr(cur, "isValid", lambda: False)():
+                base_row = cur.row()
+            else:
+                try:
+                    sel = selection_model.selectedIndexes()
+                except Exception:
+                    sel = []
+                base_row = sel[0].row() if sel else 0
+
+            new_row = max(0, min(row_count - 1, base_row + delta_rows))
+            try:
+                index = model.index(new_row, 0, root_index)
+                if not index.isValid():
+                    return False
+            except Exception:
+                return False
+
+            flags = (
+                QtCore.QItemSelectionModel.Clear
+                | QtCore.QItemSelectionModel.Select
+                | QtCore.QItemSelectionModel.Current
+            )
+            try:
+                selection_model.setCurrentIndex(index, flags)
+            except Exception:
+                try:
+                    selection_model.select(index, flags)
+                except Exception:
+                    return False
+            try:
+                widget.setCurrentIndex(index)
+            except Exception:
+                pass
+            try:
+                widget.scrollTo(index)
+            except Exception:
+                pass
+            return True
+
 
         def _ensure_file_view_selection(self, widget: QtWidgets.QWidget) -> None:
-            if not isinstance(widget, (QtWidgets.QListView, QtWidgets.QTreeView)):
+            """Best-effort: make item views usable with D-pad/arrow navigation.
+
+            For QFileDialog's sidebar, it's common to have a *selected* row but no
+            valid currentIndex; QAbstractItemView's keyboard navigation is driven
+            by currentIndex, so we force it.
+            """
+            if not isinstance(widget, QtWidgets.QAbstractItemView):
                 return
 
             model = widget.model()
@@ -356,31 +709,52 @@ if QT_AVAILABLE:
             if model is None or selection_model is None:
                 return
 
-            if selection_model.hasSelection():
-                return
-
             root_index = widget.rootIndex()
-            if model.rowCount(root_index) <= 0:
+
+            try:
+                has_sel = selection_model.hasSelection()
+            except Exception:
+                has_sel = False
+
+            if has_sel:
+                self._force_itemview_current(widget)
                 return
 
-            first_index = model.index(0, 0, root_index)
-            if not first_index.isValid():
+            try:
+                if model.rowCount(root_index) <= 0:
+                    return
+                first_index = model.index(0, 0, root_index)
+                if not first_index.isValid():
+                    return
+            except Exception:
                 return
 
-            selection_model.select(
-                first_index,
+            flags = (
                 QtCore.QItemSelectionModel.Clear
                 | QtCore.QItemSelectionModel.Select
-                | QtCore.QItemSelectionModel.Current,
+                | QtCore.QItemSelectionModel.Current
             )
+            try:
+                # Prefer setCurrentIndex; it updates both current + selection in most views.
+                selection_model.setCurrentIndex(first_index, flags)
+            except Exception:
+                try:
+                    selection_model.select(first_index, flags)
+                except Exception:
+                    pass
             try:
                 widget.setCurrentIndex(first_index)
             except Exception:
                 pass
 
+            self._force_itemview_current(widget)
+
         def _toggle_file_dialog_pane(self, *, go_right: bool) -> bool:
             if not self._dialog:
                 return False
+
+            if self._debug:
+                self._dump_focus(f"before toggle go_right={go_right}")
 
             self._focus_before_toggle = self._dialog.focusWidget()
             sidebar = self._dialog.findChild(QtWidgets.QAbstractItemView, "sidebar")
@@ -401,15 +775,35 @@ if QT_AVAILABLE:
             if target is None:
                 return False
 
+            if self._debug:
+                APP_LOGGER.log(
+                    f"[toggle] sidebar={self._w(sidebar)} {self._dump_itemview(sidebar)} | "
+                    f"tree={self._w(tree_view)} {self._dump_itemview(tree_view)} | "
+                    f"list={self._w(list_view)} {self._dump_itemview(list_view)} | "
+                    f"chosen={self._w(target)}",
+                    level="INFO",
+                    location="gp-debug",
+                    include_context=True,
+                )
+
             self._last_target = target
             target.setFocus()
             if not target.hasFocus():
                 target.setFocus(QtCore.Qt.OtherFocusReason)
+
+            # Always ensure item-view selection/currentIndex, even if focus ends up staying on the dialog.
+            self._ensure_file_view_selection(target)
+            # QFileDialog can update the sidebar selection/current asynchronously after focus changes.
+            # Re-run on the next event-loop tick to catch that.
+            QtCore.QTimer.singleShot(0, lambda w=target: self._ensure_file_view_selection(w))
+            QtCore.QTimer.singleShot(0, lambda w=target: self._force_itemview_current(w))
+
+            if self._debug:
+                self._dump_focus("after toggle setFocus")
             if not target.hasFocus():
                 # QFileDialog can keep focus on the dialog, so we fall back to routing
                 # subsequent navigation events to the cached target even without focus.
                 return True
-            self._ensure_file_view_selection(target)
             return True
 
         def _handle_axis(self, axis_event: SDL_ControllerAxisEvent) -> None:
