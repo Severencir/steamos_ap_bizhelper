@@ -476,23 +476,318 @@ def modular_dialog(
     return result
 
 
-def _sidebar_urls() -> list["QtCore.QUrl"]:
+
+def _sidebar_urls(*, start_dir: Optional[Path] = None, settings: Optional[Dict[str, object]] = None) -> list["QtCore.QUrl"]:
+    """Sidebar locations for QFileDialog.
+
+    Prefer common user folders (Desktop, Downloads, Documents, etc.) so the
+    sidebar looks like a typical desktop file picker.
+
+    If ``start_dir`` (or the most-recent directory from settings) isn't already
+    present, add it as an extra quick-access entry.
+    """
     ensure_qt_available()
     from PySide6 import QtCore
 
-    paths = [
-        Path(os.path.expanduser("~")),
-        DOWNLOADS_DIR,
-        Path("/"),
+    sp = QtCore.QStandardPaths
+
+    # Order matters: keep this close to what most file pickers show.
+    locations = [
+        sp.HomeLocation,
+        sp.DesktopLocation,
+        sp.DocumentsLocation,
+        sp.DownloadLocation,
+        sp.MusicLocation,
+        sp.PicturesLocation,
+        sp.MoviesLocation,
     ]
-    urls = []
+
+    paths: list[Path] = []
+    for loc in locations:
+        try:
+            p = sp.writableLocation(loc)
+        except Exception:
+            p = ""
+        if p:
+            paths.append(Path(p))
+
+    # Fall back to the hard-coded Downloads dir if Qt doesn't provide one.
+    if DOWNLOADS_DIR not in paths:
+        paths.append(DOWNLOADS_DIR)
+
+    # Add "most recently used" / start directory if it exists and isn't already present.
+    extra_candidates: list[Path] = []
+    if start_dir is not None:
+        extra_candidates.append(start_dir)
+    if settings is not None:
+        last_dir_setting = str(settings.get("LAST_FILE_DIALOG_DIR", "") or "")
+        if last_dir_setting:
+            extra_candidates.append(Path(last_dir_setting))
+
+    def _normalize(p: Path) -> Optional[Path]:
+        try:
+            p2 = p.expanduser()
+        except Exception:
+            p2 = p
+        try:
+            if p2.is_file():
+                p2 = p2.parent
+        except Exception:
+            pass
+        try:
+            if not p2.exists():
+                return None
+        except Exception:
+            return None
+        return p2
+
+    extra_paths: list[Path] = []
+    for p in extra_candidates:
+        np = _normalize(p)
+        if np is not None:
+            extra_paths.append(np)
+
+    # Insert extras near the top (after Home) without disturbing the common layout.
+    for extra in reversed(extra_paths):
+        if extra in paths:
+            continue
+        insert_at = 1 if len(paths) >= 1 else 0
+        paths.insert(insert_at, extra)
+
+    # Useful top-level location.
+    paths.append(Path("/"))
+
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    urls: list[QtCore.QUrl] = []
     for p in paths:
-        if p.exists():
+        try:
+            key = str(p.expanduser().resolve())
+        except Exception:
+            key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            urls.append(QtCore.QUrl.fromLocalFile(p.as_posix()))
+        except Exception:
+            continue
+    return urls
+
+
+def _select_sidebar_for_path(dialog: "QtWidgets.QFileDialog", path: Path) -> None:
+    """Highlight the sidebar entry that best matches ``path``.
+
+    Uses longest-prefix matching against QFileDialog.sidebarUrls(), then
+    updates the sidebar QListView selection/current index.
+    """
+    try:
+        from PySide6 import QtCore, QtWidgets
+    except Exception:
+        return
+
+    sidebar = dialog.findChild(QtWidgets.QListView, "sidebar")
+    if sidebar is None:
+        return
+
+    try:
+        urls = list(dialog.sidebarUrls())
+    except Exception:
+        urls = []
+
+    try:
+        cur_norm = os.path.normpath(str(path.expanduser()))
+    except Exception:
+        cur_norm = os.path.normpath(str(path))
+
+    best_i: Optional[int] = None
+    best_len = -1
+    for i, url in enumerate(urls):
+        try:
+            p = url.toLocalFile()
+        except Exception:
+            continue
+        if not p:
+            continue
+        p_norm = os.path.normpath(p)
+        if cur_norm == p_norm or cur_norm.startswith(p_norm + os.sep):
+            if len(p_norm) > best_len:
+                best_len = len(p_norm)
+                best_i = i
+
+    model = sidebar.model()
+    sm = sidebar.selectionModel()
+    if model is None or sm is None:
+        return
+
+    root = sidebar.rootIndex()
+    idx = None
+    if best_i is not None:
+        try:
+            if model.rowCount(root) > best_i:
+                cand = model.index(best_i, 0, root)
+                if cand.isValid():
+                    idx = cand
+        except Exception:
+            idx = None
+
+    # Fallback: scan rows for URL-like data.
+    if idx is None:
+        try:
+            rows = model.rowCount(root)
+        except Exception:
+            rows = 0
+        for r in range(rows):
             try:
-                urls.append(QtCore.QUrl.fromLocalFile(p.as_posix()))
+                cand = model.index(r, 0, root)
+                data = model.data(cand, QtCore.Qt.UserRole)
+                if hasattr(data, "toLocalFile"):
+                    p = data.toLocalFile()
+                else:
+                    p = str(data) if data is not None else ""
+                if not p:
+                    continue
+                p_norm = os.path.normpath(p)
+                if cur_norm == p_norm or cur_norm.startswith(p_norm + os.sep):
+                    idx = cand
+                    break
             except Exception:
                 continue
-    return urls
+
+    if idx is None:
+        return
+
+    flags = (
+        QtCore.QItemSelectionModel.Clear
+        | QtCore.QItemSelectionModel.Select
+        | QtCore.QItemSelectionModel.Current
+    )
+    try:
+        sm.setCurrentIndex(idx, flags)
+    except Exception:
+        try:
+            sm.select(idx, flags)
+        except Exception:
+            pass
+    try:
+        sidebar.setCurrentIndex(idx)
+    except Exception:
+        pass
+    try:
+        sidebar.scrollTo(idx)
+    except Exception:
+        pass
+
+
+def _prime_file_dialog_selections(dialog: "QtWidgets.QFileDialog", start_dir: Path) -> None:
+    """Ensure initial selection highlights in both file pane and sidebar.
+
+    QFileDialog populates its models asynchronously; we retry a few times to
+    guarantee a currentIndex/selection exists.
+    """
+    try:
+        from PySide6 import QtCore, QtWidgets
+    except Exception:
+        return
+
+    attempts = {"left": 12}
+
+    def _tick() -> None:
+        attempts["left"] -= 1
+
+        # Ensure file pane has a current selection (first row).
+        try:
+            _focus_file_view(dialog)
+        except Exception:
+            pass
+
+        # Ensure sidebar highlights the start directory.
+        try:
+            _select_sidebar_for_path(dialog, start_dir)
+        except Exception:
+            pass
+
+        # Stop retrying once both look sane.
+        file_ok = False
+        sidebar_ok = False
+        try:
+            tree_view = dialog.findChild(QtWidgets.QTreeView, "treeView")
+            if tree_view is not None:
+                sm = tree_view.selectionModel()
+                cur = tree_view.currentIndex()
+                file_ok = bool(cur.isValid() and sm and sm.hasSelection())
+        except Exception:
+            file_ok = False
+        try:
+            sidebar = dialog.findChild(QtWidgets.QListView, "sidebar")
+            if sidebar is not None:
+                sm = sidebar.selectionModel()
+                cur = sidebar.currentIndex()
+                sidebar_ok = bool(cur.isValid() and sm and sm.hasSelection())
+        except Exception:
+            sidebar_ok = False
+
+        if attempts["left"] > 0 and not (file_ok and sidebar_ok):
+            QtCore.QTimer.singleShot(50, _tick)
+
+    QtCore.QTimer.singleShot(0, _tick)
+
+
+
+def _apply_file_dialog_inactive_selection_style(dialog: "QtWidgets.QFileDialog") -> None:
+    """Make selections look 'faded' when a view is not focused.
+
+    Qt item views (sidebar/tree/list) normally change selection appearance when they
+    lose focus. Styles differ across desktops; we force a pale highlight so the
+    non-focused pane still shows context but looks clearly inactive.
+    """
+    try:
+        from PySide6 import QtGui, QtWidgets
+    except Exception:
+        return
+
+    try:
+        pal = dialog.palette()
+        active_hi = pal.color(QtGui.QPalette.Active, QtGui.QPalette.Highlight)
+        base = pal.color(QtGui.QPalette.Active, QtGui.QPalette.Base)
+    except Exception:
+        return
+
+    def _blend(a: "QtGui.QColor", b: "QtGui.QColor", t: float) -> "QtGui.QColor":
+        t = max(0.0, min(1.0, float(t)))
+        try:
+            r = int(round(a.red() * (1.0 - t) + b.red() * t))
+            g = int(round(a.green() * (1.0 - t) + b.green() * t))
+            bl = int(round(a.blue() * (1.0 - t) + b.blue() * t))
+            return QtGui.QColor(r, g, bl)
+        except Exception:
+            return b
+
+    # 0.30–0.40 tends to read as "pale highlight" across light/dark themes.
+    faded = _blend(base, active_hi, 0.35)
+    faded_hex = faded.name()
+
+    try:
+        ss = dialog.styleSheet() or ""
+    except Exception:
+        ss = ""
+
+    # In Qt stylesheets, :active / :!active correspond to whether the widget has focus.
+    # (This is the behavior we want: "focused pane = strong highlight".)
+    ss += f"""
+    /* ap_bizhelper: fade selection when a pane is not focused */
+    QListView#sidebar::item:selected:!active,
+    QTreeView#treeView::item:selected:!active,
+    QListView#listView::item:selected:!active {{
+        background: {faded_hex};
+        color: palette(text);
+    }}
+    """
+
+    try:
+        dialog.setStyleSheet(ss)
+    except Exception:
+        return
 
 
 def _widen_file_dialog_sidebar(dialog: "QtWidgets.QFileDialog", settings: Dict[str, object]) -> None:
@@ -626,7 +921,14 @@ def _configure_file_view_columns(dialog: "QtWidgets.QFileDialog", settings: Dict
         return
 
 
+
 def _focus_file_view(dialog: "QtWidgets.QFileDialog") -> None:
+    """Ensure the file list has a visible current selection.
+
+    QFileDialog's models can appear with a selection but an invalid currentIndex
+    (or vice versa) while populating. Keyboard/controller navigation tends to
+    follow currentIndex, so we set both.
+    """
     try:
         from PySide6 import QtCore, QtWidgets
 
@@ -637,16 +939,62 @@ def _focus_file_view(dialog: "QtWidgets.QFileDialog") -> None:
         selection_model = tree_view.selectionModel()
         if not model or not selection_model:
             return
+
+        root_index = tree_view.rootIndex()
+        try:
+            row_count = model.rowCount(root_index)
+        except Exception:
+            row_count = model.rowCount()
+        if row_count <= 0:
+            return
+
         current_index = tree_view.currentIndex()
-        if not current_index.isValid() and model.rowCount() > 0:
-            first_index = model.index(0, 0)
-            if first_index.isValid():
-                tree_view.setCurrentIndex(first_index)
-                selection_model.select(
-                    first_index,
-                    QtCore.QItemSelectionModel.Select | QtCore.QItemSelectionModel.Rows,
-                )
-        tree_view.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+        idx = current_index if current_index.isValid() else None
+
+        if idx is None:
+            # If something is selected but currentIndex is invalid, use the selection.
+            try:
+                if selection_model.hasSelection():
+                    sel = selection_model.selectedIndexes()
+                    if sel:
+                        idx = sel[0]
+            except Exception:
+                idx = None
+
+        if idx is None:
+            try:
+                idx = model.index(0, 0, root_index)
+            except Exception:
+                idx = model.index(0, 0)
+
+        if idx is None or not getattr(idx, "isValid", lambda: False)():
+            return
+
+        flags = (
+            QtCore.QItemSelectionModel.Clear
+            | QtCore.QItemSelectionModel.Select
+            | QtCore.QItemSelectionModel.Current
+            | QtCore.QItemSelectionModel.Rows
+        )
+        try:
+            selection_model.setCurrentIndex(idx, flags)
+        except Exception:
+            try:
+                selection_model.select(idx, flags)
+            except Exception:
+                pass
+        try:
+            tree_view.setCurrentIndex(idx)
+        except Exception:
+            pass
+        try:
+            tree_view.scrollTo(idx)
+        except Exception:
+            pass
+        try:
+            tree_view.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+        except Exception:
+            pass
     except Exception:
         return
 
@@ -758,8 +1106,6 @@ def file_dialog(
     )
     if width > 0 and height > 0:
         dialog.resize(width, height)
-
-
     def _scale_file_name_font(widget: "QtWidgets.QWidget") -> None:
         base_font = widget.font()
         scaled_font = QtGui.QFont(base_font)
@@ -801,15 +1147,17 @@ def file_dialog(
                 except Exception:
                     pass
 
-    sidebar_urls = _sidebar_urls()
+    sidebar_urls = _sidebar_urls(start_dir=start_dir, settings=settings_obj)
     if sidebar_urls:
         dialog.setSidebarUrls(sidebar_urls)
     _widen_file_dialog_sidebar(dialog, settings_obj)
+    _apply_file_dialog_inactive_selection_style(dialog)
     if _coerce_bool_setting(
         settings_obj, "QT_FILE_DIALOG_MAXIMIZE", bool(DIALOG_DEFAULTS["QT_FILE_DIALOG_MAXIMIZE"])
     ):
         dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
     _configure_file_view_columns(dialog, settings_obj)
+    _prime_file_dialog_selections(dialog, start_dir)
     _focus_file_view(dialog)
     try:
         QtCore.QTimer.singleShot(0, lambda: _focus_file_view(dialog))
