@@ -439,8 +439,12 @@ def modular_dialog(
             _record_selection(positive_spec)
         elif special_spec is not None:
             _record_selection(special_spec)
+        else:
+            # A progress dialog without an affirmative button should still complete
+            # successfully when the stream finishes.
+            result.role = "positive"
     _capture_checklist()
-    dialog.close()
+    dialog.accept()
     return result
 
 
