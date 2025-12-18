@@ -537,13 +537,37 @@ if QT_AVAILABLE:
                     buttons.append(button)
             return buttons
 
-        def _navigation_targets(self) -> list[QtWidgets.QWidget]:
-            buttons = self._button_targets()
-            checkboxes = self._checkbox_targets()
+        def _focusable(self, widget: Optional[QtWidgets.QWidget]) -> bool:
+            if widget is None:
+                return False
+            try:
+                return (
+                    widget.isVisible()
+                    and widget.isEnabled()
+                    and widget.focusPolicy() != QtCore.Qt.NoFocus
+                )
+            except Exception:
+                return False
+
+        def _focus_cycle(self) -> list[QtWidgets.QWidget]:
+            actions = self._action_buttons
+            buttons: list[QtWidgets.QWidget] = []
+
+            primary = actions.get("default") or actions.get("affirmative")
+            for candidate in (
+                primary,
+                actions.get("special"),
+                actions.get("negative"),
+                actions.get("affirmative"),
+                actions.get("default"),
+            ):
+                if candidate is None or candidate in buttons or not self._focusable(candidate):
+                    continue
+                buttons.append(candidate)
 
             widgets: list[QtWidgets.QWidget] = []
-            for widget in (*buttons, *checkboxes):
-                if widget not in widgets:
+            for widget in (*buttons, *self._checkbox_targets()):
+                if widget not in widgets and self._focusable(widget):
                     widgets.append(widget)
             return widgets
 
@@ -552,7 +576,9 @@ if QT_AVAILABLE:
                 return []
 
             checkboxes = [
-                cb for cb in self._dialog.findChildren(QtWidgets.QCheckBox) if cb.isVisible()
+                cb
+                for cb in self._dialog.findChildren(QtWidgets.QCheckBox)
+                if cb.isVisible() and cb.isEnabled()
             ]
             for checkbox in checkboxes:
                 self._ensure_checkbox_focus_style(checkbox)
@@ -575,28 +601,38 @@ if QT_AVAILABLE:
             )
             checkbox.setStyleSheet(focus_style)
 
+        def _ensure_checkbox_visibility(self, widget: QtWidgets.QWidget) -> None:
+            parent = widget.parent()
+            while parent is not None and not isinstance(parent, QtWidgets.QScrollArea):
+                parent = parent.parent()
+            if isinstance(parent, QtWidgets.QScrollArea):
+                try:
+                    parent.ensureWidgetVisible(widget)
+                except Exception:
+                    pass
+
         def _move_between_controls(
             self, *, go_next: bool, origin: QtWidgets.QWidget
         ) -> bool:
-            widgets = self._navigation_targets()
+            widgets = self._focus_cycle()
             if len(widgets) < 2:
                 return False
 
             try:
                 current_index = widgets.index(origin)  # type: ignore[arg-type]
             except ValueError:
-                current_index = -1
+                current_index = 0
 
-            if current_index < 0:
-                target_index = 0 if go_next else len(widgets) - 1
-            else:
-                step = 1 if go_next else -1
-                target_index = (current_index + step) % len(widgets)
+            step = 1 if go_next else -1
+            target_index = (current_index + step) % len(widgets)
 
             try:
                 target_widget = widgets[target_index]
-                target_widget.setFocus()
+                target_widget.setFocus(QtCore.Qt.FocusReason.TabFocusReason)
+                if not target_widget.hasFocus():
+                    target_widget.setFocus()
                 self._last_target = target_widget
+                self._ensure_checkbox_visibility(target_widget)
                 return True
             except Exception:
                 return False
@@ -703,6 +739,43 @@ def install_gamepad_navigation(
             layer.register_action_buttons(**actions)
         except Exception:
             pass
+
+    def _set_initial_focus() -> None:
+        preferred = (actions or {}).get("default") or (actions or {}).get("affirmative")
+        if preferred is None:
+            return
+        try:
+            if preferred.isVisible() and preferred.isEnabled():
+                preferred.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+                try:
+                    layer._last_target = preferred  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+        except Exception:
+            return
+
+    try:
+        QtCore.QTimer.singleShot(0, _set_initial_focus)
+    except Exception:
+        pass
+
+    try:
+        did_activate = {"done": False}
+
+        class _FocusOnceFilter(QtCore.QObject):
+            def eventFilter(self, obj: QtCore.QObject, ev: QtCore.QEvent) -> bool:  # noqa: N802
+                if did_activate["done"]:
+                    return False
+                if ev.type() in (QtCore.QEvent.Show, QtCore.QEvent.WindowActivate):
+                    did_activate["done"] = True
+                    QtCore.QTimer.singleShot(0, _set_initial_focus)
+                return False
+
+        focus_filter = _FocusOnceFilter(dialog)
+        dialog.installEventFilter(focus_filter)
+        setattr(dialog, "_ap_gamepad_focus_filter", focus_filter)
+    except Exception:
+        pass
 
     dialog.installEventFilter(layer)
     try:
