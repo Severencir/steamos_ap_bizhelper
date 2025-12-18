@@ -306,18 +306,97 @@ def _extract_archive(archive: Path, dest_dir: Path) -> Path:
     return dest_dir
 
 
+def _extract_archipelago_connectors(archive: Path, staging_dir: Path) -> None:
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    def _extract_tar(tf: tarfile.TarFile) -> bool:
+        extracted = False
+        for member in tf.getmembers():
+            if member.islnk() or member.issym():
+                raise RuntimeError("Archives containing symbolic links are not supported")
+
+            parts = Path(member.name).parts
+            try:
+                data_idx = parts.index("data")
+                if parts[data_idx + 1] != "lua":
+                    continue
+            except (ValueError, IndexError):
+                continue
+
+            rel_parts = parts[data_idx + 2 :]
+            if rel_parts:
+                target_path = _validated_member_path(str(Path(*rel_parts)), staging_dir)
+            else:
+                target_path = staging_dir
+
+            if member.isdir():
+                target_path.mkdir(parents=True, exist_ok=True)
+                extracted = True
+                continue
+
+            fileobj = tf.extractfile(member)
+            if fileobj is None:
+                raise RuntimeError(f"Could not read archive member: {member.name}")
+
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with fileobj, target_path.open("wb") as out:
+                shutil.copyfileobj(fileobj, out)
+            extracted = True
+        return extracted
+
+    def _extract_zip(zf: zipfile.ZipFile) -> bool:
+        extracted = False
+        for info in zf.infolist():
+            if _zipinfo_is_symlink(info):
+                raise RuntimeError("Archives containing symbolic links are not supported")
+
+            parts = Path(info.filename).parts
+            try:
+                data_idx = parts.index("data")
+                if parts[data_idx + 1] != "lua":
+                    continue
+            except (ValueError, IndexError):
+                continue
+
+            rel_parts = parts[data_idx + 2 :]
+            if rel_parts:
+                target_path = _validated_member_path(str(Path(*rel_parts)), staging_dir)
+            else:
+                target_path = staging_dir
+
+            if info.is_dir():
+                target_path.mkdir(parents=True, exist_ok=True)
+                extracted = True
+                continue
+
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, target_path.open("wb") as out:
+                shutil.copyfileobj(src, out)
+            extracted = True
+        return extracted
+
+    if tarfile.is_tarfile(archive):
+        with tarfile.open(archive, "r:*") as tf:
+            has_connectors = _extract_tar(tf)
+    elif zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive, "r") as zf:
+            has_connectors = _extract_zip(zf)
+    else:
+        raise RuntimeError("Unsupported archive format for connectors.")
+
+    if not has_connectors:
+        raise RuntimeError("Archipelago source archive did not contain data/lua directory")
+
+
 def _apply_archipelago_connector_archive(archive: Path, bizhawk_dir: Path) -> None:
-    with tempfile.TemporaryDirectory() as td:
-        extracted_root = _extract_archive(archive, Path(td))
-        lua_dir: Optional[Path] = None
-        for data_dir in extracted_root.rglob("data"):
-            candidate = data_dir / "lua"
-            if candidate.is_dir():
-                lua_dir = candidate
-                break
-        if lua_dir is None:
-            raise RuntimeError("Archipelago source archive did not contain data/lua directory")
-        _copy_tree(lua_dir, bizhawk_dir / "connectors")
+    connectors_dest = bizhawk_dir / "connectors"
+    with tempfile.TemporaryDirectory(dir=bizhawk_dir) as td:
+        staging_root = Path(td) / "connectors"
+        _extract_archipelago_connectors(archive, staging_root)
+
+        if connectors_dest.exists():
+            shutil.rmtree(connectors_dest)
+        staging_root.rename(connectors_dest)
 
 
 def _stage_archipelago_connectors(
