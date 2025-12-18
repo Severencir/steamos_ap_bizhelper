@@ -435,8 +435,10 @@ def modular_dialog(
     app.processEvents()
 
     if result.role is None and not result.progress_cancelled:
-        completion_spec = positive_spec or next((spec for _, spec in qt_buttons if spec.is_default), qt_buttons[0][1])
-        _record_selection(completion_spec)
+        if positive_spec is not None:
+            _record_selection(positive_spec)
+        elif special_spec is not None:
+            _record_selection(special_spec)
     _capture_checklist()
     dialog.close()
     return result
@@ -774,10 +776,7 @@ def checklist_dialog(
 def progress_dialog_from_stream(
     title: str, text: str, stream: Iterable[str], *, cancel_label: str = "Cancel"
 ) -> int:
-    buttons = [
-        DialogButtonSpec(cancel_label, role="negative", is_default=True),
-        DialogButtonSpec("Close", role="positive"),
-    ]
+    buttons = [DialogButtonSpec(cancel_label, role="negative", is_default=True)]
 
     result = modular_dialog(
         title=title or "Progress",
