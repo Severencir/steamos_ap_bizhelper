@@ -651,6 +651,79 @@ def _focus_file_view(dialog: "QtWidgets.QFileDialog") -> None:
         return
 
 
+def _find_file_dialog_button(
+    dialog: "QtWidgets.QFileDialog",
+    *,
+    names: Sequence[str],
+    tooltip_keywords: Sequence[str],
+) -> Optional["QtWidgets.QAbstractButton"]:
+    try:
+        from PySide6 import QtWidgets
+    except Exception:
+        return None
+
+    for name in names:
+        button = dialog.findChild(QtWidgets.QAbstractButton, name)
+        if button is not None and button.isVisible():
+            return button
+
+    for button in dialog.findChildren(QtWidgets.QAbstractButton):
+        if not button.isVisible():
+            continue
+        tooltip = (button.toolTip() or "").casefold()
+        if tooltip and any(keyword in tooltip for keyword in tooltip_keywords):
+            return button
+    return None
+
+
+def _bind_file_dialog_navigation(dialog: "QtWidgets.QFileDialog") -> None:
+    try:
+        from PySide6 import QtCore, QtGui
+    except Exception:
+        return
+
+    def _activate_button(
+        names: Sequence[str],
+        tooltip_keywords: Sequence[str],
+    ) -> None:
+        button = _find_file_dialog_button(
+            dialog, names=names, tooltip_keywords=tooltip_keywords
+        )
+        if button is None:
+            return
+        try:
+            button.animateClick()
+            return
+        except Exception:
+            pass
+        try:
+            button.click()
+        except Exception:
+            pass
+
+    shortcut_specs = [
+        (
+            QtCore.Qt.Key_L,
+            lambda: _activate_button(["backButton"], ("back", "previous")),
+        ),
+        (
+            QtCore.Qt.Key_R,
+            lambda: _activate_button(["forwardButton"], ("forward", "next")),
+        ),
+        (
+            QtCore.Qt.Key_Y,
+            lambda: _activate_button(
+                ["toParentButton", "cdUpButton"], ("up", "parent")
+            ),
+        ),
+    ]
+
+    for key, handler in shortcut_specs:
+        shortcut = QtGui.QShortcut(QtGui.QKeySequence(key), dialog)
+        shortcut.setContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        shortcut.activated.connect(handler)
+
+
 def question_dialog(
     *, title: str, text: str, ok_label: str, cancel_label: str, extra_label: Optional[str] = None
 ) -> str:
@@ -814,6 +887,7 @@ def file_dialog(
         dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
     _configure_file_view_columns(dialog, settings_obj)
     _focus_file_view(dialog)
+    _bind_file_dialog_navigation(dialog)
     try:
         QtCore.QTimer.singleShot(0, lambda: _focus_file_view(dialog))
     except Exception:
