@@ -647,9 +647,24 @@ def _prompt_select_existing_appimage(initial: Path, *, settings: Dict[str, Any])
         raise RuntimeError("User cancelled Archipelago AppImage selection")
 
     return chosen
-def _github_latest_appimage() -> Tuple[str, str]:
+def _normalize_asset_digest(raw_digest: str, *, default_algorithm: str = "sha256") -> Tuple[str, str]:
+    digest = raw_digest.strip()
+    if not digest:
+        raise ValueError("empty digest")
+
+    algorithm, value = default_algorithm, digest
+    if ":" in digest:
+        parts = digest.split(":", 1)
+        if len(parts) == 2 and parts[0].strip():
+            algorithm, value = parts[0].strip(), parts[1].strip()
+    if not value:
+        raise ValueError("empty digest value")
+    return algorithm.lower(), value.lower()
+
+
+def _github_latest_appimage() -> Tuple[str, str, str, str]:
     """
-    Return (download_url, version_tag) for the latest Archipelago Linux AppImage.
+    Return (download_url, version_tag, digest, digest_algorithm) for the latest Archipelago Linux AppImage.
 
     Raises RuntimeError on failure.
     """
@@ -668,8 +683,16 @@ def _github_latest_appimage() -> Tuple[str, str]:
         name = asset.get("name") or ""
         if pattern.search(name):
             url = asset.get("browser_download_url")
-            if url:
-                return url, tag
+            digest = asset.get("digest")
+            if not url:
+                continue
+            if not digest:
+                raise RuntimeError(f"AppImage asset missing digest: {name}")
+            try:
+                digest_algorithm, normalized_digest = _normalize_asset_digest(digest)
+            except ValueError as exc:
+                raise RuntimeError(f"Invalid digest for asset {name}: {exc}") from exc
+            return url, tag, normalized_digest, digest_algorithm
     raise RuntimeError("Could not find Archipelago Linux AppImage asset in latest release.")
 
 
@@ -681,24 +704,21 @@ def download_with_progress(
     text: str,
     expected_hash: Optional[str] = None,
     hash_name: str = "sha256",
+    require_hash: bool = False,
 ) -> None:
     """Download ``url`` to ``dest`` with a PySide6 progress dialog.
 
     When ``expected_hash`` is provided, the downloaded file is validated using
     the ``hash_name`` algorithm (``sha256`` by default). If the server provides
     a ``X-Checksum-Sha256`` header, that value is used as the expected hash
-    when one is not explicitly supplied.
+    when one is not explicitly supplied. When ``require_hash`` is True, missing
+    digests will abort the download.
     """
 
     _ensure_dirs()
     _ensure_qt_available()
 
     req = urllib.request.Request(url, headers={"User-Agent": "ap-bizhelper/1.0"})
-
-    try:
-        hash_ctx = hashlib.new(hash_name)
-    except Exception as exc:
-        raise RuntimeError(f"Unsupported hash algorithm: {hash_name}") from exc
 
     response_headers: dict[str, str] = {}
     temp_path: Optional[Path] = None
@@ -725,6 +745,33 @@ def download_with_progress(
         try:
             with urllib.request.urlopen(req, timeout=300) as resp, temp_path.open("wb") as f:
                 response_headers = {k.lower(): v for k, v in resp.headers.items()}
+
+                normalized_hash_name = hash_name
+                normalized_expected = expected_hash
+                if normalized_expected:
+                    try:
+                        normalized_hash_name, normalized_expected = _normalize_asset_digest(
+                            normalized_expected, default_algorithm=hash_name
+                        )
+                    except ValueError as exc:
+                        raise RuntimeError(f"Invalid expected digest: {exc}") from exc
+
+                header_hash = response_headers.get("x-checksum-sha256") or ""
+                if not normalized_expected and header_hash:
+                    try:
+                        normalized_hash_name, normalized_expected = _normalize_asset_digest(
+                            header_hash, default_algorithm="sha256"
+                        )
+                    except ValueError:
+                        normalized_expected = ""
+
+                try:
+                    hash_ctx = hashlib.new(normalized_hash_name)
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Unsupported hash algorithm: {normalized_hash_name}"
+                    ) from exc
+
                 total_str = resp.headers.get("Content-Length") or "0"
                 try:
                     total = int(total_str)
@@ -742,6 +789,13 @@ def download_with_progress(
                     if total > 0:
                         percent = max(0, min(100, int(downloaded * 100 / total)))
                         yield str(percent)
+
+                computed_hash = hash_ctx.hexdigest().lower()
+                if normalized_expected:
+                    if normalized_expected.lower() != computed_hash:
+                        raise RuntimeError("Downloaded file failed hash verification")
+                elif require_hash:
+                    raise RuntimeError("Download did not provide an expected digest")
         except GeneratorExit:
             _cleanup_temp()
             raise
@@ -760,14 +814,6 @@ def download_with_progress(
         _cleanup_temp()
         raise RuntimeError("Download cancelled by user")
 
-    computed_hash = hash_ctx.hexdigest()
-    header_hash = response_headers.get("x-checksum-sha256")
-    normalized_expected = (expected_hash or header_hash or "").strip().lower()
-    if normalized_expected:
-        if normalized_expected != computed_hash.lower():
-            _cleanup_temp()
-            raise RuntimeError("Downloaded file failed hash verification")
-
     try:
         temp_path.replace(dest)
     except Exception:
@@ -779,9 +825,14 @@ def download_with_progress(
     except Exception:
         pass
 
-
 def download_appimage(
-    url: str, dest: Path, version: str, *, download_messages: Optional[list[str]] = None
+    url: str,
+    dest: Path,
+    version: str,
+    *,
+    expected_digest: str,
+    digest_algorithm: str,
+    download_messages: Optional[list[str]] = None,
 ) -> None:
     """Download the AppImage to ``dest`` with a Qt progress dialog."""
 
@@ -790,6 +841,9 @@ def download_appimage(
         dest,
         title="Archipelago download",
         text=f"Downloading Archipelago {version}...",
+        expected_hash=expected_digest,
+        hash_name=digest_algorithm,
+        require_hash=True,
     )
     if download_messages is not None:
         download_messages.append(f"Downloaded Archipelago {version}")
@@ -853,7 +907,7 @@ def maybe_update_appimage(
         return appimage, False
 
     try:
-        url, latest_ver = _github_latest_appimage()
+        url, latest_ver, latest_digest, latest_algo = _github_latest_appimage()
     except Exception:
         return appimage, False
 
@@ -882,7 +936,14 @@ def maybe_update_appimage(
 
     # Update now
     try:
-        download_appimage(url, AP_APPIMAGE_DEFAULT, latest_ver, download_messages=download_messages)
+        download_appimage(
+            url,
+            AP_APPIMAGE_DEFAULT,
+            latest_ver,
+            expected_digest=latest_digest,
+            digest_algorithm=latest_algo,
+            download_messages=download_messages,
+        )
     except Exception as e:
         error_dialog(f"Archipelago update failed: {e}")
         return appimage, False
@@ -949,13 +1010,18 @@ def ensure_appimage(
     if needs_setup:
         if download_selected:
             try:
-                url, ver = _github_latest_appimage()
+                url, ver, digest, digest_algo = _github_latest_appimage()
             except Exception as e:
                 error_dialog(f"Failed to query latest Archipelago release: {e}")
                 raise RuntimeError("Failed to query latest Archipelago release") from e
             try:
                 download_appimage(
-                    url, AP_APPIMAGE_DEFAULT, ver, download_messages=download_messages
+                    url,
+                    AP_APPIMAGE_DEFAULT,
+                    ver,
+                    expected_digest=digest,
+                    digest_algorithm=digest_algo,
+                    download_messages=download_messages,
                 )
             except Exception as e:
                 error_dialog(f"Archipelago download failed or was cancelled: {e}")
