@@ -312,9 +312,6 @@ def _extract_archipelago_connectors(archive: Path, staging_dir: Path) -> None:
     def _extract_tar(tf: tarfile.TarFile) -> bool:
         extracted = False
         for member in tf.getmembers():
-            if member.islnk() or member.issym():
-                raise RuntimeError("Archives containing symbolic links are not supported")
-
             parts = Path(member.name).parts
             try:
                 data_idx = parts.index("data")
@@ -322,6 +319,8 @@ def _extract_archipelago_connectors(archive: Path, staging_dir: Path) -> None:
                     continue
             except (ValueError, IndexError):
                 continue
+            if member.islnk() or member.issym():
+                raise RuntimeError("Archives containing symbolic links are not supported")
 
             rel_parts = parts[data_idx + 2 :]
             if rel_parts:
@@ -347,9 +346,6 @@ def _extract_archipelago_connectors(archive: Path, staging_dir: Path) -> None:
     def _extract_zip(zf: zipfile.ZipFile) -> bool:
         extracted = False
         for info in zf.infolist():
-            if _zipinfo_is_symlink(info):
-                raise RuntimeError("Archives containing symbolic links are not supported")
-
             parts = Path(info.filename).parts
             try:
                 data_idx = parts.index("data")
@@ -357,6 +353,8 @@ def _extract_archipelago_connectors(archive: Path, staging_dir: Path) -> None:
                     continue
             except (ValueError, IndexError):
                 continue
+            if _zipinfo_is_symlink(info):
+                raise RuntimeError("Archives containing symbolic links are not supported")
 
             rel_parts = parts[data_idx + 2 :]
             if rel_parts:
