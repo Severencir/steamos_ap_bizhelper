@@ -194,6 +194,7 @@ if QT_AVAILABLE:
             self._fd_hist: list[str] = []
             self._fd_hist_pos: int = -1
             self._fd_hist_lock: bool = False
+            self._fd_hist_pending: Optional[str] = None
             if self._is_file_dialog():
                 try:
                     cur = self._file_dialog_current_dir()
@@ -831,6 +832,8 @@ if QT_AVAILABLE:
                     QtCore.QTimer.singleShot(0, lambda v=target: self._select_sidebar_for_current_dir(v))
                 except Exception:
                     pass
+            elif self._is_file_dialog() and go_right:
+                self._commit_pending_file_dialog_history()
 
             if self._debug:
                 self._dump_focus("after toggle setFocus")
@@ -844,6 +847,109 @@ if QT_AVAILABLE:
         # -----------------------------
         # QFileDialog helpers (sidebar + directory navigation)
         # -----------------------------
+
+        def _file_dialog_file_pane(self) -> Optional[QtWidgets.QAbstractItemView]:
+            if not self._is_file_dialog():
+                return None
+            tree_view = self._dialog.findChild(QtWidgets.QTreeView, "treeView")
+            list_view = self._dialog.findChild(QtWidgets.QListView, "listView")
+            for candidate in (tree_view, list_view):
+                if candidate is not None and candidate.isVisible():
+                    return candidate
+            return None
+
+        def _file_dialog_sidebar_active(self) -> bool:
+            if not self._is_file_dialog():
+                return False
+            try:
+                sidebar = self._dialog.findChild(QtWidgets.QAbstractItemView, "sidebar")
+            except Exception:
+                sidebar = None
+            if sidebar is None:
+                return False
+            focus = None
+            try:
+                focus = self._dialog.focusWidget()
+            except Exception:
+                focus = None
+            if focus is None:
+                try:
+                    focus = QtWidgets.QApplication.focusWidget()
+                except Exception:
+                    focus = None
+            try:
+                if focus is not None and (focus is sidebar or sidebar.isAncestorOf(focus)):
+                    return True
+            except Exception:
+                pass
+            if self._last_target is not None:
+                try:
+                    if self._last_target is sidebar:
+                        return True
+                    if isinstance(self._last_target, QtWidgets.QWidget) and (
+                        self._last_target.objectName() == "sidebar"
+                    ):
+                        return True
+                except Exception:
+                    pass
+            return False
+
+        def _prime_file_dialog_selection(self) -> None:
+            pane = self._file_dialog_file_pane()
+            if pane is None:
+                return
+            try:
+                self._ensure_file_view_selection(pane)
+                QtCore.QTimer.singleShot(0, lambda v=pane: self._ensure_file_view_selection(v))
+                QtCore.QTimer.singleShot(0, lambda v=pane: self._force_itemview_current(v))
+            except Exception:
+                return
+
+        def _record_file_dialog_history(self, path: str) -> None:
+            if not path:
+                return
+            norm = os.path.normpath(path)
+            if self._fd_hist_pos == -1:
+                self._fd_hist = [norm]
+                self._fd_hist_pos = 0
+                return
+            if not self._fd_hist or not (0 <= self._fd_hist_pos < len(self._fd_hist)):
+                self._fd_hist = [norm]
+                self._fd_hist_pos = 0
+                return
+            if norm == self._fd_hist[self._fd_hist_pos]:
+                return
+            if self._fd_hist_pos < len(self._fd_hist) - 1:
+                self._fd_hist = self._fd_hist[: self._fd_hist_pos + 1]
+            self._fd_hist.append(norm)
+            self._fd_hist_pos = len(self._fd_hist) - 1
+
+        def _commit_pending_file_dialog_history(self) -> None:
+            if self._fd_hist_lock:
+                return
+            if self._fd_hist_pending is None:
+                return
+            pending = self._fd_hist_pending
+            self._fd_hist_pending = None
+            self._record_file_dialog_history(pending)
+
+        def _on_file_dialog_directory_entered(self, path: str) -> None:
+            if not self._is_file_dialog():
+                return
+            if not path:
+                return
+            try:
+                norm = os.path.normpath(path)
+            except Exception:
+                norm = path
+            self._prime_file_dialog_selection()
+            if self._fd_hist_lock:
+                return
+            if self._file_dialog_sidebar_active():
+                self._fd_hist_pending = norm
+                return
+            self._fd_hist_pending = None
+            self._record_file_dialog_history(norm)
 
         def _file_dialog_current_dir(self) -> Optional[str]:
             if not self._is_file_dialog():
