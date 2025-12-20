@@ -1162,6 +1162,8 @@ if QT_AVAILABLE:
                 try:
                     self._fd_hist_lock = True
                     self._dialog.setDirectory(target)  # type: ignore[union-attr]
+                    self._fd_hist_pending = None
+                    self._prime_file_dialog_selection()
                 finally:
                     self._fd_hist_lock = False
                 return True
@@ -1191,6 +1193,8 @@ if QT_AVAILABLE:
                 try:
                     self._fd_hist_lock = True
                     self._dialog.setDirectory(target)  # type: ignore[union-attr]
+                    self._fd_hist_pending = None
+                    self._prime_file_dialog_selection()
                 finally:
                     self._fd_hist_lock = False
                 return True
@@ -1216,6 +1220,8 @@ if QT_AVAILABLE:
                 return False
             try:
                 self._dialog.setDirectory(parent)  # type: ignore[union-attr]
+                self._fd_hist_pending = None
+                self._prime_file_dialog_selection()
                 return True
             except Exception:
                 return False
