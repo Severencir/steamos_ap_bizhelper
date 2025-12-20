@@ -899,48 +899,11 @@ if QT_AVAILABLE:
             if pane is None:
                 return
             try:
-                self._select_first_itemview_row(pane)
-                QtCore.QTimer.singleShot(0, lambda v=pane: self._select_first_itemview_row(v))
+                self._ensure_file_view_selection(pane)
+                QtCore.QTimer.singleShot(0, lambda v=pane: self._ensure_file_view_selection(v))
                 QtCore.QTimer.singleShot(0, lambda v=pane: self._force_itemview_current(v))
             except Exception:
                 return
-
-        def _select_first_itemview_row(self, view: QtWidgets.QAbstractItemView) -> None:
-            if not isinstance(view, QtWidgets.QAbstractItemView):
-                return
-            model = view.model()
-            selection_model = view.selectionModel()
-            if model is None or selection_model is None:
-                return
-            root_index = view.rootIndex()
-            try:
-                if model.rowCount(root_index) <= 0:
-                    return
-                first_index = model.index(0, 0, root_index)
-                if not first_index.isValid():
-                    return
-            except Exception:
-                return
-            flags = (
-                QtCore.QItemSelectionModel.Clear
-                | QtCore.QItemSelectionModel.Select
-                | QtCore.QItemSelectionModel.Current
-            )
-            try:
-                selection_model.setCurrentIndex(first_index, flags)
-            except Exception:
-                try:
-                    selection_model.select(first_index, flags)
-                except Exception:
-                    pass
-            try:
-                view.setCurrentIndex(first_index)
-            except Exception:
-                pass
-            try:
-                view.scrollTo(first_index)
-            except Exception:
-                pass
 
         def _record_file_dialog_history(self, path: str) -> None:
             if not path:
