@@ -605,13 +605,30 @@ if QT_AVAILABLE:
                 cur = QtCore.QModelIndex()
 
             index = cur if getattr(cur, "isValid", lambda: False)() else None
+            if index is not None:
+                try:
+                    if root_index.isValid() and index.parent() != root_index:
+                        index = None
+                except Exception:
+                    index = None
             if index is None:
                 try:
                     sel = selection_model.selectedIndexes()
                 except Exception:
                     sel = []
                 if sel:
-                    index = sel[0]
+                    valid_sel = []
+                    for cand in sel:
+                        try:
+                            if not cand.isValid():
+                                continue
+                            if root_index.isValid() and cand.parent() != root_index:
+                                continue
+                        except Exception:
+                            continue
+                        valid_sel.append(cand)
+                    if valid_sel:
+                        index = valid_sel[0]
                 else:
                     try:
                         if model.rowCount(root_index) <= 0:
@@ -740,8 +757,24 @@ if QT_AVAILABLE:
                 has_sel = False
 
             if has_sel:
-                self._force_itemview_current(widget)
-                return
+                try:
+                    sel = selection_model.selectedIndexes()
+                except Exception:
+                    sel = []
+                valid_sel = []
+                if sel:
+                    for cand in sel:
+                        try:
+                            if not cand.isValid():
+                                continue
+                            if root_index.isValid() and cand.parent() != root_index:
+                                continue
+                        except Exception:
+                            continue
+                        valid_sel.append(cand)
+                if valid_sel:
+                    self._force_itemview_current(widget)
+                    return
 
             try:
                 if model.rowCount(root_index) <= 0:
