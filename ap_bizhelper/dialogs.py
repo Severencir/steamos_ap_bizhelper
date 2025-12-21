@@ -33,6 +33,41 @@ DIALOG_DEFAULTS = {
     "QT_FILE_DIALOG_SIDEBAR_ICON_SIZE": 32,
 }
 
+
+# Enable verbose debug logs for the Qt file dialog selection/highlight behavior.
+# Use Steam launch options like: AP_BIZHELPER_DEBUG_FILE_DIALOG=1 %command%
+_FILE_DIALOG_DEBUG_ENV = "AP_BIZHELPER_DEBUG_FILE_DIALOG"
+
+def _file_dialog_debug_enabled() -> bool:
+    v = str(os.environ.get(_FILE_DIALOG_DEBUG_ENV, "")).strip().lower()
+    return v not in ("", "0", "false", "no", "off")
+
+def _fdlog(logger: Optional["AppLogger"], message: str, **fields: object) -> None:
+    if not logger:
+        return
+    if fields:
+        extras = " ".join(f"{k}={fields[k]!r}" for k in sorted(fields))
+        message = f"{message} | {extras}"
+    try:
+        logger.log(message, location="file-dialog", include_context=True)
+    except Exception:
+        pass
+
+def _describe_index(view: object, idx: object) -> str:
+    try:
+        if idx is None or not idx.isValid():
+            return "<invalid>"
+        model = view.model()
+        r = idx.row()
+        c = idx.column()
+        try:
+            label = str(model.data(idx))
+        except Exception:
+            label = "?"
+        return f"r{r}c{c} {label!r}"
+    except Exception:
+        return "<?>"
+
 _QT_APP: Optional["QtWidgets.QApplication"] = None
 _QT_BASE_FONT: Optional["QtGui.QFont"] = None
 _QT_IMPORT_ERROR: Optional[BaseException] = None
@@ -679,11 +714,17 @@ def _select_sidebar_for_path(dialog: "QtWidgets.QFileDialog", path: Path) -> Non
         pass
 
 
-def _prime_file_dialog_selections(dialog: "QtWidgets.QFileDialog", start_dir: Path) -> None:
+def _prime_file_dialog_selections(
+    dialog: "QtWidgets.QFileDialog",
+    start_dir: Path,
+    *,
+    logger: Optional["AppLogger"] = None,
+) -> None:
     """Ensure initial selection highlights in both file pane and sidebar.
 
-    QFileDialog populates its models asynchronously; we retry a few times to
-    guarantee a currentIndex/selection exists.
+    QFileDialog populates its models asynchronously; we retry briefly to ensure a
+    currentIndex/selection exists in the file pane. Sidebar selection is best-effort
+    and is only attempted once to avoid churn.
     """
     try:
         from PySide6 import QtCore, QtWidgets
@@ -691,46 +732,206 @@ def _prime_file_dialog_selections(dialog: "QtWidgets.QFileDialog", start_dir: Pa
         return
 
     attempts = {"left": 12}
+    sidebar_attempted = {"done": False}
+
+    def _file_ok() -> bool:
+        for view_name, view_type in (("treeView", QtWidgets.QTreeView), ("listView", QtWidgets.QListView)):
+            try:
+                v = dialog.findChild(view_type, view_name)
+            except Exception:
+                v = None
+            if v is None:
+                continue
+            try:
+                if not v.isVisible() or not v.isEnabled():
+                    continue
+            except Exception:
+                pass
+            try:
+                sm = v.selectionModel()
+                cur = v.currentIndex()
+                if cur.isValid() and sm and sm.hasSelection():
+                    return True
+            except Exception:
+                continue
+        return False
 
     def _tick() -> None:
         attempts["left"] -= 1
 
-        # Ensure file pane has a current selection (first row).
         try:
-            _focus_file_view(dialog)
+            _focus_file_view(dialog, logger=logger)
         except Exception:
             pass
 
-        # Ensure sidebar highlights the start directory.
-        try:
-            _select_sidebar_for_path(dialog, start_dir)
-        except Exception:
-            pass
+        # Best-effort sidebar priming, only once (avoid repeating during async load).
+        if not sidebar_attempted["done"]:
+            sidebar_attempted["done"] = True
+            try:
+                _select_sidebar_for_path(dialog, start_dir)
+                _fdlog(logger, "prime: sidebar primed once")
+            except Exception:
+                _fdlog(logger, "prime: sidebar prime failed")
 
-        # Stop retrying once both look sane.
-        file_ok = False
-        sidebar_ok = False
+        ok = False
         try:
-            tree_view = dialog.findChild(QtWidgets.QTreeView, "treeView")
-            if tree_view is not None:
-                sm = tree_view.selectionModel()
-                cur = tree_view.currentIndex()
-                file_ok = bool(cur.isValid() and sm and sm.hasSelection())
+            ok = _file_ok()
         except Exception:
-            file_ok = False
-        try:
-            sidebar = dialog.findChild(QtWidgets.QListView, "sidebar")
-            if sidebar is not None:
-                sm = sidebar.selectionModel()
-                cur = sidebar.currentIndex()
-                sidebar_ok = bool(cur.isValid() and sm and sm.hasSelection())
-        except Exception:
-            sidebar_ok = False
+            ok = False
 
-        if attempts["left"] > 0 and not (file_ok and sidebar_ok):
+        _fdlog(logger, "prime tick", left=attempts["left"], file_ok=ok)
+
+        if attempts["left"] > 0 and not ok:
             QtCore.QTimer.singleShot(50, _tick)
 
     QtCore.QTimer.singleShot(0, _tick)
+
+
+def _install_file_dialog_force_first(
+    dialog: "QtWidgets.QFileDialog",
+    *,
+    start_dir: Path,
+    logger: Optional["AppLogger"] = None,
+) -> None:
+    """Re-assert 'row 0 is current' when the model reorders itself.
+
+    The failure mode we see is:
+      - we set row 0 current early
+      - Qt later emits layoutChanged (sorting/relayout) and preserves the *item* as current,
+        which can move it to a different row
+      - our previous logic then accepts that moved currentIndex
+
+    This hook listens for model changes (layoutChanged/modelReset/rowsInserted/directoryLoaded)
+    shortly after initial show and after each directoryEntered, and forces row 0 current then.
+    """
+    try:
+        from PySide6 import QtCore, QtWidgets
+    except Exception:
+        return
+
+    import time as _time
+
+    state: Dict[str, object] = {
+        "until": 0.0,
+        "connections": [],  # List[Tuple[signal, fn]]
+        "model": None,
+    }
+
+    def _arm(window_ms: int, reason: str) -> None:
+        state["until"] = _time.monotonic() + (window_ms / 1000.0)
+        _fdlog(logger, "force-first armed", reason=reason, window_ms=window_ms)
+
+    def _active() -> bool:
+        try:
+            return _time.monotonic() < float(state["until"])
+        except Exception:
+            return False
+
+    def _disconnect_all() -> None:
+        conns = list(state.get("connections") or [])
+        state["connections"] = []
+        for sig, fn in conns:
+            try:
+                sig.disconnect(fn)
+            except Exception:
+                pass
+
+    def _pick_view() -> Optional[QtWidgets.QAbstractItemView]:
+        candidates: List[QtWidgets.QAbstractItemView] = []
+        for view_name, view_type in (("treeView", QtWidgets.QTreeView), ("listView", QtWidgets.QListView)):
+            try:
+                v = dialog.findChild(view_type, view_name)
+            except Exception:
+                v = None
+            if v is None:
+                continue
+            try:
+                if v.isVisible() and v.isEnabled():
+                    candidates.append(v)
+            except Exception:
+                candidates.append(v)
+        return candidates[0] if candidates else None
+
+    def _wire_model_signals() -> None:
+        view = _pick_view()
+        if view is None:
+            return
+        model = view.model()
+        if model is None or model is state.get("model"):
+            return
+
+        _fdlog(logger, "force-first wiring model", view=view.objectName() or type(view).__name__, model=type(model).__name__)
+        _disconnect_all()
+        state["model"] = model
+
+        def _on_model_changed(*_args) -> None:
+            if not _active():
+                return
+            _fdlog(logger, "force-first model change", view=view.objectName() or type(view).__name__)
+            try:
+                _focus_file_view(dialog, force_first=True, logger=logger)
+            except Exception:
+                pass
+
+        # Connect common change signals.
+        for sig_name in ("layoutChanged", "modelReset", "rowsInserted"):
+            sig = getattr(model, sig_name, None)
+            if sig is None:
+                continue
+            try:
+                sig.connect(_on_model_changed)
+                state["connections"].append((sig, _on_model_changed))
+            except Exception:
+                pass
+
+        # QFileSystemModel emits this when async population completes.
+        dir_sig = getattr(model, "directoryLoaded", None)
+        if dir_sig is not None:
+            try:
+                dir_sig.connect(_on_model_changed)
+                state["connections"].append((dir_sig, _on_model_changed))
+            except Exception:
+                pass
+
+    def _schedule_force(reason: str) -> None:
+        # Rewire to whatever model/view is currently active, then force a few times.
+        _wire_model_signals()
+        if not _active():
+            return
+        for delay in (0, 60, 160, 320):
+            def _do_force(_r=reason, _d=delay) -> None:
+                if not _active():
+                    return
+                _fdlog(logger, "force-first apply", reason=_r, delay_ms=_d)
+                try:
+                    _focus_file_view(dialog, force_first=True, logger=logger)
+                except Exception:
+                    pass
+            try:
+                QtCore.QTimer.singleShot(delay, _do_force)
+            except Exception:
+                pass
+
+    def _on_directory_entered(path: str) -> None:
+        _fdlog(logger, "directoryEntered", path=path)
+        _arm(1500, "directoryEntered")
+        _schedule_force("directoryEntered")
+
+    # Initial arm: cover the first show/relayout.
+    _arm(1500, "initial")
+    _schedule_force("initial")
+
+    try:
+        dialog.directoryEntered.connect(_on_directory_entered)
+    except Exception:
+        pass
+
+    # Also try to keep the sidebar selection from churning the file view during startup:
+    # apply sidebar selection once at start_dir, but do not repeat here.
+    try:
+        _select_sidebar_for_path(dialog, start_dir)
+    except Exception:
+        pass
 
 
 
@@ -922,82 +1123,113 @@ def _configure_file_view_columns(dialog: "QtWidgets.QFileDialog", settings: Dict
 
 
 
-def _focus_file_view(dialog: "QtWidgets.QFileDialog") -> None:
+def _focus_file_view(dialog: "QtWidgets.QFileDialog", *, force_first: bool = False, logger: Optional["AppLogger"] = None) -> None:
     """Ensure the file list has a visible current selection.
 
     QFileDialog's models can appear with a selection but an invalid currentIndex
-    (or vice versa) while populating. Keyboard/controller navigation tends to
+    (or vice versa) while populating/sorting. Controller navigation tends to
     follow currentIndex, so we set both.
+
+    If ``force_first`` is True, we intentionally ignore an existing valid
+    currentIndex and force the first row (row 0) to become current.
     """
     try:
         from PySide6 import QtCore, QtWidgets
-
-        tree_view = dialog.findChild(QtWidgets.QTreeView, "treeView")
-        if tree_view is None:
-            return
-        model = tree_view.model()
-        selection_model = tree_view.selectionModel()
-        if not model or not selection_model:
-            return
-
-        root_index = tree_view.rootIndex()
-        try:
-            row_count = model.rowCount(root_index)
-        except Exception:
-            row_count = model.rowCount()
-        if row_count <= 0:
-            return
-
-        current_index = tree_view.currentIndex()
-        idx = current_index if current_index.isValid() else None
-
-        if idx is None:
-            # If something is selected but currentIndex is invalid, use the selection.
-            try:
-                if selection_model.hasSelection():
-                    sel = selection_model.selectedIndexes()
-                    if sel:
-                        idx = sel[0]
-            except Exception:
-                idx = None
-
-        if idx is None:
-            try:
-                idx = model.index(0, 0, root_index)
-            except Exception:
-                idx = model.index(0, 0)
-
-        if idx is None or not getattr(idx, "isValid", lambda: False)():
-            return
-
-        flags = (
-            QtCore.QItemSelectionModel.Clear
-            | QtCore.QItemSelectionModel.Select
-            | QtCore.QItemSelectionModel.Current
-            | QtCore.QItemSelectionModel.Rows
-        )
-        try:
-            selection_model.setCurrentIndex(idx, flags)
-        except Exception:
-            try:
-                selection_model.select(idx, flags)
-            except Exception:
-                pass
-        try:
-            tree_view.setCurrentIndex(idx)
-        except Exception:
-            pass
-        try:
-            tree_view.scrollTo(idx)
-        except Exception:
-            pass
-        try:
-            tree_view.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-        except Exception:
-            pass
     except Exception:
         return
 
+    # QFileDialog can show either a treeView (Detail) or listView (List).
+    # Prefer whichever is visible/enabled.
+    candidates: List[QtWidgets.QAbstractItemView] = []
+    for view_name, view_type in (("treeView", QtWidgets.QTreeView), ("listView", QtWidgets.QListView)):
+        try:
+            v = dialog.findChild(view_type, view_name)
+        except Exception:
+            v = None
+        if v is None:
+            continue
+        try:
+            if v.isVisible() and v.isEnabled():
+                candidates.append(v)
+        except Exception:
+            candidates.append(v)
+
+    if not candidates:
+        return
+
+    view = candidates[0]
+    model = view.model()
+    selection_model = view.selectionModel()
+    if not model or not selection_model:
+        return
+
+    root_index = getattr(view, "rootIndex", lambda: QtCore.QModelIndex())()
+    try:
+        row_count = model.rowCount(root_index)
+    except Exception:
+        try:
+            row_count = model.rowCount()
+        except Exception:
+            row_count = 0
+    if row_count <= 0:
+        return
+
+    current_index = view.currentIndex()
+    _fdlog(logger, "focus_file_view pre", view=view.objectName() or type(view).__name__, force_first=force_first, cur=_describe_index(view, current_index))
+
+    idx = None
+    if not force_first and current_index is not None and getattr(current_index, "isValid", lambda: False)():
+        idx = current_index
+
+    if idx is None and not force_first:
+        # If something is selected but currentIndex is invalid, use the selection.
+        try:
+            if selection_model.hasSelection():
+                sel = selection_model.selectedIndexes()
+                if sel:
+                    idx = sel[0]
+        except Exception:
+            idx = None
+
+    if idx is None:
+        try:
+            idx = model.index(0, 0, root_index)
+        except Exception:
+            try:
+                idx = model.index(0, 0)
+            except Exception:
+                idx = None
+
+    if idx is None or not getattr(idx, "isValid", lambda: False)():
+        return
+
+    flags = (
+        QtCore.QItemSelectionModel.Clear
+        | QtCore.QItemSelectionModel.Select
+        | QtCore.QItemSelectionModel.Current
+        | QtCore.QItemSelectionModel.Rows
+    )
+    try:
+        selection_model.setCurrentIndex(idx, flags)
+    except Exception:
+        try:
+            selection_model.select(idx, flags)
+        except Exception:
+            pass
+    try:
+        view.setCurrentIndex(idx)
+    except Exception:
+        pass
+    try:
+        view.scrollTo(idx)
+    except Exception:
+        pass
+    try:
+        view.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+    except Exception:
+        pass
+
+    _fdlog(logger, "focus_file_view post", view=view.objectName() or type(view).__name__, cur=_describe_index(view, view.currentIndex()))
 
 def question_dialog(
     *, title: str, text: str, ok_label: str, cancel_label: str, extra_label: Optional[str] = None
@@ -1089,6 +1321,8 @@ def file_dialog(
     ensure_qt_app(settings_obj)
     global_scale = _detect_global_scale()
     filter_text = file_filter or "All Files (*)"
+    fd_logger: Optional["AppLogger"] = get_app_logger() if _file_dialog_debug_enabled() else None
+    _fdlog(fd_logger, "file_dialog init", title=title, start_dir=str(start_dir), filter=filter_text)
     dialog = QtWidgets.QFileDialog()
     dialog.setWindowTitle(title)
     dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptOpen)
@@ -1157,10 +1391,11 @@ def file_dialog(
     ):
         dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
     _configure_file_view_columns(dialog, settings_obj)
-    _prime_file_dialog_selections(dialog, start_dir)
-    _focus_file_view(dialog)
+    _install_file_dialog_force_first(dialog, start_dir=start_dir, logger=fd_logger)
+    _prime_file_dialog_selections(dialog, start_dir, logger=fd_logger)
+    _focus_file_view(dialog, logger=fd_logger)
     try:
-        QtCore.QTimer.singleShot(0, lambda: _focus_file_view(dialog))
+        QtCore.QTimer.singleShot(0, lambda: _focus_file_view(dialog, logger=fd_logger))
     except Exception:
         pass
     dialog.activateWindow()
