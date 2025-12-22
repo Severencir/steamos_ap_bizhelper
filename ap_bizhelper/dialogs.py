@@ -53,6 +53,19 @@ def _fdlog(logger: Optional["AppLogger"], message: str, **fields: object) -> Non
     except Exception:
         pass
 
+
+
+def _fdlogd(logger: Optional["AppLogger"], message: str, **fields: object) -> None:
+    """Debug-only wrapper around _fdlog.
+
+    Extra file dialog logging is gated by AP_BIZHELPER_DEBUG_FILE_DIALOG so
+    normal launches stay quiet.
+    """
+    if not _file_dialog_debug_enabled():
+        return
+    _fdlog(logger, message, **fields)
+
+
 def _describe_index(view: object, idx: object) -> str:
     try:
         if idx is None or not idx.isValid():
@@ -1328,6 +1341,7 @@ def file_dialog(
     dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptOpen)
     dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
     dialog.setDirectory(str(start_dir))
+    _fdlogd(fd_logger, 'file_dialog setDirectory', requested=str(start_dir), actual=str(dialog.directory().absolutePath()))
     dialog.setNameFilter(filter_text)
     dialog.setViewMode(QtWidgets.QFileDialog.Detail)
     dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
@@ -1384,6 +1398,11 @@ def file_dialog(
     sidebar_urls = _sidebar_urls(start_dir=start_dir, settings=settings_obj)
     if sidebar_urls:
         dialog.setSidebarUrls(sidebar_urls)
+    try:
+        paths = [u.toLocalFile() for u in dialog.sidebarUrls()]
+        _fdlogd(fd_logger, 'file_dialog sidebarUrls applied', count=len(paths), first=paths[:6])
+    except Exception:
+        pass
     _widen_file_dialog_sidebar(dialog, settings_obj)
     _apply_file_dialog_inactive_selection_style(dialog)
     if _coerce_bool_setting(
@@ -1393,6 +1412,7 @@ def file_dialog(
     _configure_file_view_columns(dialog, settings_obj)
     _install_file_dialog_force_first(dialog, start_dir=start_dir, logger=fd_logger)
     _prime_file_dialog_selections(dialog, start_dir, logger=fd_logger)
+    _fdlogd(fd_logger, 'file_dialog after prime selections', dir=str(dialog.directory().absolutePath()))
     _focus_file_view(dialog, logger=fd_logger)
     try:
         QtCore.QTimer.singleShot(0, lambda: _focus_file_view(dialog, logger=fd_logger))
@@ -1401,8 +1421,15 @@ def file_dialog(
     dialog.activateWindow()
     dialog.raise_()
     dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+    try:
+        dialog.directoryEntered.connect(lambda p: _fdlogd(fd_logger, 'file_dialog directoryEntered', path=str(p)))
+    except Exception:
+        pass
     gamepad_layer = enable_dialog_gamepad(dialog)
-    if dialog.exec() == QtWidgets.QDialog.Accepted:
+    _fdlogd(fd_logger, 'file_dialog about_to_exec', dir=str(dialog.directory().absolutePath()))
+    result = dialog.exec()
+    _fdlogd(fd_logger, 'file_dialog exec_return', result=int(result), dir=str(dialog.directory().absolutePath()))
+    if result == QtWidgets.QDialog.Accepted:
         selected_files = dialog.selectedFiles()
         if selected_files:
             if gamepad_layer is not None:
@@ -1423,7 +1450,27 @@ def select_file_dialog(
     save_settings: bool = True,
 ) -> Optional[Path]:
     settings_obj = _load_dialog_settings(settings)
+    fd_logger: Optional["AppLogger"] = get_app_logger() if _file_dialog_debug_enabled() else None
+    # Log how we decide the starting directory (per-dialog memory > global memory > defaults).
+    try:
+        per_dialog = str((settings_obj.get('LAST_FILE_DIALOG_DIRS', {}) or {}).get(dialog_key, '') or '')
+        global_last = str(settings_obj.get('LAST_FILE_DIALOG_DIR', '') or '')
+    except Exception:
+        per_dialog = ''
+        global_last = ''
+    _fdlogd(
+        fd_logger,
+        'select_file_dialog start_dir decision',
+        dialog_key=dialog_key,
+        title=title,
+        initial=str(initial) if initial else None,
+        per_dialog_last=per_dialog or None,
+        global_last=global_last or None,
+        downloads=str(DOWNLOADS_DIR),
+        home=str(Path.home()),
+    )
     start_dir = preferred_start_dir(initial, settings_obj, dialog_key)
+    _fdlogd(fd_logger, 'select_file_dialog start_dir chosen', dialog_key=dialog_key, start_dir=str(start_dir))
 
     selection = file_dialog(
         title=title, start_dir=start_dir, file_filter=file_filter, settings=settings_obj
