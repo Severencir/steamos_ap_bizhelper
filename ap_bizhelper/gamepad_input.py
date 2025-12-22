@@ -13,7 +13,7 @@ from __future__ import annotations
 import ctypes
 import os
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from .logging_utils import get_app_logger
 
@@ -195,12 +195,20 @@ if QT_AVAILABLE:
             self._fd_hist_pos: int = -1
             self._fd_hist_lock: bool = False
             self._fd_hist_pending: Optional[str] = None
+            # QFileDialog: manage a dynamic "current directory" entry at the top of the sidebar.
+            self._fd_sidebar_urls_tail: Optional[list] = None
+            self._fd_sidebar_current_entry: Optional[str] = None
+            self._fd_sidebar_frozen: bool = False
+            self._fd_sidebar_anchor: Optional[str] = None
+            self._fd_sidebar_pending: Optional[str] = None
             if self._is_file_dialog():
+                # IMPORTANT:
+                # QFileDialog can start at a platform default (commonly Documents) and only
+                # apply the requested start directory after the event loop runs. Prime our
+                # history + dynamic sidebar entry after that happens.
                 try:
-                    cur = self._file_dialog_current_dir()
-                    if cur:
-                        self._fd_hist = [os.path.normpath(cur)]
-                        self._fd_hist_pos = 0
+                    QtCore.QTimer.singleShot(0, self._prime_file_dialog_initial_state)
+                    QtCore.QTimer.singleShot(50, self._prime_file_dialog_initial_state)
                 except Exception:
                     pass
                 try:
@@ -820,19 +828,24 @@ if QT_AVAILABLE:
             # Re-run on the next event-loop tick to catch that.
             QtCore.QTimer.singleShot(0, lambda w=target: self._ensure_file_view_selection(w))
             QtCore.QTimer.singleShot(0, lambda w=target: self._force_itemview_current(w))
-            # When switching to the sidebar, try to pre-select the entry that best matches
-            # the current directory shown in the file pane (e.g., Downloads/Desktop).
+            # When switching to the sidebar, freeze the "current directory" sidebar entry so it
+            # doesn't immediately jump as the sidebar selection changes.
             if (
                 self._is_file_dialog()
                 and isinstance(target, QtWidgets.QAbstractItemView)
                 and target.objectName() == "sidebar"
             ):
                 try:
-                    self._select_sidebar_for_current_dir(target)
-                    QtCore.QTimer.singleShot(0, lambda v=target: self._select_sidebar_for_current_dir(v))
+                    self._freeze_sidebar_current_dir_entry()
+                    self._select_sidebar_current_dir_entry(target)
+                    QtCore.QTimer.singleShot(
+                        0, lambda v=target: self._select_sidebar_current_dir_entry(v)
+                    )
                 except Exception:
                     pass
             elif self._is_file_dialog() and go_right:
+                # Leaving the sidebar: resume tracking the file pane directory and commit history.
+                self._unfreeze_sidebar_current_dir_entry()
                 self._commit_pending_file_dialog_history()
 
             if self._debug:
@@ -947,13 +960,131 @@ if QT_AVAILABLE:
                 return
             if self._file_dialog_sidebar_active():
                 self._fd_hist_pending = norm
+                self._fd_sidebar_pending = norm
                 return
             self._fd_hist_pending = None
             self._record_file_dialog_history(norm)
 
+            # Track the live file-pane directory in the top sidebar entry unless frozen.
+            if self._fd_sidebar_frozen:
+                self._fd_sidebar_pending = norm
+                return
+            self._fd_sidebar_pending = None
+            self._set_sidebar_current_dir_entry(norm)
+
         def _file_dialog_current_dir(self) -> Optional[str]:
             if not self._is_file_dialog():
                 return None
+
+        def _set_sidebar_current_dir_entry(self, path: str) -> None:
+            """Ensure the *first* sidebar entry points at the given local directory path.
+
+            This is used in QFileDialog to provide a stable "return to where I was browsing"
+            entry when navigating the sidebar with a controller.
+            """
+            if not self._is_file_dialog() or not path:
+                return
+            try:
+                norm = os.path.normpath(path)
+            except Exception:
+                norm = path
+
+            # Skip redundant updates; repeatedly calling setSidebarUrls() can be disruptive.
+            if getattr(self, "_fd_sidebar_current_entry", None) == norm:
+                return
+
+            try:
+                url = QtCore.QUrl.fromLocalFile(norm)
+                current_urls = list(self._dialog.sidebarUrls())  # type: ignore[union-attr]
+            except Exception:
+                return
+
+            # Capture the "tail" once (the original sidebarUrls) so we can keep the default
+            # places while replacing only the dynamic first entry.
+            if self._fd_sidebar_urls_tail is None:
+                self._fd_sidebar_urls_tail = current_urls
+
+            def _local_key(u: Any) -> Optional[str]:
+                try:
+                    p = u.toLocalFile()
+                except Exception:
+                    return None
+                if not p:
+                    return None
+                try:
+                    return os.path.normpath(p)
+                except Exception:
+                    return p
+
+            want = norm
+            tail = self._fd_sidebar_urls_tail or []
+            new_tail: list = []
+            seen: set = set([want])
+            for u in tail:
+                k = _local_key(u)
+                if k is not None and k in seen:
+                    continue
+                if k is not None:
+                    seen.add(k)
+                new_tail.append(u)
+
+            try:
+                self._dialog.setSidebarUrls([url] + new_tail)  # type: ignore[union-attr]
+                self._fd_sidebar_current_entry = norm
+            except Exception:
+                return
+
+        def _freeze_sidebar_current_dir_entry(self) -> None:
+            """Freeze the dynamic sidebar entry while the sidebar is focused."""
+            if not self._is_file_dialog():
+                return
+            self._fd_sidebar_frozen = True
+            cur = self._file_dialog_current_dir()
+            if not cur:
+                return
+            try:
+                anchor = os.path.normpath(cur)
+            except Exception:
+                anchor = cur
+            self._fd_sidebar_anchor = anchor
+            self._set_sidebar_current_dir_entry(anchor)
+
+        def _unfreeze_sidebar_current_dir_entry(self) -> None:
+            """Resume dynamic sidebar entry tracking when leaving the sidebar."""
+            if not self._is_file_dialog():
+                return
+            self._fd_sidebar_frozen = False
+            self._fd_sidebar_anchor = None
+            # If the directory changed while frozen, apply the pending value first.
+            target = self._fd_sidebar_pending or self._file_dialog_current_dir()
+            self._fd_sidebar_pending = None
+            if target:
+                self._set_sidebar_current_dir_entry(target)
+
+        def _select_sidebar_current_dir_entry(self, sidebar: QtWidgets.QAbstractItemView) -> None:
+            """Select the dynamic 'current directory' entry (row 0) in the QFileDialog sidebar."""
+            if not self._is_file_dialog() or sidebar is None:
+                return
+            model = sidebar.model()
+            sm = sidebar.selectionModel()
+            if model is None or sm is None:
+                return
+            root = sidebar.rootIndex()
+            try:
+                idx = model.index(0, 0, root)
+                if not idx.isValid():
+                    return
+                flags = (
+                    QtCore.QItemSelectionModel.Clear
+                    | QtCore.QItemSelectionModel.Select
+                    | QtCore.QItemSelectionModel.Current
+                )
+                sm.setCurrentIndex(idx, flags)
+                sidebar.setCurrentIndex(idx)
+                sidebar.scrollTo(idx)
+            except Exception:
+                return
+
             try:
                 # QFileDialog.directory() returns a QDir
                 qdir = self._dialog.directory()  # type: ignore[union-attr]
@@ -963,6 +1094,32 @@ if QT_AVAILABLE:
                     return str(self._dialog.directory().path())  # type: ignore[union-attr]
                 except Exception:
                     return None
+
+        def _prime_file_dialog_initial_state(self) -> None:
+            """Prime history + dynamic sidebar entry after QFileDialog applies its start directory.
+
+            This avoids capturing Qt's transient initial default (often Documents) before the real
+            start directory (Downloads / per-dialog memory) is applied.
+            """
+            if not self._is_file_dialog():
+                return
+            cur = self._file_dialog_current_dir()
+            if not cur:
+                return
+            try:
+                norm = os.path.normpath(cur)
+            except Exception:
+                norm = cur
+
+            if not getattr(self, "_fd_hist", None):
+                self._fd_hist = [norm]
+                self._fd_hist_pos = 0
+
+            if getattr(self, "_fd_sidebar_frozen", False):
+                self._fd_sidebar_pending = norm
+                return
+            self._set_sidebar_current_dir_entry(norm)
+
 
         def _select_sidebar_for_current_dir(self, sidebar: QtWidgets.QAbstractItemView) -> None:
             """Best-effort: select the sidebar place that matches the current directory.
@@ -1229,7 +1386,8 @@ if QT_AVAILABLE:
             value = axis_event.value
 
             
-            # Triggers: in QFileDialog, LT/RT toggle focus between sidebar and file pane.
+            # Triggers: treat LT/RT as digital bumpers (L/R). This avoids relying on trigger-based
+            # focus switching, and makes triggers behave like the L/R shoulder buttons everywhere.
             if axis_event.axis in (SDL_CONTROLLER_AXIS_TRIGGERLEFT, SDL_CONTROLLER_AXIS_TRIGGERRIGHT):
                 is_left = axis_event.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT
                 state_key = "ltrigger" if is_left else "rtrigger"
@@ -1237,10 +1395,9 @@ if QT_AVAILABLE:
 
                 if self._axis_state.get(state_key) != active:
                     self._axis_state[state_key] = active
-                    if active and self._is_file_dialog():
-                        # LT -> sidebar (left), RT -> file pane (right)
+                    if active:
                         try:
-                            self._toggle_file_dialog_pane(go_right=not is_left)
+                            self._handle_trigger_as_bumper(is_left=is_left)
                         except Exception:
                             pass
                 return
@@ -1268,6 +1425,19 @@ if QT_AVAILABLE:
                     continue
                 self._axis_state[key] = active
                 self._post_key(qt_key, active)
+
+
+        def _handle_trigger_as_bumper(self, *, is_left: bool) -> None:
+            """Treat an LT/RT activation edge like the L/R shoulder buttons."""
+            if self._is_file_dialog():
+                if is_left:
+                    self._file_dialog_back()
+                else:
+                    self._file_dialog_forward()
+                return
+
+            # In other dialogs, bumpers cycle focus between actionable controls.
+            self._change_focus(next_focus=not is_left)
 
         def _handle_button(self, button_event: SDL_ControllerButtonEvent, *, pressed: bool) -> None:
             button = int(button_event.button)
@@ -1302,6 +1472,17 @@ if QT_AVAILABLE:
             # In other dialogs, bumpers cycle focus between actionable controls.
             if button in focus_map and pressed:
                 self._change_focus(next_focus=focus_map[button])
+                return
+
+            if button == SDL_CONTROLLER_BUTTON_START:
+                # QFileDialog: Start toggles focus between sidebar and file pane.
+                if pressed and self._is_file_dialog():
+                    try:
+                        # If we're already on the sidebar, go right to the file pane; otherwise go left.
+                        go_right = self._file_dialog_sidebar_active()
+                        self._toggle_file_dialog_pane(go_right=go_right)
+                    except Exception:
+                        pass
                 return
 
             if button == SDL_CONTROLLER_BUTTON_Y:
