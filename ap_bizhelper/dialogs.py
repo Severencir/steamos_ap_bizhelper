@@ -626,8 +626,10 @@ def _sidebar_urls(*, start_dir: Optional[Path] = None, settings: Optional[Dict[s
 def _select_sidebar_for_path(dialog: "QtWidgets.QFileDialog", path: Path) -> None:
     """Highlight the sidebar entry that best matches ``path``.
 
-    Uses longest-prefix matching against QFileDialog.sidebarUrls(), then
-    updates the sidebar QListView selection/current index.
+    We intentionally prefer reading the sidebar model's row data (Qt.UserRole)
+    over assuming the row ordering matches QFileDialog.sidebarUrls(). Some
+    desktops insert extra rows (Recent/Trash/separators) that can desync the
+    model rows from sidebarUrls.
     """
     try:
         from PySide6 import QtCore, QtWidgets
@@ -639,29 +641,9 @@ def _select_sidebar_for_path(dialog: "QtWidgets.QFileDialog", path: Path) -> Non
         return
 
     try:
-        urls = list(dialog.sidebarUrls())
-    except Exception:
-        urls = []
-
-    try:
         cur_norm = os.path.normpath(str(path.expanduser()))
     except Exception:
         cur_norm = os.path.normpath(str(path))
-
-    best_i: Optional[int] = None
-    best_len = -1
-    for i, url in enumerate(urls):
-        try:
-            p = url.toLocalFile()
-        except Exception:
-            continue
-        if not p:
-            continue
-        p_norm = os.path.normpath(p)
-        if cur_norm == p_norm or cur_norm.startswith(p_norm + os.sep):
-            if len(p_norm) > best_len:
-                best_len = len(p_norm)
-                best_i = i
 
     model = sidebar.model()
     sm = sidebar.selectionModel()
@@ -669,64 +651,89 @@ def _select_sidebar_for_path(dialog: "QtWidgets.QFileDialog", path: Path) -> Non
         return
 
     root = sidebar.rootIndex()
-    idx = None
-    if best_i is not None:
-        try:
-            if model.rowCount(root) > best_i:
-                cand = model.index(best_i, 0, root)
-                if cand.isValid():
-                    idx = cand
-        except Exception:
-            idx = None
 
-    # Fallback: scan rows for URL-like data.
-    if idx is None:
+    best_idx = None
+    best_len = -1
+
+    try:
+        rows = model.rowCount(root)
+    except Exception:
         try:
-            rows = model.rowCount(root)
+            rows = model.rowCount()
         except Exception:
             rows = 0
-        for r in range(rows):
+
+    for r in range(rows):
+        try:
+            cand = model.index(r, 0, root)
+            if not cand.isValid():
+                continue
+            data = None
             try:
-                cand = model.index(r, 0, root)
                 data = model.data(cand, QtCore.Qt.UserRole)
-                if hasattr(data, "toLocalFile"):
-                    p = data.toLocalFile()
-                else:
-                    p = str(data) if data is not None else ""
-                if not p:
-                    continue
-                p_norm = os.path.normpath(p)
-                if cur_norm == p_norm or cur_norm.startswith(p_norm + os.sep):
-                    idx = cand
-                    break
             except Exception:
+                data = None
+
+            p = ""
+            if hasattr(data, "toLocalFile"):
+                try:
+                    p = data.toLocalFile()
+                except Exception:
+                    p = ""
+            elif isinstance(data, str):
+                p = data
+
+            if not p or not os.path.isabs(p):
                 continue
 
-    if idx is None:
+            p_norm = os.path.normpath(p)
+            if cur_norm == p_norm or cur_norm.startswith(p_norm + os.sep):
+                if len(p_norm) > best_len:
+                    best_len = len(p_norm)
+                    best_idx = cand
+        except Exception:
+            continue
+
+    # Fallback: if the model didn't expose a path, pick row 0 when it matches.
+    if best_idx is None:
+        try:
+            urls = list(dialog.sidebarUrls())
+            if urls:
+                p0 = urls[0].toLocalFile()
+                if p0:
+                    p0n = os.path.normpath(p0)
+                    if cur_norm == p0n or cur_norm.startswith(p0n + os.sep):
+                        cand0 = model.index(0, 0, root)
+                        if cand0.isValid():
+                            best_idx = cand0
+        except Exception:
+            best_idx = None
+
+    if best_idx is None:
         return
 
     flags = (
         QtCore.QItemSelectionModel.Clear
         | QtCore.QItemSelectionModel.Select
         | QtCore.QItemSelectionModel.Current
+        | QtCore.QItemSelectionModel.Rows
     )
     try:
-        sm.setCurrentIndex(idx, flags)
+        sm.setCurrentIndex(best_idx, flags)
     except Exception:
         try:
-            sm.select(idx, flags)
+            sm.select(best_idx, flags)
         except Exception:
             pass
+
     try:
-        sidebar.setCurrentIndex(idx)
+        sidebar.setCurrentIndex(best_idx)
     except Exception:
         pass
     try:
-        sidebar.scrollTo(idx)
+        sidebar.scrollTo(best_idx)
     except Exception:
         pass
-
-
 def _prime_file_dialog_selections(
     dialog: "QtWidgets.QFileDialog",
     start_dir: Path,
@@ -736,8 +743,8 @@ def _prime_file_dialog_selections(
     """Ensure initial selection highlights in both file pane and sidebar.
 
     QFileDialog populates its models asynchronously; we retry briefly to ensure a
-    currentIndex/selection exists in the file pane. Sidebar selection is best-effort
-    and is only attempted once to avoid churn.
+    currentIndex/selection exists in the file pane. Sidebar selection is handled
+    by file_dialog() once the sidebar URLs are applied.
     """
     try:
         from PySide6 import QtCore, QtWidgets
@@ -745,7 +752,6 @@ def _prime_file_dialog_selections(
         return
 
     attempts = {"left": 12}
-    sidebar_attempted = {"done": False}
 
     def _file_ok() -> bool:
         for view_name, view_type in (("treeView", QtWidgets.QTreeView), ("listView", QtWidgets.QListView)):
@@ -777,14 +783,7 @@ def _prime_file_dialog_selections(
         except Exception:
             pass
 
-        # Best-effort sidebar priming, only once (avoid repeating during async load).
-        if not sidebar_attempted["done"]:
-            sidebar_attempted["done"] = True
-            try:
-                _select_sidebar_for_path(dialog, start_dir)
-                _fdlog(logger, "prime: sidebar primed once")
-            except Exception:
-                _fdlog(logger, "prime: sidebar prime failed")
+        # Sidebar selection is intentionally deferred to file_dialog() startup timers.
 
         ok = False
         try:
@@ -939,12 +938,7 @@ def _install_file_dialog_force_first(
     except Exception:
         pass
 
-    # Also try to keep the sidebar selection from churning the file view during startup:
-    # apply sidebar selection once at start_dir, but do not repeat here.
-    try:
-        _select_sidebar_for_path(dialog, start_dir)
-    except Exception:
-        pass
+    # Sidebar selection is handled by file_dialog() after the sidebar URLs are applied.
 
 
 
@@ -1340,8 +1334,8 @@ def file_dialog(
     dialog.setWindowTitle(title)
     dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptOpen)
     dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
-    dialog.setDirectory(str(start_dir))
-    _fdlogd(fd_logger, 'file_dialog setDirectory', requested=str(start_dir), actual=str(dialog.directory().absolutePath()))
+    # Note: we intentionally do not call setDirectory(start_dir) synchronously here.
+    # Instead, we seed start_dir as the first sidebar entry and enter it on the next event-loop tick.
     dialog.setNameFilter(filter_text)
     dialog.setViewMode(QtWidgets.QFileDialog.Detail)
     dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
@@ -1396,8 +1390,51 @@ def file_dialog(
                     pass
 
     sidebar_urls = _sidebar_urls(start_dir=start_dir, settings=settings_obj)
+    # Seed the dynamic "current directory" entry (row 0) with our preferred start directory.
+    # We will then "enter" it by selecting the matching sidebar item on the next tick.
+    try:
+        start_norm = os.path.normpath(str(start_dir.expanduser()))
+        start_url = QtCore.QUrl.fromLocalFile(start_dir.as_posix())
+        deduped: list[QtCore.QUrl] = [start_url]
+        seen: set[str] = {start_norm}
+
+        for u in sidebar_urls:
+            try:
+                p = u.toLocalFile()
+            except Exception:
+                continue
+            if not p:
+                continue
+            try:
+                k = os.path.normpath(p)
+            except Exception:
+                k = p
+            if k in seen:
+                continue
+            seen.add(k)
+            deduped.append(u)
+
+        sidebar_urls = deduped
+    except Exception:
+        pass
+
     if sidebar_urls:
         dialog.setSidebarUrls(sidebar_urls)
+
+    # Enter the preferred start directory via the sidebar on the next tick.
+    # This avoids startup ordering issues where Qt may briefly show a platform default
+    # (commonly Documents) before the picker fully initializes.
+    def _enter_start_dir_via_sidebar() -> None:
+        try:
+            _select_sidebar_for_path(dialog, start_dir)
+        except Exception:
+            pass
+
+    try:
+        QtCore.QTimer.singleShot(0, _enter_start_dir_via_sidebar)
+        QtCore.QTimer.singleShot(50, _enter_start_dir_via_sidebar)
+    except Exception:
+        pass
     try:
         paths = [u.toLocalFile() for u in dialog.sidebarUrls()]
         _fdlogd(fd_logger, 'file_dialog sidebarUrls applied', count=len(paths), first=paths[:6])
