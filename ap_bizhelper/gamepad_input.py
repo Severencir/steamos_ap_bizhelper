@@ -956,14 +956,20 @@ if QT_AVAILABLE:
             except Exception:
                 norm = path
             self._prime_file_dialog_selection()
-            if self._fd_hist_lock:
-                return
             if self._file_dialog_sidebar_active():
                 self._fd_hist_pending = norm
                 self._fd_sidebar_pending = norm
                 return
-            self._fd_hist_pending = None
-            self._record_file_dialog_history(norm)
+
+            # History tracking: when we explicitly navigate back/forward we temporarily
+            # lock recording to avoid duplicating entries and fighting the user's chosen
+            # history position. However, we still want the *sidebar* to reflect the live
+            # directory for controller navigation.
+            if not self._fd_hist_lock:
+                self._fd_hist_pending = None
+                self._record_file_dialog_history(norm)
+            else:
+                self._fd_hist_pending = None
 
             # Track the live file-pane directory in the top sidebar entry unless frozen.
             if self._fd_sidebar_frozen:
@@ -975,6 +981,52 @@ if QT_AVAILABLE:
         def _file_dialog_current_dir(self) -> Optional[str]:
             if not self._is_file_dialog():
                 return None
+
+            # Prefer the dynamic *top sidebar entry* as our source of truth.
+            # This avoids races where QFileDialog updates its internal directory asynchronously.
+            try:
+                if getattr(self, "_fd_sidebar_frozen", False) and getattr(self, "_fd_sidebar_anchor", None):
+                    pending = getattr(self, "_fd_sidebar_pending", None)
+                    if pending:
+                        return pending
+                    return getattr(self, "_fd_sidebar_anchor", None)
+            except Exception:
+                pass
+
+            try:
+                cur = getattr(self, "_fd_sidebar_current_entry", None)
+                if cur:
+                    return cur
+            except Exception:
+                pass
+
+            # Fallback to our history tracking if the sidebar entry hasn't been established.
+            try:
+                pending = getattr(self, "_fd_hist_pending", None)
+                if pending:
+                    return pending
+            except Exception:
+                pass
+            try:
+                hist = getattr(self, "_fd_hist", None) or []
+                pos = int(getattr(self, "_fd_hist_pos", -1))
+                if 0 <= pos < len(hist):
+                    return hist[pos]
+            except Exception:
+                pass
+
+            # Fallback: ask the dialog.
+            try:
+                # QFileDialog.directory() returns a QDir
+                qdir = self._dialog.directory()  # type: ignore[union-attr]
+                p = qdir.absolutePath()
+                return str(p) if p else None
+            except Exception:
+                try:
+                    p = self._dialog.directory().path()  # type: ignore[union-attr]
+                    return str(p) if p else None
+                except Exception:
+                    return None
 
         def _set_sidebar_current_dir_entry(self, path: str) -> None:
             """Ensure the *first* sidebar entry points at the given local directory path.
@@ -1320,6 +1372,16 @@ if QT_AVAILABLE:
                     self._fd_hist_lock = True
                     self._dialog.setDirectory(target)  # type: ignore[union-attr]
                     self._fd_hist_pending = None
+                    # Keep the dynamic sidebar entry in sync immediately.
+                    try:
+                        norm = os.path.normpath(target)
+                    except Exception:
+                        norm = target
+                    if getattr(self, "_fd_sidebar_frozen", False):
+                        self._fd_sidebar_pending = norm
+                    else:
+                        self._fd_sidebar_pending = None
+                        self._set_sidebar_current_dir_entry(norm)
                     self._prime_file_dialog_selection()
                 finally:
                     self._fd_hist_lock = False
@@ -1351,6 +1413,16 @@ if QT_AVAILABLE:
                     self._fd_hist_lock = True
                     self._dialog.setDirectory(target)  # type: ignore[union-attr]
                     self._fd_hist_pending = None
+                    # Keep the dynamic sidebar entry in sync immediately.
+                    try:
+                        norm = os.path.normpath(target)
+                    except Exception:
+                        norm = target
+                    if getattr(self, "_fd_sidebar_frozen", False):
+                        self._fd_sidebar_pending = norm
+                    else:
+                        self._fd_sidebar_pending = None
+                        self._set_sidebar_current_dir_entry(norm)
                     self._prime_file_dialog_selection()
                 finally:
                     self._fd_hist_lock = False
@@ -1377,7 +1449,17 @@ if QT_AVAILABLE:
                 return False
             try:
                 self._dialog.setDirectory(parent)  # type: ignore[union-attr]
-                self._fd_hist_pending = None
+                # Keep the dynamic sidebar entry in sync immediately so repeated 'up'
+                # presses have a stable source of truth.
+                try:
+                    parent_norm = os.path.normpath(parent)
+                except Exception:
+                    parent_norm = parent
+                if getattr(self, "_fd_sidebar_frozen", False):
+                    self._fd_sidebar_pending = parent_norm
+                else:
+                    self._fd_sidebar_pending = None
+                    self._set_sidebar_current_dir_entry(parent_norm)
                 self._prime_file_dialog_selection()
                 return True
             except Exception:
