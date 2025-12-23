@@ -201,6 +201,11 @@ if QT_AVAILABLE:
             self._fd_sidebar_frozen: bool = False
             self._fd_sidebar_anchor: Optional[str] = None
             self._fd_sidebar_pending: Optional[str] = None
+            # QFileDialog: track which pane we consider "active" for styling.
+            # This is used to drive selection highlight colors without relying on focus pseudo-states.
+            self._fd_active_pane: str = "file"
+            # QFileDialog: prevent passive sidebar selection from triggering re-entrant directory changes.
+            self._fd_sidebar_passive_select_lock: bool = False
             if self._is_file_dialog():
                 # IMPORTANT:
                 # QFileDialog can start at a platform default (commonly Documents) and only
@@ -213,6 +218,10 @@ if QT_AVAILABLE:
                     pass
                 try:
                     self._dialog.directoryEntered.connect(self._on_file_dialog_directory_entered)  # type: ignore[union-attr]
+                except Exception:
+                    pass
+                try:
+                    self._set_file_dialog_active_pane("file")
                 except Exception:
                     pass
             self._init_sdl()
@@ -817,6 +826,12 @@ if QT_AVAILABLE:
                     include_context=True,
                 )
 
+            if self._is_file_dialog():
+                try:
+                    self._set_file_dialog_active_pane("file" if go_right else "sidebar")
+                except Exception:
+                    pass
+
             self._last_target = target
             target.setFocus()
             if not target.hasFocus():
@@ -847,6 +862,9 @@ if QT_AVAILABLE:
                 # Leaving the sidebar: resume tracking the file pane directory and commit history.
                 self._unfreeze_sidebar_current_dir_entry()
                 self._commit_pending_file_dialog_history()
+                # Ensure the dynamic "current directory" row is highlighted now that we're back
+                # in the file pane (directoryEntered may have fired while the sidebar was active).
+                self._schedule_passive_sidebar_current_dir_highlight()
 
             if self._debug:
                 self._dump_focus("after toggle setFocus")
@@ -856,6 +874,153 @@ if QT_AVAILABLE:
                 return True
             return True
 
+
+        def _set_file_dialog_active_pane(self, pane: str) -> None:
+            """Update QFileDialog pane state used for selection styling.
+
+            The Qt stylesheet for the file dialog keys off a dynamic property on the
+            dialog (``ap_bizhelper_active_pane``). We update that property when the
+            controller toggles between the sidebar and file pane, then repolish the
+            relevant widgets so the style updates immediately.
+            """
+            if not self._is_file_dialog():
+                return
+            normalized = "sidebar" if str(pane).strip().lower().startswith("side") else "file"
+            try:
+                prop_val = self._dialog.property("ap_bizhelper_active_pane")
+            except Exception:
+                prop_val = None
+            same_value = getattr(self, "_fd_active_pane", None) == normalized and prop_val == normalized
+
+            # Even if the property value hasn't changed, we may need to repaint viewports.
+            self._fd_active_pane = normalized
+            if not same_value:
+                try:
+                    self._dialog.setProperty("ap_bizhelper_active_pane", normalized)
+                except Exception:
+                    return
+
+            def _repolish(w: Optional[QtWidgets.QWidget]) -> None:
+                if w is None:
+                    return
+                try:
+                    st = w.style()
+                    st.unpolish(w)
+                    st.polish(w)
+                    w.update()
+                except Exception:
+                    try:
+                        w.update()
+                    except Exception:
+                        pass
+
+            def _poke_view(v: Optional[QtWidgets.QAbstractItemView]) -> None:
+                if v is None:
+                    return
+                try:
+                    _repolish(v)
+                except Exception:
+                    pass
+                # Item views paint into their viewport; update that explicitly so
+                # selection color changes take effect immediately.
+                try:
+                    vp = v.viewport()
+                    if vp is not None:
+                        vp.update()
+                        vp.repaint()
+                except Exception:
+                    pass
+                try:
+                    v.update()
+                    v.repaint()
+                except Exception:
+                    pass
+
+            _repolish(self._dialog)
+            _poke_view(self._dialog.findChild(QtWidgets.QAbstractItemView, "sidebar"))
+            _poke_view(self._dialog.findChild(QtWidgets.QAbstractItemView, "treeView"))
+            _poke_view(self._dialog.findChild(QtWidgets.QAbstractItemView, "listView"))
+
+            # QFileDialog can apply internal style/state updates after focus changes.
+            # Nudge viewports again on the next tick so the pane property wins.
+            try:
+                QtCore.QTimer.singleShot(0, lambda: _poke_view(self._dialog.findChild(QtWidgets.QAbstractItemView, "sidebar")))
+                QtCore.QTimer.singleShot(0, lambda: _poke_view(self._dialog.findChild(QtWidgets.QAbstractItemView, "treeView")))
+                QtCore.QTimer.singleShot(0, lambda: _poke_view(self._dialog.findChild(QtWidgets.QAbstractItemView, "listView")))
+            except Exception:
+                pass
+
+        def _passive_select_sidebar_current_dir_entry(self) -> None:
+            """Highlight the dynamic 'current directory' sidebar row without navigating."""
+            if not self._is_file_dialog():
+                return
+            if getattr(self, "_fd_active_pane", "file") != "file":
+                return
+            if getattr(self, "_fd_sidebar_frozen", False):
+                return
+            if getattr(self, "_fd_sidebar_passive_select_lock", False):
+                return
+
+            sidebar = self._dialog.findChild(QtWidgets.QAbstractItemView, "sidebar")
+            if sidebar is None:
+                return
+            try:
+                if not sidebar.isVisible() or not sidebar.isEnabled():
+                    return
+            except Exception:
+                pass
+
+            model = sidebar.model()
+            sm = sidebar.selectionModel()
+            if model is None or sm is None:
+                return
+
+            root = sidebar.rootIndex()
+            try:
+                idx = model.index(0, 0, root)
+            except Exception:
+                return
+            if not getattr(idx, "isValid", lambda: False)():
+                return
+
+            try:
+                cur = sm.currentIndex()
+                if cur.isValid() and cur.row() == 0:
+                    return
+            except Exception:
+                pass
+
+            flags = (
+                QtCore.QItemSelectionModel.Clear
+                | QtCore.QItemSelectionModel.Select
+                | QtCore.QItemSelectionModel.Current
+            )
+
+            self._fd_sidebar_passive_select_lock = True
+            try:
+                blocker_sidebar = QtCore.QSignalBlocker(sidebar)
+                blocker_sm = QtCore.QSignalBlocker(sm)
+                sm.setCurrentIndex(idx, flags)
+                sidebar.setCurrentIndex(idx)
+                try:
+                    sidebar.scrollTo(idx)
+                except Exception:
+                    pass
+                _ = (blocker_sidebar, blocker_sm)  # keep blockers alive
+            except Exception:
+                pass
+            finally:
+                self._fd_sidebar_passive_select_lock = False
+
+        def _schedule_passive_sidebar_current_dir_highlight(self) -> None:
+            """Retry passive sidebar highlight briefly to account for async model population."""
+            if not self._is_file_dialog():
+                return
+            try:
+                QtCore.QTimer.singleShot(0, self._passive_select_sidebar_current_dir_entry)
+                QtCore.QTimer.singleShot(60, self._passive_select_sidebar_current_dir_entry)
+            except Exception:
+                pass
 
         # -----------------------------
         # QFileDialog helpers (sidebar + directory navigation)
@@ -915,6 +1080,7 @@ if QT_AVAILABLE:
                 self._ensure_file_view_selection(pane)
                 QtCore.QTimer.singleShot(0, lambda v=pane: self._ensure_file_view_selection(v))
                 QtCore.QTimer.singleShot(0, lambda v=pane: self._force_itemview_current(v))
+                self._schedule_passive_sidebar_current_dir_highlight()
             except Exception:
                 return
 
@@ -977,6 +1143,7 @@ if QT_AVAILABLE:
                 return
             self._fd_sidebar_pending = None
             self._set_sidebar_current_dir_entry(norm)
+            self._schedule_passive_sidebar_current_dir_highlight()
 
         def _file_dialog_current_dir(self) -> Optional[str]:
             if not self._is_file_dialog():
@@ -1171,6 +1338,7 @@ if QT_AVAILABLE:
                 self._fd_sidebar_pending = norm
                 return
             self._set_sidebar_current_dir_entry(norm)
+            self._schedule_passive_sidebar_current_dir_highlight()
 
 
         def _select_sidebar_for_current_dir(self, sidebar: QtWidgets.QAbstractItemView) -> None:

@@ -943,11 +943,16 @@ def _install_file_dialog_force_first(
 
 
 def _apply_file_dialog_inactive_selection_style(dialog: "QtWidgets.QFileDialog") -> None:
-    """Make selections look 'faded' when a view is not focused.
+    """Make selections look 'faded' when a pane is inactive.
 
-    Qt item views (sidebar/tree/list) normally change selection appearance when they
-    lose focus. Styles differ across desktops; we force a pale highlight so the
-    non-focused pane still shows context but looks clearly inactive.
+    We intentionally avoid relying on Qt's ``:active``/``:focus`` pseudo-states
+    here because their behavior varies across Qt styles (and SteamOS themes).
+
+    Instead, styling is driven by a dynamic property on the ``QFileDialog``:
+      - ``ap_bizhelper_active_pane="file"``: file pane is active, sidebar selection fades
+      - ``ap_bizhelper_active_pane="sidebar"``: sidebar is active, file pane selection fades
+
+    The gamepad layer updates this property when toggling panes.
     """
     try:
         from PySide6 import QtGui, QtWidgets
@@ -980,15 +985,70 @@ def _apply_file_dialog_inactive_selection_style(dialog: "QtWidgets.QFileDialog")
     except Exception:
         ss = ""
 
-    # In Qt stylesheets, :active / :!active correspond to whether the widget has focus.
-    # (This is the behavior we want: "focused pane = strong highlight".)
     ss += f"""
-    /* ap_bizhelper: fade selection when a pane is not focused */
-    QListView#sidebar::item:selected:!active,
-    QTreeView#treeView::item:selected:!active,
-    QListView#listView::item:selected:!active {{
+    /* ap_bizhelper: pane-aware selection styling (driven by ap_bizhelper_active_pane)
+
+       IMPORTANT:
+       Some desktop themes ship more-specific rules like ::item:selected:focus / :active
+       that can override a plain ::item:selected rule (and can vary per-column in a
+       details QTreeView). To make this robust, we set view-level selection colors
+       (selection-background-color / selection-color) and also provide item-level
+       fallbacks.
+    */
+
+    /* Sidebar selection colors */
+    QFileDialog[ap_bizhelper_active_pane="sidebar"] QListView#sidebar {{
+        selection-background-color: palette(highlight);
+        selection-color: palette(highlighted-text);
+    }}
+    QFileDialog[ap_bizhelper_active_pane="file"] QListView#sidebar {{
+        selection-background-color: {faded_hex};
+        selection-color: palette(text);
+    }}
+
+    /* File pane selection colors (treeView = details, listView = list/icon) */
+    QFileDialog[ap_bizhelper_active_pane="file"] QTreeView#treeView,
+    QFileDialog[ap_bizhelper_active_pane="file"] QListView#listView {{
+        selection-background-color: palette(highlight);
+        selection-color: palette(highlighted-text);
+    }}
+    QFileDialog[ap_bizhelper_active_pane="sidebar"] QTreeView#treeView,
+    QFileDialog[ap_bizhelper_active_pane="sidebar"] QListView#listView {{
+        selection-background-color: {faded_hex};
+        selection-color: palette(text);
+    }}
+
+    /* Fallbacks: force item backgrounds too (covers styles that ignore selection-*). */
+    QFileDialog[ap_bizhelper_active_pane="file"] QListView#sidebar::item:selected,
+    QFileDialog[ap_bizhelper_active_pane="file"] QListView#sidebar::item:selected:active,
+    QFileDialog[ap_bizhelper_active_pane="file"] QListView#sidebar::item:selected:focus {{
         background: {faded_hex};
         color: palette(text);
+    }}
+    QFileDialog[ap_bizhelper_active_pane="sidebar"] QListView#sidebar::item:selected,
+    QFileDialog[ap_bizhelper_active_pane="sidebar"] QListView#sidebar::item:selected:active,
+    QFileDialog[ap_bizhelper_active_pane="sidebar"] QListView#sidebar::item:selected:focus {{
+        background: palette(highlight);
+        color: palette(highlighted-text);
+    }}
+
+    QFileDialog[ap_bizhelper_active_pane="sidebar"] QTreeView#treeView::item:selected,
+    QFileDialog[ap_bizhelper_active_pane="sidebar"] QTreeView#treeView::item:selected:active,
+    QFileDialog[ap_bizhelper_active_pane="sidebar"] QTreeView#treeView::item:selected:focus,
+    QFileDialog[ap_bizhelper_active_pane="sidebar"] QListView#listView::item:selected,
+    QFileDialog[ap_bizhelper_active_pane="sidebar"] QListView#listView::item:selected:active,
+    QFileDialog[ap_bizhelper_active_pane="sidebar"] QListView#listView::item:selected:focus {{
+        background: {faded_hex};
+        color: palette(text);
+    }}
+    QFileDialog[ap_bizhelper_active_pane="file"] QTreeView#treeView::item:selected,
+    QFileDialog[ap_bizhelper_active_pane="file"] QTreeView#treeView::item:selected:active,
+    QFileDialog[ap_bizhelper_active_pane="file"] QTreeView#treeView::item:selected:focus,
+    QFileDialog[ap_bizhelper_active_pane="file"] QListView#listView::item:selected,
+    QFileDialog[ap_bizhelper_active_pane="file"] QListView#listView::item:selected:active,
+    QFileDialog[ap_bizhelper_active_pane="file"] QListView#listView::item:selected:focus {{
+        background: palette(highlight);
+        color: palette(highlighted-text);
     }}
     """
 
@@ -1441,6 +1501,10 @@ def file_dialog(
     except Exception:
         pass
     _widen_file_dialog_sidebar(dialog, settings_obj)
+    try:
+        dialog.setProperty("ap_bizhelper_active_pane", "file")
+    except Exception:
+        pass
     _apply_file_dialog_inactive_selection_style(dialog)
     if _coerce_bool_setting(
         settings_obj, "QT_FILE_DIALOG_MAXIMIZE", bool(DIALOG_DEFAULTS["QT_FILE_DIALOG_MAXIMIZE"])
