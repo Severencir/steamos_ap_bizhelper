@@ -317,6 +317,34 @@ def _select_from_matches(
     return Path(selection[0])
 
 
+def _confirm_use_matched_rom(
+    *,
+    matches: Sequence[Path],
+    game_name: Optional[str],
+    logger: AppLogger,
+) -> Optional[bool]:
+    if not matches:
+        return None
+    if len(matches) == 1:
+        description = f"Found a matching ROM:\n{matches[0]}"
+    else:
+        description = f"Found {len(matches)} matching ROMs."
+    if game_name:
+        description = f"{description}\nGame: {game_name}"
+    choice = dialogs.question_dialog(
+        title="Use matching ROM?",
+        text=description,
+        ok_label="Use matched ROM",
+        cancel_label="Choose manually",
+    )
+    if choice == "ok":
+        return True
+    if choice == "cancel":
+        return False
+    _rom_log(logger, "User dismissed ROM match confirmation dialog.")
+    return None
+
+
 def _update_rom_state_for_manual_selection(
     settings: dict, cache: dict, selection: Path, logger: AppLogger
 ) -> None:
@@ -399,16 +427,22 @@ def _select_rom_aware_file_dialog(
                     settings["ROM_HASH_CACHE"] = cache
                     save_settings(settings)
 
-                if len(matches) == 1:
-                    _ROM_AUTO_SUCCEEDED = True
-                    _rom_log(logger, f"ROM auto-select matched {matches[0]}")
-                    return matches[0]
-                if len(matches) > 1:
-                    selection = _select_from_matches(matches, game_name, logger)
-                    if selection:
-                        _update_rom_state_for_manual_selection(settings, cache, selection, logger)
-                        save_settings(settings)
-                    return selection
+                if matches:
+                    confirm = _confirm_use_matched_rom(
+                        matches=matches, game_name=game_name, logger=logger
+                    )
+                    if confirm is True:
+                        if len(matches) == 1:
+                            _ROM_AUTO_SUCCEEDED = True
+                            _rom_log(logger, f"ROM auto-select matched {matches[0]}")
+                            return matches[0]
+                        selection = _select_from_matches(matches, game_name, logger)
+                        if selection:
+                            _update_rom_state_for_manual_selection(settings, cache, selection, logger)
+                            save_settings(settings)
+                        return selection
+                    if confirm is None:
+                        return None
 
     initial_dir = start_dir
     if last_rom_dir and Path(last_rom_dir).is_dir():
