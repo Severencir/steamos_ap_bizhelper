@@ -457,12 +457,7 @@ def _stage_sni_connectors(bizhawk_dir: Path, download_messages: Optional[list[st
             title="SNI connectors",
             text=f"Downloading SNI connectors ({SNI_VERSION})...",
         )
-        with tempfile.TemporaryDirectory() as td:
-            extracted_root = _extract_archive(tmp_path, Path(td))
-            lua_dir = next((p for p in extracted_root.rglob("lua") if p.is_dir()), None)
-            if lua_dir is None:
-                raise RuntimeError("SNI release did not contain a lua directory")
-            _copy_tree(lua_dir, bizhawk_dir / "sni")
+        _apply_sni_connector_archive(tmp_path, bizhawk_dir)
     finally:
         try:
             tmp_path.unlink()
@@ -482,6 +477,15 @@ def _has_sni_connector(sni_dir: Path) -> bool:
     if not sni_dir.is_dir():
         return False
     return any(p.is_file() for p in sni_dir.glob("*.lua"))
+
+
+def _apply_sni_connector_archive(archive: Path, bizhawk_dir: Path) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        extracted_root = _extract_archive(archive, Path(td))
+        lua_dir = next((p for p in extracted_root.rglob("lua") if p.is_dir()), None)
+        if lua_dir is None:
+            raise RuntimeError("SNI archive did not contain a lua directory")
+        _copy_tree(lua_dir, bizhawk_dir / "sni")
 
 
 def connectors_need_download(
@@ -569,16 +573,8 @@ def ensure_connectors(
             )
         return version
 
-    def _apply_sni_connector_archive(archive: Path) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            extracted_root = _extract_archive(archive, Path(td))
-            lua_dir = next((p for p in extracted_root.rglob("lua") if p.is_dir()), None)
-            if lua_dir is None:
-                raise RuntimeError("SNI archive did not contain a lua directory")
-            _copy_tree(lua_dir, bizhawk_dir / "sni")
-
     def _stage_sni_from_archive(archive: Path) -> str:
-        _apply_sni_connector_archive(archive)
+        _apply_sni_connector_archive(archive, bizhawk_dir)
         version = _infer_version_from_archive_name(archive)
         if download_messages is not None:
             download_messages.append(f"Staged BizHawk SNI connectors from {archive.name}")

@@ -6,6 +6,7 @@ import csv
 import json
 import re
 import shutil
+import tempfile
 import urllib.parse
 import urllib.request
 import zipfile
@@ -135,22 +136,40 @@ def _github_latest_apworld(repo_url: str) -> Optional[Tuple[str, str, str]]:
     return None
 
 
-def _download_apworld(url: str, dest_name: Optional[str]) -> Optional[Path]:
+def _stage_apworld_file(apworld_path: Path, dest_name: Optional[str]) -> Optional[Path]:
     WORLD_DIR.mkdir(parents=True, exist_ok=True)
-    filename = dest_name or Path(urllib.parse.urlparse(url).path).name or "world.apworld"
+    filename = dest_name or apworld_path.name or "world.apworld"
     if not filename.lower().endswith(".apworld"):
         filename = f"{filename}.apworld"
     dest = WORLD_DIR / filename
     try:
-        download_with_progress(
-            url,
-            dest,
-            title="Downloading APWorld",
-            text=filename,
-        )
+        shutil.copy2(apworld_path, dest)
     except Exception:
         return None
     return dest if dest.is_file() else None
+
+
+def _download_apworld(url: str, dest_name: Optional[str]) -> Optional[Path]:
+    filename = dest_name or Path(urllib.parse.urlparse(url).path).name or "world.apworld"
+    if not filename.lower().endswith(".apworld"):
+        filename = f"{filename}.apworld"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".apworld") as tmpf:
+        tmp_path = Path(tmpf.name)
+    try:
+        download_with_progress(
+            url,
+            tmp_path,
+            title="Downloading APWorld",
+            text=filename,
+        )
+        return _stage_apworld_file(tmp_path, filename)
+    except Exception:
+        return None
+    finally:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
 
 
 def _update_playable_cache(
@@ -203,9 +222,9 @@ def _select_custom_apworld(
     apworld_path = Path(selection)
     if apworld_path.is_file():
         try:
-            WORLD_DIR.mkdir(parents=True, exist_ok=True)
-            dest = WORLD_DIR / apworld_path.name
-            shutil.copy2(apworld_path, dest)
+            dest = _stage_apworld_file(apworld_path, apworld_path.name)
+            if dest is None:
+                raise RuntimeError("Failed to stage .apworld file")
             APP_LOGGER.log(
                 f"Copied {apworld_path.name} to {WORLD_DIR}",
                 include_context=True,
