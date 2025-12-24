@@ -343,7 +343,7 @@ def _prompt_setup_choices(
 
     connectors_box = None
     if show_connectors:
-        connectors_box = QtWidgets.QCheckBox("BizHawk connectors")
+        connectors_box = QtWidgets.QCheckBox("BizHawk connectors (download)")
         connectors_box.setChecked(True)
         layout.addWidget(connectors_box)
 
@@ -953,6 +953,7 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
             download_messages=download_messages,
             settings=settings,
             stage_connectors=connectors,
+            allow_manual_connector_selection=need_connectors,
         )
         if bizhawk:
             if bizhawk_result is None:

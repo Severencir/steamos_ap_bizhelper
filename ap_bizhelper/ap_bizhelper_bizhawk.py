@@ -484,12 +484,18 @@ def connectors_need_download(
     desired_ap_version = ap_version or ""
     current_ap_version = str(settings.get("BIZHAWK_AP_CONNECTOR_VERSION", "") or "")
     connectors_dir = bizhawk_exe.parent / "connectors"
-    if desired_ap_version != current_ap_version or not _has_archipelago_connector(connectors_dir):
+    if current_ap_version != "manual":
+        if desired_ap_version != current_ap_version or not _has_archipelago_connector(connectors_dir):
+            return True
+    elif not _has_archipelago_connector(connectors_dir):
         return True
 
     current_sni_version = str(settings.get("BIZHAWK_SNI_VERSION", "") or "")
     sni_dir = bizhawk_exe.parent / "sni"
-    if current_sni_version != SNI_VERSION or not _has_sni_connector(sni_dir):
+    if current_sni_version != "manual":
+        if current_sni_version != SNI_VERSION or not _has_sni_connector(sni_dir):
+            return True
+    elif not _has_sni_connector(sni_dir):
         return True
 
     return False
@@ -501,28 +507,135 @@ def ensure_connectors(
     *,
     ap_version: Optional[str],
     download_messages: Optional[list[str]],
+    ap_archive_path: Optional[Path] = None,
+    sni_archive_path: Optional[Path] = None,
+    allow_download: bool = True,
+    allow_manual_selection: bool = False,
 ) -> bool:
     """Ensure connector directories are present for BizHawk installs."""
 
     bizhawk_dir = bizhawk_exe.parent
     updated = False
 
+    def _infer_version_from_archive_name(archive: Path) -> str:
+        match = re.search(r"(v?\d+\.\d+\.\d+[a-z0-9.\-]*)", archive.name, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return "manual"
+
+    def _select_archipelago_archive() -> Optional[Path]:
+        selection = _select_file_dialog(
+            title="Select Archipelago source archive",
+            initial=Path.home(),
+            file_filter="*.zip *.tar.gz",
+            dialog_key="archipelago_connectors",
+        )
+        if selection is None:
+            return None
+        if not selection.is_file():
+            error_dialog("Selected Archipelago archive does not exist.")
+            return None
+        return selection
+
+    def _select_sni_archive() -> Optional[Path]:
+        selection = _select_file_dialog(
+            title="Select SNI connectors zip",
+            initial=Path.home(),
+            file_filter="*.zip",
+            dialog_key="sni_connectors",
+        )
+        if selection is None:
+            return None
+        if not selection.is_file():
+            error_dialog("Selected SNI archive does not exist.")
+            return None
+        return selection
+
+    def _stage_archipelago_from_archive(archive: Path) -> str:
+        _apply_archipelago_connector_archive(archive, bizhawk_dir)
+        version = _infer_version_from_archive_name(archive)
+        if download_messages is not None:
+            download_messages.append(
+                f"Staged BizHawk connectors from {archive.name} ({version})"
+            )
+        return version
+
+    def _apply_sni_connector_archive(archive: Path) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            extracted_root = _extract_archive(archive, Path(td))
+            lua_dir = next((p for p in extracted_root.rglob("lua") if p.is_dir()), None)
+            if lua_dir is None:
+                raise RuntimeError("SNI archive did not contain a lua directory")
+            _copy_tree(lua_dir, bizhawk_dir / "sni")
+
+    def _stage_sni_from_archive(archive: Path) -> str:
+        _apply_sni_connector_archive(archive)
+        version = _infer_version_from_archive_name(archive)
+        if download_messages is not None:
+            download_messages.append(f"Staged BizHawk SNI connectors from {archive.name}")
+        return version
+
     desired_ap_version = ap_version or ""
     current_ap_version = str(settings.get("BIZHAWK_AP_CONNECTOR_VERSION", "") or "")
     connectors_dir = bizhawk_dir / "connectors"
     if desired_ap_version != current_ap_version or not _has_archipelago_connector(connectors_dir):
-        tag = _stage_archipelago_connectors(
-            bizhawk_dir, ap_version=ap_version, download_messages=download_messages
-        )
-        settings["BIZHAWK_AP_CONNECTOR_VERSION"] = tag
-        updated = True
+        chosen_ap_archive = ap_archive_path
+        if chosen_ap_archive is None and not allow_download and allow_manual_selection:
+            chosen_ap_archive = _select_archipelago_archive()
+            if chosen_ap_archive is None:
+                raise RuntimeError("Archipelago connectors selection was cancelled.")
+
+        if chosen_ap_archive is not None:
+            tag = _stage_archipelago_from_archive(chosen_ap_archive)
+            settings["BIZHAWK_AP_CONNECTOR_VERSION"] = tag
+            updated = True
+        elif allow_download:
+            try:
+                tag = _stage_archipelago_connectors(
+                    bizhawk_dir, ap_version=ap_version, download_messages=download_messages
+                )
+            except Exception:
+                if allow_manual_selection:
+                    chosen_ap_archive = _select_archipelago_archive()
+                    if chosen_ap_archive is None:
+                        raise RuntimeError(
+                            "Archipelago connectors download failed and selection was cancelled."
+                        )
+                    tag = _stage_archipelago_from_archive(chosen_ap_archive)
+                else:
+                    raise
+            settings["BIZHAWK_AP_CONNECTOR_VERSION"] = tag
+            updated = True
 
     current_sni_version = str(settings.get("BIZHAWK_SNI_VERSION", "") or "")
     sni_dir = bizhawk_dir / "sni"
     if current_sni_version != SNI_VERSION or not _has_sni_connector(sni_dir):
-        _stage_sni_connectors(bizhawk_dir, download_messages)
-        settings["BIZHAWK_SNI_VERSION"] = SNI_VERSION
-        updated = True
+        chosen_sni_archive = sni_archive_path
+        if chosen_sni_archive is None and not allow_download and allow_manual_selection:
+            chosen_sni_archive = _select_sni_archive()
+            if chosen_sni_archive is None:
+                raise RuntimeError("SNI connectors selection was cancelled.")
+
+        if chosen_sni_archive is not None:
+            sni_version = _stage_sni_from_archive(chosen_sni_archive)
+            settings["BIZHAWK_SNI_VERSION"] = sni_version
+            updated = True
+        elif allow_download:
+            try:
+                _stage_sni_connectors(bizhawk_dir, download_messages)
+                sni_version = SNI_VERSION
+            except Exception:
+                if allow_manual_selection:
+                    chosen_sni_archive = _select_sni_archive()
+                    if chosen_sni_archive is None:
+                        raise RuntimeError(
+                            "SNI connectors download failed and selection was cancelled."
+                        )
+                    sni_version = _stage_sni_from_archive(chosen_sni_archive)
+                else:
+                    raise
+            settings["BIZHAWK_SNI_VERSION"] = sni_version
+            updated = True
 
     if updated:
         _save_settings(settings)
@@ -902,6 +1015,9 @@ def ensure_bizhawk_and_proton(
     download_messages: Optional[list[str]] = None,
     settings: Optional[Dict[str, Any]] = None,
     stage_connectors: bool = True,
+    ap_connector_archive: Optional[Path] = None,
+    sni_connector_archive: Optional[Path] = None,
+    allow_manual_connector_selection: bool = False,
 ) -> Optional[Tuple[Path, Path, bool]]:
     """
     Ensure BizHawk (Windows) and Proton are configured and runnable.
@@ -1050,13 +1166,17 @@ def ensure_bizhawk_and_proton(
 
     ap_version = str(settings.get("AP_VERSION", "") or "")
     connectors_updated = False
-    if stage_connectors:
+    if stage_connectors or allow_manual_connector_selection or ap_connector_archive or sni_connector_archive:
         try:
             connectors_updated = ensure_connectors(
                 settings,
                 exe,
                 ap_version=ap_version if ap_version else None,
                 download_messages=download_messages,
+                ap_archive_path=ap_connector_archive,
+                sni_archive_path=sni_connector_archive,
+                allow_download=stage_connectors,
+                allow_manual_selection=allow_manual_connector_selection,
             )
         except Exception as exc:
             error_dialog(f"Failed to stage BizHawk connectors: {exc}")
