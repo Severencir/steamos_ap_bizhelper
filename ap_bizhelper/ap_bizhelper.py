@@ -984,6 +984,7 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
         )
         shim_env = prepare_dialog_shim_env(APP_LOGGER)
         launch_env = APP_LOGGER.session_environ(env=os.environ.copy())
+        launch_env["AP_BIZHELPER_PATCH"] = str(patch)
         if shim_env:
             launch_env.update(shim_env)
         try:

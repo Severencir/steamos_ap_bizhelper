@@ -11,16 +11,21 @@ stays transparent during gaps in coverage.
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from ap_bizhelper import dialogs
+from .ap_bizhelper_config import load_settings, save_settings
 from .logging_utils import (
     SHIM_LOG_ENV,
     AppLogger,
@@ -32,6 +37,29 @@ from .logging_utils import (
 _REAL_ZENITY_ENV = "AP_BIZHELPER_REAL_ZENITY"
 _REAL_KDIALOG_ENV = "AP_BIZHELPER_REAL_KDIALOG"
 _REAL_PORTAL_ENV = "AP_BIZHELPER_REAL_XDG_DESKTOP_PORTAL"
+_PATCH_PATH_ENV = "AP_BIZHELPER_PATCH"
+_ROM_DEBUG_ENV = "AP_BIZHELPER_DEBUG_ROM"
+
+_ROM_AUTO_SUCCEEDED = False
+_ROM_COMMON_EXTS = {
+    "gba",
+    "gb",
+    "gbc",
+    "nds",
+    "nes",
+    "sfc",
+    "smc",
+    "n64",
+    "z64",
+    "v64",
+    "sms",
+    "gg",
+    "md",
+    "gen",
+    "pce",
+    "cue",
+    "iso",
+}
 
 
 _SHIM_LOGGER: Optional[AppLogger] = None
@@ -42,6 +70,360 @@ def _logger() -> AppLogger:
     if _SHIM_LOGGER is None:
         _SHIM_LOGGER = create_component_logger("zenity-shim", env_var=SHIM_LOG_ENV, subdir="shim")
     return _SHIM_LOGGER
+
+
+def _rom_debug_enabled() -> bool:
+    value = str(os.environ.get(_ROM_DEBUG_ENV, "")).strip().lower()
+    return value not in ("", "0", "false", "no", "off")
+
+
+def _rom_log(logger: AppLogger, message: str) -> None:
+    if not _rom_debug_enabled():
+        return
+    logger.log(message, include_context=True, location="rom-auto")
+
+
+def _normalize_extension(value: str) -> Optional[str]:
+    if not value:
+        return None
+    trimmed = value.strip().lower()
+    if trimmed.startswith("."):
+        trimmed = trimmed[1:]
+    return trimmed or None
+
+
+def _extract_extensions_from_filter(filter_text: Optional[str]) -> set[str]:
+    if not filter_text:
+        return set()
+    return {
+        ext.lower()
+        for ext in re.findall(r"\*\.([A-Za-z0-9]+)", filter_text)
+        if ext
+    }
+
+
+def _is_rom_request(
+    *, title: Optional[str], text: Optional[str], file_filter: Optional[str], is_save: bool
+) -> bool:
+    if is_save:
+        return False
+    haystack = " ".join([part for part in (title, text) if part]).casefold()
+    rom_text = bool(re.search(r"\brom\b", haystack) or "base rom" in haystack)
+    filter_exts = _extract_extensions_from_filter(file_filter)
+    rom_filter = bool(filter_exts & _ROM_COMMON_EXTS)
+    return rom_text or rom_filter
+
+
+def _load_patch_metadata(patch_path: Path, logger: AppLogger) -> Optional[dict]:
+    try:
+        if not patch_path.is_file():
+            _rom_log(logger, f"Patch path missing: {patch_path}")
+            return None
+        with zipfile.ZipFile(patch_path) as archive:
+            with archive.open("archipelago.json") as handle:
+                return json.load(handle)
+    except KeyError:
+        _rom_log(logger, "Patch archive missing archipelago.json")
+    except Exception as exc:
+        _rom_log(logger, f"Failed reading patch metadata: {exc}")
+    return None
+
+
+def _extract_patch_hints(metadata: dict) -> tuple[Optional[str], Optional[str], set[str]]:
+    checksum = metadata.get("base_checksum")
+    if isinstance(checksum, str):
+        checksum = checksum.strip().lower()
+    else:
+        checksum = None
+    if checksum and not re.fullmatch(r"[a-f0-9]{32}", checksum):
+        checksum = None
+
+    game_name = metadata.get("game") or metadata.get("game_name")
+    if isinstance(game_name, str):
+        game_name = game_name.strip()
+    else:
+        game_name = None
+
+    hint_keys = (
+        "result_file_ending",
+        "rom_file_ending",
+        "base_file_ending",
+        "base_rom_file_ending",
+        "base_rom_extension",
+        "rom_extension",
+        "file_ending",
+    )
+    hint_exts: set[str] = set()
+    for key in hint_keys:
+        value = metadata.get(key)
+        if isinstance(value, str):
+            normalized = _normalize_extension(value)
+            if normalized:
+                hint_exts.add(normalized)
+    return checksum, game_name, hint_exts
+
+
+def _load_rom_state(logger: AppLogger) -> tuple[dict, list[str], str, dict]:
+    settings = load_settings()
+    rom_roots = settings.get("ROM_ROOTS")
+    if not isinstance(rom_roots, list):
+        rom_roots = []
+    rom_roots = [str(root) for root in rom_roots if str(root).strip()]
+    last_rom_dir = settings.get("LAST_ROM_DIR")
+    if not isinstance(last_rom_dir, str):
+        last_rom_dir = ""
+    cache = settings.get("ROM_HASH_CACHE")
+    if not isinstance(cache, dict):
+        cache = {}
+    if not isinstance(cache.get("by_file"), dict):
+        cache["by_file"] = {}
+    if not isinstance(cache.get("by_hash"), dict):
+        cache["by_hash"] = {}
+    _rom_log(logger, f"ROM state loaded roots={rom_roots} last_dir={last_rom_dir or 'none'}")
+    return settings, rom_roots, last_rom_dir, cache
+
+
+def _cache_key(path: Path, size: int, mtime: float) -> str:
+    return f"{path}|{size}|{int(mtime)}"
+
+
+def _record_hash(cache: dict, path: Path, checksum: str, size: int, mtime: float) -> bool:
+    by_file = cache.setdefault("by_file", {})
+    by_hash = cache.setdefault("by_hash", {})
+    key = _cache_key(path, size, mtime)
+    changed = by_file.get(key) != checksum
+    by_file[key] = checksum
+    paths = by_hash.setdefault(checksum, [])
+    if str(path) not in paths:
+        paths.append(str(path))
+        changed = True
+    return changed
+
+
+def _hash_file(path: Path, logger: AppLogger) -> Optional[str]:
+    try:
+        md5 = hashlib.md5()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                md5.update(chunk)
+        return md5.hexdigest()
+    except Exception as exc:
+        _rom_log(logger, f"Failed hashing {path}: {exc}")
+        return None
+
+
+def _cached_matches(
+    checksum: str, cache: dict, logger: AppLogger
+) -> tuple[list[Path], bool]:
+    by_hash = cache.get("by_hash", {})
+    by_file = cache.get("by_file", {})
+    if not isinstance(by_hash, dict) or not isinstance(by_file, dict):
+        return [], False
+
+    cached_paths = list(by_hash.get(checksum, []) or [])
+    matches: list[Path] = []
+    valid_paths: list[str] = []
+    cache_updated = False
+    for path_str in cached_paths:
+        path = Path(path_str)
+        if not path.is_file():
+            cache_updated = True
+            continue
+        try:
+            stat = path.stat()
+        except Exception:
+            cache_updated = True
+            continue
+        key = _cache_key(path, stat.st_size, stat.st_mtime)
+        cached_md5 = by_file.get(key)
+        if cached_md5 == checksum:
+            matches.append(path)
+            valid_paths.append(path_str)
+            continue
+        md5 = _hash_file(path, logger)
+        if md5 is None:
+            cache_updated = True
+            continue
+        cache_updated = _record_hash(cache, path, md5, stat.st_size, stat.st_mtime) or cache_updated
+        if md5 == checksum:
+            matches.append(path)
+            valid_paths.append(path_str)
+
+    if cache_updated:
+        by_hash[checksum] = valid_paths
+    return matches, cache_updated
+
+
+def _scan_for_matches(
+    *,
+    checksum: str,
+    roots: Sequence[str],
+    cache: dict,
+    extensions: set[str],
+    logger: AppLogger,
+) -> tuple[list[Path], bool]:
+    matches: list[Path] = []
+    cache_updated = False
+    for root in roots:
+        root_path = Path(root)
+        if not root_path.is_dir():
+            continue
+        for dirpath, _, filenames in os.walk(root_path):
+            for filename in filenames:
+                ext = _normalize_extension(Path(filename).suffix)
+                if extensions and (ext is None or ext not in extensions):
+                    continue
+                path = Path(dirpath) / filename
+                try:
+                    stat = path.stat()
+                except Exception:
+                    continue
+                key = _cache_key(path, stat.st_size, stat.st_mtime)
+                cached_md5 = cache.setdefault("by_file", {}).get(key)
+                if cached_md5 is None:
+                    md5 = _hash_file(path, logger)
+                    if md5 is None:
+                        continue
+                    cache_updated = _record_hash(cache, path, md5, stat.st_size, stat.st_mtime) or cache_updated
+                    cached_md5 = md5
+                if cached_md5 == checksum:
+                    matches.append(path)
+    return matches, cache_updated
+
+
+def _select_from_matches(
+    matches: Sequence[Path], game_name: Optional[str], logger: AppLogger
+) -> Optional[Path]:
+    if not matches:
+        return None
+    title = "Select base ROM"
+    description = "Multiple ROMs match the patch checksum."
+    if game_name:
+        description = f"{description}\nGame: {game_name}"
+    items = [(False, str(path)) for path in matches]
+    selection = dialogs.checklist_dialog(
+        title,
+        description,
+        items,
+        ok_label="Use selected ROM",
+        cancel_label="Cancel",
+        height=400,
+    )
+    if not selection:
+        _rom_log(logger, "User cancelled ROM match selection.")
+        return None
+    if len(selection) > 1:
+        _rom_log(logger, f"Multiple ROMs selected; using first: {selection[0]}")
+    return Path(selection[0])
+
+
+def _update_rom_state_for_manual_selection(
+    settings: dict, cache: dict, selection: Path, logger: AppLogger
+) -> None:
+    parent = selection.parent
+    roots = settings.get("ROM_ROOTS")
+    if not isinstance(roots, list):
+        roots = []
+    parent_str = str(parent)
+    if parent_str not in roots:
+        roots.append(parent_str)
+    settings["ROM_ROOTS"] = roots
+    settings["LAST_ROM_DIR"] = parent_str
+    try:
+        stat = selection.stat()
+        md5 = _hash_file(selection, logger)
+        if md5:
+            _record_hash(cache, selection, md5, stat.st_size, stat.st_mtime)
+    except Exception as exc:
+        _rom_log(logger, f"Failed updating ROM cache for {selection}: {exc}")
+    settings["ROM_HASH_CACHE"] = cache
+
+
+def _select_rom_aware_file_dialog(
+    *,
+    title: str,
+    text: Optional[str],
+    file_filter: Optional[str],
+    start_dir: Path,
+    dialog_key: str,
+    logger: AppLogger,
+) -> Optional[Path]:
+    global _ROM_AUTO_SUCCEEDED
+
+    is_rom = _is_rom_request(
+        title=title, text=text, file_filter=file_filter, is_save=False
+    )
+    if not is_rom:
+        return dialogs.select_file_dialog(
+            title=title,
+            dialog_key=dialog_key,
+            initial=start_dir,
+            file_filter=file_filter,
+        )
+
+    # ROM dialog detected: try to auto-select via the patch checksum once per process.
+    settings, rom_roots, last_rom_dir, cache = _load_rom_state(logger)
+    patch_env = os.environ.get(_PATCH_PATH_ENV, "")
+    patch_path = Path(patch_env) if patch_env else None
+
+    candidate_extensions = _extract_extensions_from_filter(file_filter)
+    roots = list(dict.fromkeys(rom_roots))
+    if last_rom_dir:
+        roots.append(last_rom_dir)
+
+    if patch_path and patch_path.is_file() and not _ROM_AUTO_SUCCEEDED:
+        metadata = _load_patch_metadata(patch_path, logger)
+        if metadata:
+            checksum, game_name, hint_exts = _extract_patch_hints(metadata)
+            if checksum:
+                candidate_extensions |= hint_exts
+                if not candidate_extensions:
+                    candidate_extensions = set(_ROM_COMMON_EXTS)
+                _rom_log(
+                    logger,
+                    f"ROM auto-select checksum={checksum} roots={roots} exts={sorted(candidate_extensions)}",
+                )
+                matches, cache_updated = _cached_matches(checksum, cache, logger)
+                if not matches:
+                    scanned_matches, scan_updated = _scan_for_matches(
+                        checksum=checksum,
+                        roots=roots,
+                        cache=cache,
+                        extensions=candidate_extensions,
+                        logger=logger,
+                    )
+                    matches = scanned_matches
+                    cache_updated = cache_updated or scan_updated
+
+                if cache_updated:
+                    settings["ROM_HASH_CACHE"] = cache
+                    save_settings(settings)
+
+                if len(matches) == 1:
+                    _ROM_AUTO_SUCCEEDED = True
+                    _rom_log(logger, f"ROM auto-select matched {matches[0]}")
+                    return matches[0]
+                if len(matches) > 1:
+                    selection = _select_from_matches(matches, game_name, logger)
+                    if selection:
+                        _update_rom_state_for_manual_selection(settings, cache, selection, logger)
+                        save_settings(settings)
+                    return selection
+
+    initial_dir = start_dir
+    if last_rom_dir and Path(last_rom_dir).is_dir():
+        initial_dir = Path(last_rom_dir)
+    selection = dialogs.select_file_dialog(
+        title=title,
+        dialog_key=dialog_key,
+        initial=initial_dir,
+        file_filter=file_filter,
+    )
+    if selection:
+        # Manual selection: persist ROM root/last dir and update hash cache.
+        _update_rom_state_for_manual_selection(settings, cache, selection, logger)
+        save_settings(settings)
+    return selection
 
 
 def _locate_bizhawk_runner(logger: AppLogger) -> Optional[Path]:
@@ -191,6 +573,8 @@ class ZenityShim:
                 return self._handle_message(argv, level="info")
             if mode == "error":
                 return self._handle_message(argv, level="error")
+            if mode == "file-selection":
+                return self._handle_file_selection(argv)
             if mode == "checklist":
                 return self._handle_checklist(argv)
             if mode == "progress":
@@ -199,6 +583,8 @@ class ZenityShim:
             return self._fallback(argv, "The requested zenity mode is not yet supported.")
 
     def _detect_mode(self, argv: Sequence[str]) -> Optional[str]:
+        if "--file-selection" in argv:
+            return "file-selection"
         if "--question" in argv:
             return "question"
         if "--info" in argv:
@@ -348,6 +734,53 @@ class ZenityShim:
         if choice == "extra" and extra_label:
             sys.stdout.write(extra_label + "\n")
             return 5
+        return 1
+
+    def _extract_file_filters(self, argv: Sequence[str]) -> list[str]:
+        filters: list[str] = []
+        for idx, arg in enumerate(argv):
+            if arg == "--file-filter" and idx + 1 < len(argv):
+                filters.append(argv[idx + 1])
+            elif arg.startswith("--file-filter="):
+                filters.append(arg.split("=", 1)[1])
+        return filters
+
+    def _handle_file_selection(self, argv: Sequence[str]) -> int:
+        title = self._extract_option(argv, "--title=") or "Select file"
+        text = self._extract_option(argv, "--text=")
+        filename = self._extract_option(argv, "--filename=")
+        is_save = "--save" in argv
+        is_multiple = "--multiple" in argv
+        if is_save or is_multiple:
+            return self._fallback(argv, "The zenity shim does not handle save or multi-select.")
+
+        start_dir = Path.cwd()
+        if filename:
+            candidate = Path(filename).expanduser()
+            if candidate.is_dir():
+                start_dir = candidate
+            else:
+                start_dir = candidate.parent
+
+        filters = self._extract_file_filters(argv)
+        file_filter = ";;".join(filters) if filters else None
+        selection = _select_rom_aware_file_dialog(
+            title=title,
+            text=text,
+            file_filter=file_filter,
+            start_dir=start_dir,
+            dialog_key="shim",
+            logger=self.logger,
+        )
+        if selection:
+            sys.stdout.write(str(selection) + "\n")
+            self.logger.log(
+                f"zenity file selection: {selection}", include_context=True, location="zenity-open"
+            )
+            return 0
+        self.logger.log(
+            "zenity file selection cancelled", include_context=True, location="zenity-open"
+        )
         return 1
 
     def _handle_message(self, argv: Sequence[str], *, level: str) -> int:
@@ -579,11 +1012,13 @@ class KDialogShim:
         except ValueError:
             pass
 
-        selection = dialogs.select_file_dialog(
+        selection = _select_rom_aware_file_dialog(
             title=self._extract_value(argv, "--title") or "Select file",
-            dialog_key="shim",
-            initial=start_dir,
+            text=None,
             file_filter=file_filter,
+            start_dir=start_dir,
+            dialog_key="shim",
+            logger=self.logger,
         )
         if selection:
             sys.stdout.write(str(selection) + "\n")
