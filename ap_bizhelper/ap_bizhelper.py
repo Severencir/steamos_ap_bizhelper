@@ -22,7 +22,11 @@ from .dialogs import (
     error_dialog,
     info_dialog,
 )
-from .ap_bizhelper_bizhawk import connectors_need_download, ensure_bizhawk_and_proton
+from .ap_bizhelper_bizhawk import (
+    connectors_need_download,
+    ensure_bizhawk_and_proton,
+    proton_available,
+)
 from .ap_bizhelper_config import (
     get_all_associations,
     get_association_mode,
@@ -294,6 +298,10 @@ def _needs_bizhawk_download(settings: dict) -> bool:
     )
 
 
+def _needs_proton_download(settings: dict) -> bool:
+    return not proton_available(settings)
+
+
 def _needs_connector_download(settings: dict, *, ap_version: str) -> bool:
     exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
     exe = Path(exe_str) if exe_str else None
@@ -306,9 +314,10 @@ def _prompt_setup_choices(
     show_archipelago: bool,
     show_bizhawk: bool,
     show_connectors: bool,
-) -> Tuple[bool, bool, bool, bool]:
-    if not any((show_archipelago, show_bizhawk, show_connectors)):
-        return False, False, False, False
+    show_proton: bool,
+) -> Tuple[bool, bool, bool, bool, bool]:
+    if not any((show_archipelago, show_bizhawk, show_connectors, show_proton)):
+        return False, False, False, False, False
 
     from PySide6 import QtCore, QtWidgets
 
@@ -337,6 +346,12 @@ def _prompt_setup_choices(
         connectors_box = QtWidgets.QCheckBox("BizHawk connectors")
         connectors_box.setChecked(True)
         layout.addWidget(connectors_box)
+
+    proton_box = None
+    if show_proton:
+        proton_box = QtWidgets.QCheckBox("Proton 10 (local copy)")
+        proton_box.setChecked(True)
+        layout.addWidget(proton_box)
 
     shortcut_box = None
     if show_archipelago or show_bizhawk or show_connectors:
@@ -369,9 +384,10 @@ def _prompt_setup_choices(
     arch = arch_box.isChecked() if arch_box is not None else False
     bizhawk = bizhawk_box.isChecked() if bizhawk_box is not None else False
     connectors = connectors_box.isChecked() if connectors_box is not None else False
+    proton = proton_box.isChecked() if proton_box is not None else False
     shortcuts = shortcut_box.isChecked() if shortcut_box is not None else False
 
-    return arch, bizhawk, connectors, shortcuts
+    return arch, bizhawk, connectors, shortcuts, proton
 
 
 def _ensure_apworld_for_extension(ext: str) -> None:
@@ -897,21 +913,24 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
     with APP_LOGGER.context("_run_prereqs"):
         need_arch = _needs_archipelago_download(settings)
         need_bizhawk = _needs_bizhawk_download(settings)
+        need_proton = _needs_proton_download(settings)
         ap_version = str(settings.get("AP_VERSION", "") or "")
         need_connectors = need_bizhawk or _needs_connector_download(settings, ap_version=ap_version)
 
-        if any((need_arch, need_bizhawk, need_connectors)):
-            arch, bizhawk, connectors, shortcuts = _prompt_setup_choices(
+        if any((need_arch, need_bizhawk, need_connectors, need_proton)):
+            arch, bizhawk, connectors, shortcuts, proton = _prompt_setup_choices(
                 allow_archipelago_skip=allow_archipelago_skip,
                 show_archipelago=need_arch,
                 show_bizhawk=need_bizhawk,
                 show_connectors=need_connectors,
+                show_proton=need_proton,
             )
         else:
             arch = False
             bizhawk = False
             connectors = False
             shortcuts = False
+            proton = False
 
         download_messages: list[str] = []
 
@@ -929,6 +948,7 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
         bizhawk_result: Optional[Tuple[Path, Path, bool]] = None
         bizhawk_result = ensure_bizhawk_and_proton(
             download_selected=bizhawk,
+            download_proton=proton,
             create_shortcut=shortcuts,
             download_messages=download_messages,
             settings=settings,
