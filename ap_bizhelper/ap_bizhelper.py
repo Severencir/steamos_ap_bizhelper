@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -45,6 +46,84 @@ from .ap_bizhelper_worlds import ensure_apworld_for_patch
 
 
 APP_LOGGER = get_app_logger()
+_SHUTDOWN_SIGNAL_ACTIVE = False
+_SIGNAL_HANDLERS_INSTALLED = False
+
+
+def _tracked_bizhawk_pids(baseline_bizhawk_pids: Set[int]) -> Set[int]:
+    return {pid for pid in _list_bizhawk_pids() if pid not in baseline_bizhawk_pids}
+
+
+def _wait_for_bizhawk_exit(baseline_bizhawk_pids: Set[int], *, timeout: float = 4.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _tracked_bizhawk_pids(baseline_bizhawk_pids):
+            return True
+        time.sleep(0.25)
+    return not _tracked_bizhawk_pids(baseline_bizhawk_pids)
+
+
+def _terminate_bizhawk_processes(
+    baseline_bizhawk_pids: Set[int],
+    *,
+    term_timeout: float = 4.0,
+    kill_timeout: float = 2.0,
+) -> None:
+    tracked_pids = _tracked_bizhawk_pids(baseline_bizhawk_pids)
+    if not tracked_pids:
+        return
+
+    print(f"[ap-bizhelper] Sending SIGTERM to BizHawk (pids: {sorted(tracked_pids)}).")
+    for pid in tracked_pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            continue
+
+    _wait_for_bizhawk_exit(baseline_bizhawk_pids, timeout=term_timeout)
+
+    remaining = _tracked_bizhawk_pids(baseline_bizhawk_pids)
+    if not remaining:
+        return
+
+    print(f"[ap-bizhelper] BizHawk still running; sending SIGKILL to {sorted(remaining)}.")
+    for pid in remaining:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            continue
+
+    _wait_for_bizhawk_exit(baseline_bizhawk_pids, timeout=kill_timeout)
+
+
+def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set[int]) -> None:
+    global _SIGNAL_HANDLERS_INSTALLED
+    if _SIGNAL_HANDLERS_INSTALLED:
+        return
+
+    def _handle_shutdown_signal(signum: int, _frame: object) -> None:
+        global _SHUTDOWN_SIGNAL_ACTIVE
+        if _SHUTDOWN_SIGNAL_ACTIVE:
+            return
+        _SHUTDOWN_SIGNAL_ACTIVE = True
+
+        try:
+            print(f"[ap-bizhelper] Received signal {signum}; attempting BizHawk shutdown.")
+            _terminate_bizhawk_processes(baseline_bizhawk_pids)
+            if not _tracked_bizhawk_pids(baseline_bizhawk_pids):
+                sync_bizhawk_saveram(settings)
+            else:
+                print("[ap-bizhelper] BizHawk still running; skipping SaveRAM sync.")
+        finally:
+            raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+    signal.signal(signal.SIGINT, _handle_shutdown_signal)
+    _SIGNAL_HANDLERS_INSTALLED = True
 
 
 def _steam_game_id_from_env() -> Optional[str]:
@@ -1060,6 +1139,7 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
             return 1
 
         baseline_pids = _list_bizhawk_pids()
+        _install_shutdown_signal_handlers(settings, baseline_pids)
 
         _apply_association_files(_registered_association_exts())
 
