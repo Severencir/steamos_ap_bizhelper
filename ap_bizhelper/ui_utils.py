@@ -186,10 +186,21 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
 
     button_row = QtWidgets.QHBoxLayout()
     button_row.addStretch()
+    update_app_button = QtWidgets.QPushButton("Update App")
     close_button = QtWidgets.QPushButton("Close")
+    button_row.addWidget(update_app_button)
     button_row.addWidget(close_button)
     layout.addLayout(button_row)
 
+    def _show_update_app_placeholder() -> None:
+        QtWidgets.QMessageBox.information(
+            dialog,
+            "Update App (Placeholder)",
+            "The Update App feature is not implemented yet. "
+            "This button is a placeholder for future update logic.",
+        )
+
+    update_app_button.clicked.connect(_show_update_app_placeholder)
     close_button.clicked.connect(dialog.reject)
 
     def _refresh_table() -> None:
