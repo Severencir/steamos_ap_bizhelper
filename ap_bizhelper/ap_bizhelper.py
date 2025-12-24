@@ -1124,7 +1124,12 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
         return appimage, runner
 
 
-def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
+def _run_full_flow(
+    settings: dict,
+    patch_arg: Optional[str] = None,
+    *,
+    allow_steam: bool = True,
+) -> int:
     with APP_LOGGER.context("_run_full_flow"):
         try:
             appimage, runner = _run_prereqs(settings)
@@ -1132,7 +1137,8 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
             error_dialog(str(exc))
             return 1
 
-        _capture_steam_appid_if_present(settings)
+        if allow_steam:
+            _capture_steam_appid_if_present(settings)
 
         if appimage is None:
             error_dialog("Archipelago was not selected for download and is required to continue.")
@@ -1172,12 +1178,13 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
         if _wait_for_archipelago_ready(appimage):
             _handle_bizhawk_for_patch(patch, runner, baseline_pids)
 
-        steam_appid = _get_known_steam_appid(settings)
-        if _is_running_under_steam():
-            _wait_for_launched_apps_to_close(appimage, baseline_pids)
-            sync_bizhawk_saveram(settings)
-        if steam_appid:
-            _notify_steam_game_exit(steam_appid)
+        if allow_steam:
+            steam_appid = _get_known_steam_appid(settings)
+            if _is_running_under_steam():
+                _wait_for_launched_apps_to_close(appimage, baseline_pids)
+                sync_bizhawk_saveram(settings)
+            if steam_appid:
+                _notify_steam_game_exit(steam_appid)
 
         return 0
 
@@ -1216,28 +1223,34 @@ def main(argv: list[str]) -> int:
         if settings_dirty:
             save_settings(settings)
 
-        _capture_steam_appid_if_present(settings)
-
         user_args = [arg for arg in argv[1:] if not arg.startswith("--appimage")]
-        running_under_steam = _is_running_under_steam()
+        no_steam = "--nosteam" in user_args
+        if no_steam:
+            user_args = [arg for arg in user_args if arg != "--nosteam"]
 
-        if running_under_steam:
-            if user_args:
-                _clear_relaunch_cache(settings, force_save=True)
+        if not no_steam:
+            _capture_steam_appid_if_present(settings)
+
+        running_under_steam = _is_running_under_steam() if not no_steam else False
+
+        if not no_steam:
+            if running_under_steam:
+                if user_args:
+                    _clear_relaunch_cache(settings, force_save=True)
+                else:
+                    user_args = [str(arg) for arg in cached_relaunch_args if str(arg).strip()]
+                    _clear_relaunch_cache(settings, force_save=True)
             else:
-                user_args = [str(arg) for arg in cached_relaunch_args if str(arg).strip()]
-                _clear_relaunch_cache(settings, force_save=True)
-        else:
-            settings["PENDING_RELAUNCH_ARGS"] = user_args
-            save_settings(settings)
-            _maybe_relaunch_via_steam(argv, settings)
+                settings["PENDING_RELAUNCH_ARGS"] = user_args
+                save_settings(settings)
+                _maybe_relaunch_via_steam(argv, settings)
 
         patch_arg: Optional[str] = user_args[0] if user_args else None
 
         if patch_arg == "ensure":
             if len(user_args) > 1:
                 APP_LOGGER.log(
-                    "Usage: ap_bizhelper.py [ensure]",
+                    "Usage: ap_bizhelper.py [--nosteam] [ensure]",
                     level="ERROR",
                     include_context=True,
                     mirror_console=True,
@@ -1248,7 +1261,8 @@ def main(argv: list[str]) -> int:
                 _run_prereqs(settings, allow_archipelago_skip=True)
             except RuntimeError:
                 return 1
-            _capture_steam_appid_if_present(settings)
+            if not no_steam:
+                _capture_steam_appid_if_present(settings)
             return 0
 
         if len(user_args) > 1:
@@ -1260,7 +1274,7 @@ def main(argv: list[str]) -> int:
                 stream="stderr",
             )
 
-        return _run_full_flow(settings, patch_arg)
+        return _run_full_flow(settings, patch_arg, allow_steam=not no_steam)
 
 
 if __name__ == "__main__":  # pragma: no cover
