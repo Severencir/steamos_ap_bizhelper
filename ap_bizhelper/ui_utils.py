@@ -26,9 +26,18 @@ from .ap_bizhelper_config import (
     CONFIG_DIR as LAUNCHER_CONFIG_DIR,
     load_apworld_cache,
     load_settings,
+    save_settings,
 )
 from .ap_bizhelper_worlds import force_update_apworlds, manual_select_apworld
-from .dialogs import checklist_dialog, enable_dialog_gamepad, ensure_qt_app, ensure_qt_available, error_dialog, info_dialog
+from .dialogs import (
+    DIALOG_DEFAULTS,
+    checklist_dialog,
+    enable_dialog_gamepad,
+    ensure_qt_app,
+    ensure_qt_available,
+    error_dialog,
+    info_dialog,
+)
 
 
 @dataclass
@@ -203,6 +212,8 @@ AP_DESKTOP_SHORTCUT = DESKTOP_DIR / "Archipelago.desktop"
 BIZHAWK_SHORTCUT = DESKTOP_DIR / "BizHawk-Proton.sh"
 BIZHAWK_LEGACY_SHORTCUT = DESKTOP_DIR / "BizHawk-Proton.desktop"
 
+_RESET_PRESERVE_KEYS = ("STEAM_APPID",)
+
 
 def _is_under_dir(path: Path, parent: Path) -> bool:
     try:
@@ -324,6 +335,13 @@ def _uninstall_app(dialog: "QtWidgets.QDialog") -> None:
     info_dialog(summary)
 
 
+def _reset_settings() -> None:
+    settings = load_settings()
+    preserved = {key: settings.get(key) for key in _RESET_PRESERVE_KEYS if settings.get(key)}
+    save_settings({**DIALOG_DEFAULTS, **preserved})
+    info_dialog("Settings reset to defaults.")
+
+
 def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     """Display a utilities dialog with component versions and update actions."""
 
@@ -360,10 +378,12 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     button_row.addStretch()
     copy_status_button = QtWidgets.QPushButton("Copy status")
     update_app_button = QtWidgets.QPushButton("Update App")
+    reset_settings_button = QtWidgets.QPushButton("Reset settings")
     uninstall_button = QtWidgets.QPushButton("Uninstall")
     close_button = QtWidgets.QPushButton("Close")
     button_row.addWidget(copy_status_button)
     button_row.addWidget(update_app_button)
+    button_row.addWidget(reset_settings_button)
     button_row.addWidget(uninstall_button)
     button_row.addWidget(close_button)
     layout.addLayout(button_row)
@@ -381,6 +401,7 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     copy_status_button.clicked.connect(
         lambda: QtWidgets.QApplication.clipboard().setText(_format_status_text())
     )
+    reset_settings_button.clicked.connect(lambda: _confirm_reset_settings(dialog))
     close_button.clicked.connect(dialog.reject)
 
     def _refresh_table() -> None:
@@ -418,6 +439,19 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
 
     def _run_action(action: Callable[[], bool]) -> None:
         action()
+        _refresh_table()
+
+    def _confirm_reset_settings(parent: Optional["QtWidgets.QWidget"] = None) -> None:
+        response = QtWidgets.QMessageBox.warning(
+            parent or dialog,
+            "Reset settings?",
+            "Reset settings to defaults? This will clear saved paths and preferences.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if response != QtWidgets.QMessageBox.Yes:
+            return
+        _reset_settings()
         _refresh_table()
 
     _refresh_table()
