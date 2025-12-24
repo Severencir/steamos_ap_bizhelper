@@ -24,6 +24,7 @@ from .dialogs import (
 )
 from .ap_bizhelper_bizhawk import (
     connectors_need_download,
+    auto_detect_bizhawk_exe,
     ensure_bizhawk_and_proton,
     proton_available,
 )
@@ -783,6 +784,80 @@ def _wait_for_launched_apps_to_close(appimage: Path, baseline_bizhawk_pids: Set[
         time.sleep(2)
 
 
+def _resolve_bizhawk_root(settings: dict) -> Optional[Path]:
+    exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+    if exe_str:
+        exe_path = Path(exe_str)
+        if exe_path.is_file():
+            return exe_path.parent
+
+    runner_str = str(settings.get("BIZHAWK_RUNNER", "") or "")
+    if runner_str:
+        runner_path = Path(runner_str)
+        if runner_path.is_file():
+            return runner_path.parent
+
+    exe_path = auto_detect_bizhawk_exe(settings)
+    if exe_path and exe_path.is_file():
+        return exe_path.parent
+
+    return None
+
+
+def sync_bizhawk_saveram(settings: dict) -> None:
+    with APP_LOGGER.context("sync_bizhawk_saveram"):
+        if _list_bizhawk_pids():
+            print("[ap-bizhelper] BizHawk still running; skipping SaveRAM sync.")
+            return
+
+        bizhawk_root = _resolve_bizhawk_root(settings)
+        if bizhawk_root is None or not bizhawk_root.is_dir():
+            print("[ap-bizhelper] BizHawk root directory not found; skipping SaveRAM sync.")
+            return
+
+        central_root = Path("~/.local/share/ap-bizhelper/saves").expanduser()
+        save_dirs = [path for path in bizhawk_root.rglob("SaveRAM") if path.is_dir()]
+        if not save_dirs:
+            print(f"[ap-bizhelper] No SaveRAM directories found under {bizhawk_root}.")
+            return
+
+        for save_ram in save_dirs:
+            if save_ram.is_symlink():
+                continue
+
+            try:
+                instance_rel = save_ram.parent.relative_to(bizhawk_root)
+            except ValueError:
+                instance_rel = save_ram.parent.name
+
+            instance_label = str(instance_rel).strip()
+            if not instance_label or Path(instance_label) == Path("."):
+                instance_label = "default"
+
+            dest_root = central_root / instance_label
+            if dest_root.is_symlink():
+                continue
+            dest_root.mkdir(parents=True, exist_ok=True)
+
+            try:
+                source_mode = save_ram.stat().st_mode
+                dest_root.chmod(source_mode)
+            except (OSError, PermissionError):
+                pass
+
+            for item in save_ram.iterdir():
+                dest_item = dest_root / item.name
+                if item.is_dir():
+                    shutil.copytree(item, dest_item, copy_function=shutil.copy2, dirs_exist_ok=True)
+                else:
+                    dest_item.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(item, dest_item)
+
+            shutil.rmtree(save_ram)
+            os.symlink(dest_root, save_ram)
+            print(f"[ap-bizhelper] Synced SaveRAM to {dest_root} and linked {save_ram}.")
+
+
 def _notify_steam_game_exit(appid: str) -> None:
     """Ask Steam to clear the running state for this app id."""
 
@@ -1020,6 +1095,7 @@ def _run_full_flow(settings: dict, patch_arg: Optional[str] = None) -> int:
         steam_appid = _get_known_steam_appid(settings)
         if _is_running_under_steam():
             _wait_for_launched_apps_to_close(appimage, baseline_pids)
+            sync_bizhawk_saveram(settings)
         if steam_appid:
             _notify_steam_game_exit(steam_appid)
 
