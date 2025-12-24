@@ -339,12 +339,16 @@ def _confirm_use_matched_rom(
         title="Use matching ROM?",
         text=description,
         ok_label="Use matched ROM",
-        cancel_label="Choose manually",
+        extra_label="Choose manually",
+        cancel_label="Cancel",
     )
     if choice == "ok":
         return True
-    if choice == "cancel":
+    if choice == "extra":
         return False
+    if choice == "cancel":
+        _rom_log(logger, "User cancelled ROM match confirmation dialog.")
+        return None
     _rom_log(logger, "User dismissed ROM match confirmation dialog.")
     return None
 
