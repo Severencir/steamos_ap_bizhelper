@@ -288,6 +288,12 @@ def _scan_for_matches(
                     cached_md5 = md5
                 if cached_md5 == checksum:
                     matches.append(path)
+    if matches:
+        unique_matches = list(dict.fromkeys(str(match) for match in matches))
+        if len(unique_matches) != len(matches):
+            removed = len(matches) - len(unique_matches)
+            _rom_log(logger, f"Removed {removed} duplicate ROM matches from scan results.")
+        matches = [Path(match) for match in unique_matches]
     return matches, cache_updated
 
 
@@ -396,7 +402,7 @@ def _select_rom_aware_file_dialog(
 
     candidate_extensions = _extract_extensions_from_filter(file_filter)
     roots = list(dict.fromkeys(rom_roots))
-    if last_rom_dir:
+    if last_rom_dir and last_rom_dir not in roots:
         roots.append(last_rom_dir)
 
     if patch_path and patch_path.is_file() and not _ROM_AUTO_SUCCEEDED:
