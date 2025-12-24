@@ -15,7 +15,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .ap_bizhelper_ap import _normalize_asset_digest, download_with_progress
+from .ap_bizhelper_ap import _is_newer_version, _normalize_asset_digest, download_with_progress
 from .dialogs import (
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
@@ -403,11 +403,20 @@ def _apply_archipelago_connector_archive(archive: Path, bizhawk_dir: Path) -> No
 
 
 def _stage_archipelago_connectors(
-    bizhawk_dir: Path, *, ap_version: Optional[str], download_messages: Optional[list[str]]
+    bizhawk_dir: Path,
+    *,
+    ap_version: Optional[str],
+    download_messages: Optional[list[str]],
+    settings: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Download Archipelago source and copy data/lua into bizhawk_dir/connectors."""
 
     url, tag, digest, digest_algo = _archipelago_release(ap_version or None)
+    if settings is not None and not ap_version and tag:
+        latest_seen = str(settings.get("BIZHAWK_AP_CONNECTOR_LATEST_SEEN_VERSION", "") or "")
+        if tag != latest_seen:
+            settings["BIZHAWK_AP_CONNECTOR_LATEST_SEEN_VERSION"] = tag
+            _save_settings(settings)
     suffix = ".tar.gz" if "tar" in url else ".zip"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmpf:
         tmp_path = Path(tmpf.name)
@@ -592,7 +601,10 @@ def ensure_connectors(
         elif allow_download:
             try:
                 tag = _stage_archipelago_connectors(
-                    bizhawk_dir, ap_version=ap_version, download_messages=download_messages
+                    bizhawk_dir,
+                    ap_version=ap_version,
+                    download_messages=download_messages,
+                    settings=settings,
                 )
             except Exception:
                 if allow_manual_selection:
@@ -961,7 +973,14 @@ def maybe_update_bizhawk(
 
     current_ver = str(settings.get("BIZHAWK_VERSION", "") or "")
     skip_ver = str(settings.get("BIZHAWK_SKIP_VERSION", "") or "")
+    latest_seen = str(settings.get("BIZHAWK_LATEST_SEEN_VERSION", "") or "")
+    should_prompt = _is_newer_version(latest_ver, latest_seen)
+    if latest_ver and latest_ver != latest_seen:
+        settings["BIZHAWK_LATEST_SEEN_VERSION"] = latest_ver
+        _save_settings(settings)
     if not current_ver or current_ver == latest_ver or skip_ver == latest_ver:
+        return bizhawk_exe, False
+    if not should_prompt:
         return bizhawk_exe, False
 
     choice = _qt_question_dialog(
@@ -976,6 +995,7 @@ def maybe_update_bizhawk(
 
     if choice == "extra":
         settings["BIZHAWK_SKIP_VERSION"] = latest_ver
+        settings["BIZHAWK_LATEST_SEEN_VERSION"] = latest_ver
         _save_settings(settings)
         return bizhawk_exe, False
 
@@ -991,6 +1011,7 @@ def maybe_update_bizhawk(
     settings["BIZHAWK_EXE"] = str(new_exe)
     settings["BIZHAWK_VERSION"] = latest_ver
     settings["BIZHAWK_SKIP_VERSION"] = ""
+    settings["BIZHAWK_LATEST_SEEN_VERSION"] = latest_ver
     _save_settings(settings)
 
     # Rebuild runner with updated path
@@ -1088,6 +1109,7 @@ def ensure_bizhawk_and_proton(
             except Exception as e:
                 error_dialog(f"Failed to query latest BizHawk release: {e}")
                 return None
+            settings["BIZHAWK_LATEST_SEEN_VERSION"] = ver
             try:
                 exe = download_and_extract_bizhawk(
                     url, ver, expected_digest=digest, digest_algorithm=digest_algo
@@ -1098,6 +1120,7 @@ def ensure_bizhawk_and_proton(
             settings["BIZHAWK_EXE"] = str(exe)
             settings["BIZHAWK_VERSION"] = ver
             settings["BIZHAWK_SKIP_VERSION"] = ""
+            settings["BIZHAWK_LATEST_SEEN_VERSION"] = ver
             _merge_and_save_settings()
             downloaded = True
             if download_messages is not None:

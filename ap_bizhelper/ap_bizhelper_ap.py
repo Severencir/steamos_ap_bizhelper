@@ -136,6 +136,37 @@ def _coerce_bool_setting(settings: Dict[str, Any], key: str, default: bool) -> b
     return default
 
 
+def _version_sort_key(version: str) -> tuple[tuple[int, object], ...]:
+    cleaned = version.strip()
+    if cleaned.lower().startswith("v"):
+        cleaned = cleaned[1:]
+    tokens = re.findall(r"\d+|[a-zA-Z]+", cleaned)
+    if not tokens:
+        return ((1, cleaned.lower()),)
+    key: list[tuple[int, object]] = []
+    for token in tokens:
+        if token.isdigit():
+            key.append((0, int(token)))
+        else:
+            key.append((1, token.lower()))
+    return tuple(key)
+
+
+def _is_newer_version(latest: str, seen: str) -> bool:
+    latest = latest.strip()
+    seen = seen.strip()
+    if not latest:
+        return False
+    if not seen:
+        return True
+    if latest == seen:
+        return False
+    try:
+        return _version_sort_key(latest) > _version_sort_key(seen)
+    except Exception:
+        return latest > seen
+
+
 def _detect_global_scale() -> float:
     _ensure_qt_available()
     from PySide6 import QtGui
@@ -913,11 +944,18 @@ def maybe_update_appimage(
 
     current_ver = str(settings.get("AP_VERSION", "") or "")
     skip_ver = str(settings.get("AP_SKIP_VERSION", "") or "")
+    latest_seen = str(settings.get("AP_LATEST_SEEN_VERSION", "") or "")
+    should_prompt = _is_newer_version(latest_ver, latest_seen)
+    if latest_ver and latest_ver != latest_seen:
+        settings["AP_LATEST_SEEN_VERSION"] = latest_ver
+        _save_settings(settings)
 
     if not current_ver:
         return appimage, False
 
     if current_ver == latest_ver or skip_ver == latest_ver:
+        return appimage, False
+    if not should_prompt:
         return appimage, False
 
     choice = _qt_question_dialog(
@@ -931,6 +969,7 @@ def maybe_update_appimage(
         return appimage, False
     if choice == "extra":
         settings["AP_SKIP_VERSION"] = latest_ver
+        settings["AP_LATEST_SEEN_VERSION"] = latest_ver
         _save_settings(settings)
         return appimage, False
 
@@ -951,6 +990,7 @@ def maybe_update_appimage(
     settings["AP_APPIMAGE"] = str(AP_APPIMAGE_DEFAULT)
     settings["AP_VERSION"] = latest_ver
     settings["AP_SKIP_VERSION"] = ""
+    settings["AP_LATEST_SEEN_VERSION"] = latest_ver
     _save_settings(settings)
     if download_messages is not None:
         download_messages.append(f"Updated Archipelago to {latest_ver}")
@@ -1014,6 +1054,7 @@ def ensure_appimage(
             except Exception as e:
                 error_dialog(f"Failed to query latest Archipelago release: {e}")
                 raise RuntimeError("Failed to query latest Archipelago release") from e
+            settings["AP_LATEST_SEEN_VERSION"] = ver
             try:
                 download_appimage(
                     url,
@@ -1030,6 +1071,7 @@ def ensure_appimage(
             settings["AP_APPIMAGE"] = str(AP_APPIMAGE_DEFAULT)
             settings["AP_VERSION"] = ver
             settings["AP_SKIP_VERSION"] = ""
+            settings["AP_LATEST_SEEN_VERSION"] = ver
             _merge_and_save_settings()
             downloaded = True
         else:
