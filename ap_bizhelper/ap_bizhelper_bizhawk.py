@@ -33,6 +33,10 @@ DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper"))
 
 BIZHAWK_WIN_DIR = DATA_DIR / "bizhawk_win"
 PROTON_PREFIX = DATA_DIR / "proton_prefix"
+PROTON_10_URL = "https://github.com/ValveSoftware/Proton/archive/refs/tags/proton-10.0-3.tar.gz"
+PROTON_10_VERSION = "10.0-3"
+PROTON_10_TAG = "proton-10.0-3"
+PROTON_10_DIR = DATA_DIR / "proton_10"
 
 GITHUB_API_LATEST = "https://api.github.com/repos/TASEmulators/BizHawk/releases/latest"
 ARCHIPELAGO_RELEASE_API = "https://api.github.com/repos/ArchipelagoMW/Archipelago/releases"
@@ -48,6 +52,7 @@ def _ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     BIZHAWK_WIN_DIR.mkdir(parents=True, exist_ok=True)
     PROTON_PREFIX.mkdir(parents=True, exist_ok=True)
+    PROTON_10_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _load_settings() -> Dict[str, Any]:
@@ -609,6 +614,97 @@ def auto_detect_proton(settings: Dict[str, Any]) -> Optional[Path]:
     return chosen
 
 
+def _default_steam_common_dir() -> Path:
+    steam_root = Path(os.path.expanduser("~/.steam/steam"))
+    return steam_root / "steamapps" / "common"
+
+
+def _find_proton_binary(root: Path) -> Optional[Path]:
+    direct = root / "proton"
+    if direct.is_file():
+        return direct
+
+    candidates = sorted(path for path in root.rglob("proton") if path.is_file())
+    if not candidates:
+        return None
+    return candidates[0]
+
+
+def detect_pinned_proton_in_steam() -> Optional[Path]:
+    common = _default_steam_common_dir()
+    if not common.exists():
+        return None
+
+    candidates = [
+        common / "Proton 10.0-3" / "proton",
+        common / "Proton 10.0" / "proton",
+        common / "Proton 10" / "proton",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def detect_local_pinned_proton() -> Optional[Path]:
+    if not PROTON_10_DIR.exists():
+        return None
+    return _find_proton_binary(PROTON_10_DIR)
+
+
+def proton_available(settings: Dict[str, Any]) -> bool:
+    if detect_pinned_proton_in_steam():
+        return True
+
+    proton_str = str(settings.get("PROTON_BIN", "") or "")
+    if proton_str:
+        proton_bin = Path(proton_str)
+        if proton_bin.is_file():
+            return True
+
+    if detect_local_pinned_proton():
+        return True
+
+    return False
+
+
+def _extract_proton_archive(archive: Path) -> Path:
+    if PROTON_10_DIR.exists():
+        shutil.rmtree(PROTON_10_DIR)
+
+    _extract_archive(archive, PROTON_10_DIR)
+    proton_bin = _find_proton_binary(PROTON_10_DIR)
+    if not proton_bin:
+        raise RuntimeError("Could not locate Proton binary after extracting Proton 10.")
+    try:
+        proton_bin.chmod(proton_bin.stat().st_mode | 0o111)
+    except Exception:
+        pass
+    return proton_bin
+
+
+def download_and_extract_proton_10(*, download_messages: Optional[list[str]] = None) -> Path:
+    _ensure_dirs()
+    tmp_path = PROTON_10_DIR / f"proton-{PROTON_10_VERSION}.tar.gz"
+    try:
+        download_with_progress(
+            PROTON_10_URL,
+            tmp_path,
+            title="Proton 10 download",
+            text=f"Downloading Proton {PROTON_10_VERSION}...",
+        )
+        proton_bin = _extract_proton_archive(tmp_path)
+        if download_messages is not None:
+            download_messages.append(f"Downloaded Proton {PROTON_10_VERSION}")
+        return proton_bin
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except Exception:
+            pass
+
+
 def select_proton_bin(initial: Optional[Path] = None) -> Optional[Path]:
     p = _select_file_dialog(
         title="Select Proton binary", initial=initial, dialog_key="proton_bin"
@@ -801,6 +897,7 @@ def maybe_update_bizhawk(
 def ensure_bizhawk_and_proton(
     *,
     download_selected: bool = True,
+    download_proton: bool = False,
     create_shortcut: bool = False,
     download_messages: Optional[list[str]] = None,
     settings: Optional[Dict[str, Any]] = None,
@@ -841,6 +938,12 @@ def ensure_bizhawk_and_proton(
     exe = Path(exe_str) if exe_str else None
     runner = Path(runner_str) if runner_str else None
     proton_bin = Path(proton_str) if proton_str else None
+    pinned_proton = detect_pinned_proton_in_steam()
+    if pinned_proton and pinned_proton.is_file():
+        proton_bin = pinned_proton
+        if str(settings.get("PROTON_BIN", "") or "") != str(pinned_proton):
+            settings["PROTON_BIN"] = str(pinned_proton)
+            _merge_and_save_settings()
 
     if exe and exe.is_file() and proton_bin and proton_bin.is_file() and runner and runner.is_file():
         exe, updated = maybe_update_bizhawk(
@@ -905,13 +1008,34 @@ def ensure_bizhawk_and_proton(
             _merge_and_save_settings()
 
     # Ensure Proton
-    proton_bin = auto_detect_proton(settings)
+    proton_bin = detect_pinned_proton_in_steam()
     if not proton_bin or not proton_bin.is_file():
-        # Ask user to select manually
-        chosen = select_proton_bin(Path(os.path.expanduser("~/.steam/steam/steamapps/common")))
-        if not chosen:
-            return None
-        proton_bin = chosen
+        proton_bin = detect_local_pinned_proton()
+
+    if not proton_bin or not proton_bin.is_file():
+        if proton_str:
+            proton_candidate = Path(proton_str)
+            if proton_candidate.is_file():
+                proton_bin = proton_candidate
+
+    if not proton_bin or not proton_bin.is_file():
+        if download_proton:
+            try:
+                proton_bin = download_and_extract_proton_10(
+                    download_messages=download_messages
+                )
+            except Exception as e:
+                error_dialog(f"Proton download failed or was cancelled: {e}")
+                return None
+            downloaded = True
+        else:
+            chosen = select_proton_bin(_default_steam_common_dir())
+            if not chosen:
+                error_dialog("Proton selection was cancelled.")
+                return None
+            proton_bin = chosen
+
+    if proton_bin and proton_bin.is_file():
         settings["PROTON_BIN"] = str(proton_bin)
         _merge_and_save_settings()
 
