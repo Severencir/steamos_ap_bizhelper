@@ -12,7 +12,12 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .ap_bizhelper_ap import APP_LOGGER, choose_install_action, download_with_progress
+from .ap_bizhelper_ap import (
+    APP_LOGGER,
+    _is_newer_version,
+    choose_install_action,
+    download_with_progress,
+)
 from .dialogs import (
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
@@ -165,6 +170,21 @@ def _update_playable_cache(
     save_apworld_cache(cache)
 
 
+def _update_playable_latest_seen(
+    cache: Dict[str, Any],
+    playable_cache: Dict[str, Any],
+    normalized: str,
+    latest_seen: str,
+) -> None:
+    if not normalized:
+        return
+    entry = dict(playable_cache.get(normalized, {}))
+    entry["latest_seen_version"] = latest_seen
+    playable_cache[normalized] = entry
+    cache["playable_worlds"] = playable_cache
+    save_apworld_cache(cache)
+
+
 def _select_custom_apworld(
     title: str,
     normalized: str,
@@ -226,6 +246,7 @@ def ensure_apworld_for_patch(patch: Path) -> None:
     cached_name = str(cached_info.get("filename", "") or "")
     cached_version = str(cached_info.get("version", "") or "")
     cached_source = str(cached_info.get("source", "") or "")
+    cached_latest_seen = str(cached_info.get("latest_seen_version", "") or "")
 
     if normalized and cached_name:
         existing = WORLD_DIR / cached_name
@@ -248,9 +269,17 @@ def ensure_apworld_for_patch(patch: Path) -> None:
             latest = _github_latest_apworld(link)
             if latest:
                 download_url, version_tag, asset_name = latest
+                should_prompt = _is_newer_version(version_tag, cached_latest_seen)
+                _update_playable_latest_seen(
+                    cache, playable_cache, normalized, version_tag
+                )
                 filename = asset_name
                 if cached_version == version_tag and (WORLD_DIR / asset_name).is_file():
-                    _update_playable_cache(cache, playable_cache, normalized, asset_name, version_tag, link)
+                    _update_playable_cache(
+                        cache, playable_cache, normalized, asset_name, version_tag, link
+                    )
+                    return
+                if not should_prompt:
                     return
                 download_candidate = (download_url, version_tag, asset_name, link)
         else:
@@ -295,4 +324,3 @@ def ensure_apworld_for_patch(patch: Path) -> None:
     if choice == "ok":
         _select_custom_apworld(display_name, normalized, cache, playable_cache)
     return
-
