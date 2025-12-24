@@ -916,6 +916,135 @@ def select_bizhawk_exe(initial: Optional[Path] = None) -> Optional[Path]:
     return p
 
 
+def manual_select_bizhawk(settings: Optional[Dict[str, Any]] = None) -> Optional[Path]:
+    """Prompt for an existing BizHawk exe and persist the selection."""
+
+    provided_settings = settings
+    settings = settings if settings is not None else _load_settings()
+
+    exe = select_bizhawk_exe(Path(os.path.expanduser("~")))
+    if not exe:
+        return None
+
+    settings["BIZHAWK_EXE"] = str(exe)
+    settings["BIZHAWK_VERSION"] = ""
+    settings["BIZHAWK_SKIP_VERSION"] = ""
+    _save_settings(settings)
+
+    proton_str = str(settings.get("PROTON_BIN", "") or "")
+    if proton_str:
+        proton_bin = Path(proton_str)
+        if proton_bin.is_file():
+            build_runner(settings, exe, proton_bin)
+
+    if provided_settings is not None and settings is not provided_settings:
+        merged = {**provided_settings, **settings}
+        provided_settings.clear()
+        provided_settings.update(merged)
+
+    return exe
+
+
+def force_update_bizhawk(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Force a download of the latest BizHawk build into the managed location."""
+
+    provided_settings = settings
+    settings = settings if settings is not None else _load_settings()
+
+    try:
+        url, latest_ver, latest_digest, latest_algo = _github_latest_bizhawk()
+    except Exception as exc:
+        error_dialog(f"Failed to query latest BizHawk release: {exc}")
+        return False
+
+    snapshot_dir = None
+    existing_exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+    existing_exe = Path(existing_exe_str) if existing_exe_str else None
+    if existing_exe and existing_exe.is_file():
+        snapshot_dir = _snapshot_bizhawk_install(existing_exe.parent)
+
+    try:
+        new_exe = download_and_extract_bizhawk(
+            url, latest_ver, expected_digest=latest_digest, digest_algorithm=latest_algo
+        )
+    except Exception as exc:
+        if snapshot_dir and existing_exe:
+            _restore_bizhawk_install(snapshot_dir, existing_exe.parent)
+        error_dialog(f"BizHawk update failed: {exc}")
+        return False
+    if snapshot_dir:
+        _restore_bizhawk_install(snapshot_dir, new_exe.parent)
+
+    settings["BIZHAWK_EXE"] = str(new_exe)
+    settings["BIZHAWK_VERSION"] = latest_ver
+    settings["BIZHAWK_SKIP_VERSION"] = ""
+    settings["BIZHAWK_LATEST_SEEN_VERSION"] = latest_ver
+    _save_settings(settings)
+
+    proton_str = str(settings.get("PROTON_BIN", "") or "")
+    if proton_str:
+        proton_bin = Path(proton_str)
+        if proton_bin.is_file():
+            build_runner(settings, new_exe, proton_bin)
+
+    if provided_settings is not None and settings is not provided_settings:
+        merged = {**provided_settings, **settings}
+        provided_settings.clear()
+        provided_settings.update(merged)
+
+    info_dialog(f"BizHawk updated to {latest_ver}.")
+    return True
+
+
+def _load_bizhawk_exe_from_settings(settings: Dict[str, Any]) -> Optional[Path]:
+    exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+    exe = Path(exe_str) if exe_str else None
+    if not exe or not exe.is_file():
+        error_dialog("BizHawk is not configured; cannot update connectors.")
+        return None
+    return exe
+
+
+def manual_select_connectors(settings: Optional[Dict[str, Any]] = None) -> bool:
+    settings = settings if settings is not None else _load_settings()
+    exe = _load_bizhawk_exe_from_settings(settings)
+    if exe is None:
+        return False
+    ap_version = str(settings.get("AP_VERSION", "") or "") or None
+    try:
+        return ensure_connectors(
+            settings,
+            exe,
+            ap_version=ap_version,
+            download_messages=None,
+            allow_download=False,
+            allow_manual_selection=True,
+        )
+    except Exception as exc:
+        error_dialog(str(exc))
+        return False
+
+
+def force_update_connectors(settings: Optional[Dict[str, Any]] = None) -> bool:
+    settings = settings if settings is not None else _load_settings()
+    exe = _load_bizhawk_exe_from_settings(settings)
+    if exe is None:
+        return False
+    ap_version = str(settings.get("AP_VERSION", "") or "") or None
+    try:
+        return ensure_connectors(
+            settings,
+            exe,
+            ap_version=ap_version,
+            download_messages=None,
+            allow_download=True,
+            allow_manual_selection=False,
+        )
+    except Exception as exc:
+        error_dialog(str(exc))
+        return False
+
+
 def _stage_runner(target: Path, source: Path) -> bool:
     """Copy the runner helper to ``target`` and mark it executable."""
 

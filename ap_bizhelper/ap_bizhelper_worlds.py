@@ -343,3 +343,74 @@ def ensure_apworld_for_patch(patch: Path) -> None:
     if choice == "ok":
         _select_custom_apworld(display_name, normalized, cache, playable_cache)
     return
+
+
+def manual_select_apworld() -> bool:
+    """Prompt for a local .apworld file and record it in the cache."""
+
+    selection = _select_file_dialog(
+        title="Select .apworld file",
+        initial=Path.home(),
+        file_filter="*.apworld",
+        dialog_key="apworld",
+    )
+    if selection is None:
+        return False
+
+    apworld_path = Path(selection)
+    if not apworld_path.is_file():
+        error_dialog("Selected .apworld file does not exist.")
+        return False
+
+    dest = _stage_apworld_file(apworld_path, apworld_path.name)
+    if dest is None:
+        error_dialog("Failed to stage .apworld file.")
+        return False
+
+    cache = load_apworld_cache()
+    playable_cache = cache.get("playable_worlds", {})
+    normalized = _normalize_game(dest.stem)
+    _update_playable_cache(cache, playable_cache, normalized, dest.name, "", "manual")
+    info_dialog(f"Installed APWorld: {dest.name}")
+    return True
+
+
+def force_update_apworlds() -> bool:
+    """Force a refresh of cached APWorld downloads."""
+
+    cache = load_apworld_cache()
+    playable_cache = cache.get("playable_worlds", {})
+    updated = False
+
+    for normalized, entry in list(playable_cache.items()):
+        source = str(entry.get("source", "") or "")
+        if not source or source == "manual":
+            continue
+
+        version = str(entry.get("version", "") or "")
+        filename = str(entry.get("filename", "") or "")
+        if "github.com" in source:
+            latest = _github_latest_apworld(source)
+            if not latest:
+                continue
+            download_url, version_tag, asset_name = latest
+            _update_playable_latest_seen(cache, playable_cache, normalized, version_tag)
+            if version_tag and version_tag == version and (WORLD_DIR / asset_name).is_file():
+                continue
+            dest = _download_apworld(download_url, asset_name)
+            if dest is None:
+                continue
+            _update_playable_cache(cache, playable_cache, normalized, dest.name, version_tag, source)
+            updated = True
+        else:
+            if filename and (WORLD_DIR / filename).is_file():
+                continue
+            dest = _download_apworld(source, filename or None)
+            if dest is None:
+                continue
+            _update_playable_cache(cache, playable_cache, normalized, dest.name, version, source)
+            updated = True
+
+    if updated:
+        info_dialog("APWorlds refreshed.")
+    return updated

@@ -661,6 +661,68 @@ def select_appimage(
     return p
 
 
+def manual_select_appimage(settings: Optional[Dict[str, Any]] = None) -> Optional[Path]:
+    """Prompt for an existing AppImage and persist the selection."""
+
+    provided_settings = settings
+    settings = settings if settings is not None else _load_settings()
+
+    selection = select_appimage(Path(os.path.expanduser("~")), settings=settings)
+    if selection is None:
+        return None
+
+    settings["AP_APPIMAGE"] = str(selection)
+    settings["AP_VERSION"] = ""
+    settings["AP_SKIP_VERSION"] = ""
+    _save_settings(settings)
+
+    if provided_settings is not None and settings is not provided_settings:
+        merged = {**provided_settings, **settings}
+        provided_settings.clear()
+        provided_settings.update(merged)
+
+    return selection
+
+
+def force_update_appimage(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Force a download of the latest AppImage into the managed location."""
+
+    provided_settings = settings
+    settings = settings if settings is not None else _load_settings()
+
+    try:
+        url, latest_ver, latest_digest, latest_algo = _github_latest_appimage()
+    except Exception as exc:
+        error_dialog(f"Failed to query latest Archipelago release: {exc}")
+        return False
+
+    try:
+        download_appimage(
+            url,
+            AP_APPIMAGE_DEFAULT,
+            latest_ver,
+            expected_digest=latest_digest,
+            digest_algorithm=latest_algo,
+        )
+    except Exception as exc:
+        error_dialog(f"Archipelago download failed or was cancelled: {exc}")
+        return False
+
+    settings["AP_APPIMAGE"] = str(AP_APPIMAGE_DEFAULT)
+    settings["AP_VERSION"] = latest_ver
+    settings["AP_SKIP_VERSION"] = ""
+    settings["AP_LATEST_SEEN_VERSION"] = latest_ver
+    _save_settings(settings)
+
+    if provided_settings is not None and settings is not provided_settings:
+        merged = {**provided_settings, **settings}
+        provided_settings.clear()
+        provided_settings.update(merged)
+
+    info_dialog(f"Archipelago updated to {latest_ver}.")
+    return True
+
+
 def _prompt_select_existing_appimage(initial: Path, *, settings: Dict[str, Any]) -> Path:
     """Prompt the user to select an existing AppImage without offering download."""
 
