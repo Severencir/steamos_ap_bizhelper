@@ -102,6 +102,7 @@ class DialogResult:
     role: Optional[DialogButtonRole]
     checklist: List[str]
     progress_cancelled: bool = False
+    radio_selection: Optional[str] = None
 
 
 def merge_dialog_settings(settings: Optional[Dict[str, object]] = None) -> Dict[str, object]:
@@ -338,6 +339,7 @@ def modular_dialog(
     text: Optional[str] = None,
     buttons: Sequence[DialogButtonSpec],
     checklist: Optional[Iterable[Tuple[bool, str]]] = None,
+    radio_items: Optional[Iterable[str]] = None,
     progress_stream: Optional[Iterable[str]] = None,
     icon: Optional[str] = None,
     height: Optional[int] = None,
@@ -371,6 +373,16 @@ def modular_dialog(
 
     if header_layout.count():
         layout.addLayout(header_layout)
+
+    radio_list: Optional[QtWidgets.QListWidget] = None
+    if radio_items is not None:
+        radio_list = QtWidgets.QListWidget()
+        radio_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        for item_text in radio_items:
+            radio_list.addItem(str(item_text))
+        if radio_list.count() > 0:
+            radio_list.setCurrentRow(0)
+        layout.addWidget(radio_list)
 
     checklist_boxes: list[QtWidgets.QCheckBox] = []
     if checklist is not None:
@@ -414,13 +426,20 @@ def modular_dialog(
     if qt_buttons:
         for (first_button, _), (second_button, _) in zip(qt_buttons, qt_buttons[1:]):
             QtWidgets.QWidget.setTabOrder(first_button, second_button)
+        if radio_list is not None:
+            QtWidgets.QWidget.setTabOrder(qt_buttons[-1][0], radio_list)
+            last_focus_widget: QtWidgets.QWidget = radio_list
+        else:
+            last_focus_widget = qt_buttons[-1][0]
         if checklist_boxes:
-            QtWidgets.QWidget.setTabOrder(qt_buttons[-1][0], checklist_boxes[0])
+            QtWidgets.QWidget.setTabOrder(last_focus_widget, checklist_boxes[0])
             for prev, current in zip(checklist_boxes, checklist_boxes[1:]):
                 QtWidgets.QWidget.setTabOrder(prev, current)
-            QtWidgets.QWidget.setTabOrder(checklist_boxes[-1], qt_buttons[0][0])
+            last_focus_widget = checklist_boxes[-1]
+        if last_focus_widget is not qt_buttons[0][0]:
+            QtWidgets.QWidget.setTabOrder(last_focus_widget, qt_buttons[0][0])
 
-    result = DialogResult(label=None, role=None, checklist=[], progress_cancelled=False)
+    result = DialogResult(label=None, role=None, checklist=[], progress_cancelled=False, radio_selection=None)
 
     def _record_selection(button_spec: DialogButtonSpec) -> None:
         result.label = button_spec.label
@@ -464,11 +483,19 @@ def modular_dialog(
     def _capture_checklist() -> None:
         result.checklist = [cb.text() for cb in checklist_boxes if cb.isChecked()]
 
+    def _capture_radio_selection() -> None:
+        if radio_list is None:
+            result.radio_selection = None
+            return
+        current = radio_list.currentItem()
+        result.radio_selection = current.text() if current is not None else None
+
     if progress_stream is None:
         dialog.activateWindow()
         dialog.raise_()
         exec_result = dialog.exec()
         _capture_checklist()
+        _capture_radio_selection()
         if result.role is None:
             default_spec = next((spec for _, spec in qt_buttons if spec.is_default), None)
             if default_spec is None:
@@ -520,6 +547,7 @@ def modular_dialog(
             # successfully when the stream finishes.
             result.role = "positive"
     _capture_checklist()
+    _capture_radio_selection()
     dialog.accept()
     return result
 
@@ -1610,6 +1638,33 @@ def checklist_dialog(
     if dialog.role != "positive":
         return None
     return dialog.checklist
+
+
+def radio_list_dialog(
+    title: str,
+    text: Optional[str],
+    items: Iterable[str],
+    *,
+    ok_label: str = "OK",
+    cancel_label: str = "Cancel",
+    height: Optional[int] = None,
+) -> Optional[str]:
+    button_specs = [
+        DialogButtonSpec(ok_label, role="positive", is_default=True),
+        DialogButtonSpec(cancel_label, role="negative"),
+    ]
+
+    dialog = modular_dialog(
+        title=title or "Select item",
+        text=text,
+        buttons=button_specs,
+        radio_items=items,
+        height=height,
+    )
+
+    if dialog.role != "positive":
+        return None
+    return dialog.radio_selection
 
 
 def progress_dialog_from_stream(

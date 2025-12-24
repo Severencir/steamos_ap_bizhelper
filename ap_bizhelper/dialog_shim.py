@@ -306,8 +306,8 @@ def _select_from_matches(
     description = "Multiple ROMs match the patch checksum."
     if game_name:
         description = f"{description}\nGame: {game_name}"
-    items = [(False, str(path)) for path in matches]
-    selection = dialogs.checklist_dialog(
+    items = [str(path) for path in matches]
+    selection = dialogs.radio_list_dialog(
         title,
         description,
         items,
@@ -318,9 +318,7 @@ def _select_from_matches(
     if not selection:
         _rom_log(logger, "User cancelled ROM match selection.")
         return None
-    if len(selection) > 1:
-        _rom_log(logger, f"Multiple ROMs selected; using first: {selection[0]}")
-    return Path(selection[0])
+    return Path(selection)
 
 
 def _confirm_use_matched_rom(
@@ -446,7 +444,7 @@ def _select_rom_aware_file_dialog(
                         if selection:
                             _update_rom_state_for_manual_selection(settings, cache, selection, logger)
                             save_settings(settings)
-                        return selection
+                            return selection
                     if confirm is None:
                         return None
 
