@@ -45,6 +45,7 @@ SNI_DOWNLOAD_URL = (
     "sni-v0.0.102a-windows-amd64.zip"
 )
 SNI_VERSION = "v0.0.102a"
+MIGRATABLE_BIZHAWK_ITEMS = ("connectors", "sni", "Scripts", "Lua", "config.ini")
 
 
 def _ensure_dirs() -> None:
@@ -683,6 +684,68 @@ def _stage_bizhawk_config(exe: Path, preserved_config: Optional[Path]) -> None:
             preserved_config.unlink()
 
 
+def _bizhawk_dir_is_safe(bizhawk_dir: Path) -> bool:
+    try:
+        resolved_dir = bizhawk_dir.resolve()
+        resolved_root = BIZHAWK_WIN_DIR.resolve()
+    except Exception:
+        return False
+
+    if not resolved_dir.is_dir():
+        return False
+    return resolved_dir.is_relative_to(resolved_root)
+
+
+def _snapshot_bizhawk_install(bizhawk_dir: Optional[Path]) -> Optional[Path]:
+    if bizhawk_dir is None or not _bizhawk_dir_is_safe(bizhawk_dir):
+        return None
+
+    staging_dir = Path(tempfile.mkdtemp(prefix="bizhawk_migrate_"))
+    staged_any = False
+
+    for item in MIGRATABLE_BIZHAWK_ITEMS:
+        src = bizhawk_dir / item
+        if not src.exists():
+            continue
+        dest = staging_dir / item
+        if src.is_dir():
+            shutil.copytree(src, dest)
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+        staged_any = True
+
+    if not staged_any:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        return None
+
+    return staging_dir
+
+
+def _restore_bizhawk_install(snapshot_dir: Optional[Path], bizhawk_dir: Path) -> None:
+    if snapshot_dir is None:
+        return
+
+    try:
+        for item in MIGRATABLE_BIZHAWK_ITEMS:
+            src = snapshot_dir / item
+            if not src.exists():
+                continue
+            dest = bizhawk_dir / item
+            if dest.exists():
+                if dest.is_dir():
+                    shutil.rmtree(dest)
+                else:
+                    dest.unlink()
+            if src.is_dir():
+                shutil.copytree(src, dest)
+            else:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
+    finally:
+        shutil.rmtree(snapshot_dir, ignore_errors=True)
+
+
 def auto_detect_bizhawk_exe(settings: Dict[str, Any]) -> Optional[Path]:
     """
     Try to determine the EmuHawk.exe path from settings or by scanning BIZHAWK_WIN_DIR.
@@ -996,13 +1059,16 @@ def maybe_update_bizhawk(
         return bizhawk_exe, False
 
     # Update now
+    snapshot_dir = _snapshot_bizhawk_install(bizhawk_exe.parent)
     try:
         new_exe = download_and_extract_bizhawk(
             url, latest_ver, expected_digest=latest_digest, digest_algorithm=latest_algo
         )
     except Exception as e:
+        _restore_bizhawk_install(snapshot_dir, bizhawk_exe.parent)
         error_dialog(f"BizHawk update failed: {e}")
         return bizhawk_exe, False
+    _restore_bizhawk_install(snapshot_dir, new_exe.parent)
 
     settings["BIZHAWK_EXE"] = str(new_exe)
     settings["BIZHAWK_VERSION"] = latest_ver
