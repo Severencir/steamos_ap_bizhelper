@@ -13,7 +13,7 @@ from .ap_bizhelper_bizhawk import (
     manual_select_bizhawk,
     manual_select_connectors,
 )
-from .ap_bizhelper_config import load_apworld_cache, load_settings
+from .ap_bizhelper_config import APWORLD_CACHE_FILE, load_apworld_cache, load_settings
 from .ap_bizhelper_worlds import force_update_apworlds, manual_select_apworld
 from .dialogs import enable_dialog_gamepad, ensure_qt_app, ensure_qt_available
 
@@ -152,6 +152,36 @@ def _build_component_rows() -> list[_ComponentRow]:
     ]
 
 
+def _format_status_text() -> str:
+    settings = load_settings()
+    cache = load_apworld_cache()
+    rows = _build_component_rows()
+
+    lines = ["ap-bizhelper status", f"App version: {_app_version()}", ""]
+    lines.append("Components:")
+    for row in rows:
+        lines.append(f"- {row.name}")
+        lines.append(f"  Installed version: {row.installed_version}")
+        lines.append(f"  Latest seen: {row.latest_seen}")
+        lines.append(f"  Skip version: {row.skip_version}")
+        lines.append(f"  Source: {row.source}")
+    lines.append("")
+    lines.append("Paths:")
+
+    def _path_line(label: str, value: Optional[str]) -> None:
+        lines.append(f"- {label}: {_dash_if_empty(value or '')}")
+
+    _path_line("AP AppImage", str(settings.get("AP_APPIMAGE", "") or ""))
+    _path_line("BizHawk EXE", str(settings.get("BIZHAWK_EXE", "") or ""))
+    _path_line("Proton bin", str(settings.get("PROTON_BIN", "") or ""))
+    _path_line("BizHawk runner", str(settings.get("BIZHAWK_RUNNER", "") or ""))
+    _path_line("SFC Lua path", str(settings.get("SFC_LUA_PATH", "") or ""))
+    _path_line("APWorld cache", str(APWORLD_CACHE_FILE))
+    _path_line("Cached APWorlds", str(len(cache.get("playable_worlds", {}))))
+
+    return "\n".join(lines)
+
+
 def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     """Display a utilities dialog with component versions and update actions."""
 
@@ -186,8 +216,10 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
 
     button_row = QtWidgets.QHBoxLayout()
     button_row.addStretch()
+    copy_status_button = QtWidgets.QPushButton("Copy status")
     update_app_button = QtWidgets.QPushButton("Update App")
     close_button = QtWidgets.QPushButton("Close")
+    button_row.addWidget(copy_status_button)
     button_row.addWidget(update_app_button)
     button_row.addWidget(close_button)
     layout.addLayout(button_row)
@@ -201,6 +233,9 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
         )
 
     update_app_button.clicked.connect(_show_update_app_placeholder)
+    copy_status_button.clicked.connect(
+        lambda: QtWidgets.QApplication.clipboard().setText(_format_status_text())
+    )
     close_button.clicked.connect(dialog.reject)
 
     def _refresh_table() -> None:
