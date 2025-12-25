@@ -5,6 +5,7 @@ import importlib.metadata
 import os
 from pathlib import Path
 import shutil
+import subprocess
 from typing import Callable, Optional
 
 from .ap_bizhelper_ap import (
@@ -28,7 +29,7 @@ from .ap_bizhelper_config import (
     load_settings,
     save_settings,
 )
-from .ap_bizhelper_worlds import force_update_apworlds, manual_select_apworld
+from .ap_bizhelper_worlds import WORLD_DIR, force_update_apworlds, manual_select_apworld
 from .dialogs import (
     DIALOG_DEFAULTS,
     checklist_dialog,
@@ -49,6 +50,12 @@ class _ComponentRow:
     source: str
     force_update: Callable[[], bool]
     manual_select: Callable[[], bool]
+
+
+@dataclass
+class _ManagedDirRow:
+    role: str
+    path: Optional[Path]
 
 
 def _app_version() -> str:
@@ -172,6 +179,70 @@ def _build_component_rows() -> list[_ComponentRow]:
             manual_select=manual_select_apworld,
         ),
     ]
+
+
+def _managed_dir_display(path: Optional[Path]) -> str:
+    if not path:
+        return "—"
+    return str(path)
+
+
+def _managed_dir_exists(path: Optional[Path]) -> bool:
+    if not path:
+        return False
+    return path.exists()
+
+
+def _bizhawk_install_dirs(settings: dict) -> list[Path]:
+    installs: list[Path] = []
+
+    def _add(path: Optional[Path]) -> None:
+        if not path:
+            return
+        try:
+            resolved = path.resolve()
+        except Exception:
+            resolved = path
+        if resolved not in installs:
+            installs.append(resolved)
+
+    _add(BIZHAWK_WIN_DIR)
+
+    bizhawk_path = str(settings.get("BIZHAWK_EXE", "") or "")
+    if bizhawk_path:
+        candidate = Path(bizhawk_path)
+        if candidate.is_file():
+            candidate = candidate.parent
+        _add(candidate)
+
+    return installs
+
+
+def _build_managed_dir_rows() -> list[_ManagedDirRow]:
+    settings = load_settings()
+    rows: list[_ManagedDirRow] = [
+        _ManagedDirRow("AP config", AP_CONFIG_DIR),
+        _ManagedDirRow("AP local", AP_DATA_DIR),
+        _ManagedDirRow("Launcher data", LAUNCHER_DATA_DIR),
+        _ManagedDirRow("APWorlds", WORLD_DIR),
+    ]
+
+    for install_dir in _bizhawk_install_dirs(settings):
+        rows.append(_ManagedDirRow("BizHawk install", install_dir))
+        rows.append(_ManagedDirRow("Connectors", install_dir / "connectors"))
+
+    return rows
+
+
+def _open_path_in_manager(path: Path) -> None:
+    opener = shutil.which("xdg-open")
+    if not opener:
+        error_dialog("xdg-open is not available to open folders.")
+        return
+    try:
+        subprocess.Popen([opener, str(path)])
+    except Exception as exc:
+        error_dialog(f"Failed to open {path}:\n{exc}")
 
 
 def _format_status_text() -> str:
@@ -342,6 +413,69 @@ def _reset_settings() -> None:
     info_dialog("Settings reset to defaults.")
 
 
+def show_managed_dirs_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
+    """Display a dialog listing managed directories with quick open actions."""
+
+    ensure_qt_available()
+    from PySide6 import QtCore, QtWidgets
+
+    ensure_qt_app()
+    dialog = QtWidgets.QDialog(parent)
+    dialog.setWindowTitle("Managed directories")
+    dialog.setMinimumWidth(720)
+
+    layout = QtWidgets.QVBoxLayout(dialog)
+    table = QtWidgets.QTableWidget()
+    table.setColumnCount(2)
+    table.setHorizontalHeaderLabels(["Role", "Path"])
+    table.verticalHeader().setVisible(False)
+    table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+    table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+    table.setFocusPolicy(QtCore.Qt.NoFocus)
+    table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+    table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+    layout.addWidget(table)
+
+    rows = _build_managed_dir_rows()
+    table.setRowCount(len(rows))
+
+    for row_index, row in enumerate(rows):
+        role_item = QtWidgets.QTableWidgetItem(row.role)
+        role_item.setFlags(role_item.flags() & ~QtCore.Qt.ItemIsEditable)
+        table.setItem(row_index, 0, role_item)
+
+        path_text = _managed_dir_display(row.path)
+        path_widget = QtWidgets.QWidget()
+        path_layout = QtWidgets.QHBoxLayout(path_widget)
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(8)
+
+        label = QtWidgets.QLabel(path_text)
+        label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        path_layout.addWidget(label)
+
+        open_button = QtWidgets.QPushButton("Open")
+        if row.path and _managed_dir_exists(row.path):
+            open_button.clicked.connect(lambda _=False, p=row.path: _open_path_in_manager(p))
+        else:
+            open_button.setEnabled(False)
+            open_button.setToolTip("Path not available.")
+        path_layout.addWidget(open_button)
+        path_layout.addStretch()
+
+        table.setCellWidget(row_index, 1, path_widget)
+
+    button_row = QtWidgets.QHBoxLayout()
+    button_row.addStretch()
+    close_button = QtWidgets.QPushButton("Close")
+    close_button.clicked.connect(dialog.reject)
+    button_row.addWidget(close_button)
+    layout.addLayout(button_row)
+
+    enable_dialog_gamepad(dialog, affirmative=close_button, negative=close_button, default=close_button)
+    dialog.exec()
+
+
 def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     """Display a utilities dialog with component versions and update actions."""
 
@@ -377,11 +511,13 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     button_row = QtWidgets.QHBoxLayout()
     button_row.addStretch()
     copy_status_button = QtWidgets.QPushButton("Copy status")
+    managed_dirs_button = QtWidgets.QPushButton("Managed dirs")
     update_app_button = QtWidgets.QPushButton("Update App")
     reset_settings_button = QtWidgets.QPushButton("Reset settings")
     uninstall_button = QtWidgets.QPushButton("Uninstall")
     close_button = QtWidgets.QPushButton("Close")
     button_row.addWidget(copy_status_button)
+    button_row.addWidget(managed_dirs_button)
     button_row.addWidget(update_app_button)
     button_row.addWidget(reset_settings_button)
     button_row.addWidget(uninstall_button)
@@ -401,6 +537,7 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     copy_status_button.clicked.connect(
         lambda: QtWidgets.QApplication.clipboard().setText(_format_status_text())
     )
+    managed_dirs_button.clicked.connect(lambda: show_managed_dirs_dialog(dialog))
     reset_settings_button.clicked.connect(lambda: _confirm_reset_settings(dialog))
     close_button.clicked.connect(dialog.reject)
 
