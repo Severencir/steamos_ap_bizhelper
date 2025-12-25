@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import importlib.metadata
+import json
 import os
 from pathlib import Path
 import shutil
@@ -38,6 +40,7 @@ from .dialogs import (
     ensure_qt_available,
     error_dialog,
     info_dialog,
+    select_file_dialog,
 )
 
 
@@ -278,12 +281,66 @@ def _format_status_text() -> str:
 AP_CONFIG_DIR = Path(os.path.expanduser("~/.config/Archipelago"))
 AP_DATA_DIR = Path(os.path.expanduser("~/.local/share/Archipelago"))
 BACKUPS_DIR = Path(os.path.expanduser("~/.local/share/ap-bizhelper/backups"))
+EXPORTS_DIR = LAUNCHER_DATA_DIR / "exports"
 GAME_SAVES_DIR = Path(os.path.expanduser("~/.local/share/ap-bizhelper/saves"))
 AP_DESKTOP_SHORTCUT = DESKTOP_DIR / "Archipelago.desktop"
 BIZHAWK_SHORTCUT = DESKTOP_DIR / "BizHawk-Proton.sh"
 BIZHAWK_LEGACY_SHORTCUT = DESKTOP_DIR / "BizHawk-Proton.desktop"
+SETTINGS_EXPORT_VERSION = 1
+SETTINGS_EXPORT_PREFIX = "ap-bizhelper-settings"
 
 _RESET_PRESERVE_KEYS = ("STEAM_APPID",)
+_IMPORT_PRESERVE_KEYS = ("AP_APPIMAGE", "BIZHAWK_EXE", "BIZHAWK_RUNNER", "PROTON_BIN")
+
+
+def _ensure_exports_dir() -> Optional[Path]:
+    try:
+        EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        error_dialog(f"Failed to create export directory:\n{EXPORTS_DIR}\n\n{exc}")
+        return None
+    return EXPORTS_DIR
+
+
+def _write_settings_export(settings: dict, export_path: Path) -> None:
+    payload = {
+        "format_version": SETTINGS_EXPORT_VERSION,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "app_version": _app_version(),
+        "settings": settings,
+    }
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    with export_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
+def _read_settings_export(export_path: Path) -> Optional[dict]:
+    try:
+        with export_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception as exc:
+        error_dialog(f"Failed to read settings export:\n{export_path}\n\n{exc}")
+        return None
+
+    if not isinstance(payload, dict):
+        error_dialog("Settings export format is invalid (expected a JSON object).")
+        return None
+
+    version = payload.get("format_version")
+    if version != SETTINGS_EXPORT_VERSION:
+        error_dialog(
+            "Settings export format version is unsupported.\n\n"
+            f"Expected {SETTINGS_EXPORT_VERSION}, got {version!r}."
+        )
+        return None
+
+    settings = payload.get("settings")
+    if not isinstance(settings, dict):
+        error_dialog("Settings export is missing the settings payload.")
+        return None
+
+    return settings
 
 
 def _is_under_dir(path: Path, parent: Path) -> bool:
@@ -413,6 +470,64 @@ def _reset_settings() -> None:
     info_dialog("Settings reset to defaults.")
 
 
+def _export_settings() -> None:
+    export_dir = _ensure_exports_dir()
+    if not export_dir:
+        return
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    export_path = export_dir / f"{SETTINGS_EXPORT_PREFIX}-{timestamp}.json"
+    settings = load_settings()
+    try:
+        _write_settings_export(settings, export_path)
+    except Exception as exc:
+        error_dialog(f"Failed to export settings:\n{export_path}\n\n{exc}")
+        return
+    info_dialog(f"Settings exported to:\n{export_path}")
+
+
+def _import_settings(parent: Optional["QtWidgets.QWidget"] = None) -> bool:
+    export_dir = _ensure_exports_dir()
+    if not export_dir:
+        return False
+    selection = select_file_dialog(
+        title="Import settings",
+        dialog_key="settings-import",
+        initial=export_dir,
+        file_filter="ap-bizhelper settings (*.json);;All files (*)",
+    )
+    if not selection:
+        return False
+
+    ensure_qt_available()
+    from PySide6 import QtWidgets
+
+    response = QtWidgets.QMessageBox.warning(
+        parent,
+        "Import settings?",
+        "Import settings from the selected file?\n"
+        "This will replace your current settings (managed paths stay as-is).",
+        QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        QtWidgets.QMessageBox.No,
+    )
+    if response != QtWidgets.QMessageBox.Yes:
+        return False
+
+    imported_settings = _read_settings_export(selection)
+    if imported_settings is None:
+        return False
+
+    current_settings = load_settings()
+    preserved = {
+        key: current_settings.get(key)
+        for key in _IMPORT_PRESERVE_KEYS
+        if key in current_settings
+    }
+    merged = {**imported_settings, **preserved}
+    save_settings(merged)
+    info_dialog("Settings imported.")
+    return True
+
+
 def show_managed_dirs_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     """Display a dialog listing managed directories with quick open actions."""
 
@@ -512,12 +627,18 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     button_row.addStretch()
     copy_status_button = QtWidgets.QPushButton("Copy status")
     managed_dirs_button = QtWidgets.QPushButton("Managed dirs")
+    export_settings_button = QtWidgets.QPushButton("Export settings")
+    open_exports_button = QtWidgets.QPushButton("Open exports")
+    import_settings_button = QtWidgets.QPushButton("Import settings")
     update_app_button = QtWidgets.QPushButton("Update App")
     reset_settings_button = QtWidgets.QPushButton("Reset settings")
     uninstall_button = QtWidgets.QPushButton("Uninstall")
     close_button = QtWidgets.QPushButton("Close")
     button_row.addWidget(copy_status_button)
     button_row.addWidget(managed_dirs_button)
+    button_row.addWidget(export_settings_button)
+    button_row.addWidget(open_exports_button)
+    button_row.addWidget(import_settings_button)
     button_row.addWidget(update_app_button)
     button_row.addWidget(reset_settings_button)
     button_row.addWidget(uninstall_button)
@@ -538,6 +659,15 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
         lambda: QtWidgets.QApplication.clipboard().setText(_format_status_text())
     )
     managed_dirs_button.clicked.connect(lambda: show_managed_dirs_dialog(dialog))
+    export_settings_button.clicked.connect(_export_settings)
+    open_exports_button.clicked.connect(
+        lambda: _open_path_in_manager(EXPORTS_DIR)
+        if _ensure_exports_dir()
+        else None
+    )
+    import_settings_button.clicked.connect(
+        lambda: _refresh_table() if _import_settings(dialog) else None
+    )
     reset_settings_button.clicked.connect(lambda: _confirm_reset_settings(dialog))
     close_button.clicked.connect(dialog.reject)
 
