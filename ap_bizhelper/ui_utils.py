@@ -631,6 +631,7 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     open_exports_button = QtWidgets.QPushButton("Open exports")
     import_settings_button = QtWidgets.QPushButton("Import settings")
     update_app_button = QtWidgets.QPushButton("Update App")
+    rollback_button = QtWidgets.QPushButton("Rollback")
     reset_settings_button = QtWidgets.QPushButton("Reset settings")
     uninstall_button = QtWidgets.QPushButton("Uninstall")
     close_button = QtWidgets.QPushButton("Close")
@@ -640,6 +641,7 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     button_row.addWidget(open_exports_button)
     button_row.addWidget(import_settings_button)
     button_row.addWidget(update_app_button)
+    button_row.addWidget(rollback_button)
     button_row.addWidget(reset_settings_button)
     button_row.addWidget(uninstall_button)
     button_row.addWidget(close_button)
@@ -654,6 +656,15 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
         )
 
     update_app_button.clicked.connect(_show_update_app_placeholder)
+    def _show_rollback_placeholder() -> None:
+        QtWidgets.QMessageBox.information(
+            dialog,
+            "Rollback (Planned)",
+            "Rollback is planned but requires the snapshot system. "
+            "Once snapshots are available, this action will restore the latest snapshot.",
+        )
+
+    rollback_button.clicked.connect(_show_rollback_placeholder)
     uninstall_button.clicked.connect(lambda: _uninstall_app(dialog))
     copy_status_button.clicked.connect(
         lambda: QtWidgets.QApplication.clipboard().setText(_format_status_text())
