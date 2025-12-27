@@ -609,7 +609,6 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     stored_appimage_path = Path(stored_appimage) if stored_appimage else None
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("ap-bizhelper utilities")
-    dialog.setMinimumWidth(820)
 
     layout = QtWidgets.QVBoxLayout(dialog)
     header = QtWidgets.QLabel(f"ap-bizhelper version: {_app_version()}")
@@ -644,26 +643,30 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     close_button = QtWidgets.QPushButton("Close")
 
     button_row_top = QtWidgets.QHBoxLayout()
-    button_row_top.addStretch()
     button_row_top.addWidget(copy_status_button)
     button_row_top.addWidget(managed_dirs_button)
-    button_row_top.addWidget(export_settings_button)
-    button_row_top.addWidget(open_exports_button)
-    button_row_top.addWidget(import_settings_button)
+    button_row_top.addWidget(update_app_button)
+    button_row_top.addStretch()
     layout.addLayout(button_row_top)
 
     button_row_middle = QtWidgets.QHBoxLayout()
+    button_row_middle.addWidget(import_settings_button)
+    button_row_middle.addWidget(export_settings_button)
+    button_row_middle.addWidget(open_exports_button)
     button_row_middle.addStretch()
-    button_row_middle.addWidget(update_app_button)
-    button_row_middle.addWidget(rollback_button)
-    button_row_middle.addWidget(reset_settings_button)
     layout.addLayout(button_row_middle)
 
     button_row_bottom = QtWidgets.QHBoxLayout()
-    button_row_bottom.addStretch()
+    button_row_bottom.addWidget(rollback_button)
+    button_row_bottom.addWidget(reset_settings_button)
     button_row_bottom.addWidget(uninstall_button)
-    button_row_bottom.addWidget(close_button)
+    button_row_bottom.addStretch()
     layout.addLayout(button_row_bottom)
+
+    button_row_close = QtWidgets.QHBoxLayout()
+    button_row_close.addStretch()
+    button_row_close.addWidget(close_button)
+    layout.addLayout(button_row_close)
 
     def _show_update_app_placeholder() -> None:
         QtWidgets.QMessageBox.information(
@@ -753,5 +756,8 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
         _refresh_table()
 
     _refresh_table()
+    table.resizeColumnsToContents()
+    dialog.adjustSize()
+    dialog.setMinimumWidth(dialog.sizeHint().width())
     enable_dialog_gamepad(dialog, affirmative=close_button, negative=close_button, default=close_button)
     dialog.exec()
