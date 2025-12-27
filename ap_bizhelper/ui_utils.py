@@ -289,8 +289,8 @@ def show_apworlds_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     layout.addWidget(header)
 
     list_widget = QtWidgets.QListWidget()
-    list_widget.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
-    list_widget.setFocusPolicy(QtCore.Qt.NoFocus)
+    list_widget.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+    list_widget.setFocusPolicy(QtCore.Qt.StrongFocus)
     layout.addWidget(list_widget)
 
     def _refresh_list() -> None:
@@ -299,9 +299,17 @@ def show_apworlds_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
         playable_cache = cache.get("playable_worlds", {})
         if not playable_cache:
             list_widget.addItem("—")
+            list_widget.setEnabled(False)
             return
+        list_widget.setEnabled(True)
         for world_name in sorted(playable_cache.keys(), key=str.casefold):
-            list_widget.addItem(world_name)
+            entry = playable_cache.get(world_name, {})
+            installed_version = _dash_if_empty(str(entry.get("version", "") or ""))
+            latest_seen = _dash_if_empty(str(entry.get("latest_seen_version", "") or ""))
+            item_text = f"{world_name} — Installed: {installed_version}, Latest: {latest_seen}"
+            item = QtWidgets.QListWidgetItem(item_text)
+            item.setData(QtCore.Qt.UserRole, world_name)
+            list_widget.addItem(item)
 
     button_row = QtWidgets.QHBoxLayout()
     force_button = QtWidgets.QPushButton("Force update")
@@ -313,8 +321,19 @@ def show_apworlds_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     button_row.addWidget(close_button)
     layout.addLayout(button_row)
 
-    def _run_action(action: Callable[[], bool]) -> None:
-        action()
+    def _selected_world() -> Optional[str]:
+        item = list_widget.currentItem()
+        if item is None:
+            return None
+        value = item.data(QtCore.Qt.UserRole)
+        return str(value) if value else None
+
+    def _run_action(action: Callable[[Optional[str]], bool]) -> None:
+        selected = _selected_world()
+        if not selected:
+            info_dialog("Select an APWorld from the list first.")
+            return
+        action(selected)
         _refresh_list()
 
     force_button.clicked.connect(lambda _=False: _run_action(force_update_apworlds))
@@ -323,6 +342,8 @@ def show_apworlds_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
 
     enable_dialog_gamepad(dialog, affirmative=close_button, negative=close_button, default=close_button)
     _refresh_list()
+    dialog.setMinimumSize(1400, 800)
+    dialog.resize(1400, 800)
     dialog.exec()
 
 
@@ -690,6 +711,7 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     open_exports_button = QtWidgets.QPushButton("Open exports")
     import_settings_button = QtWidgets.QPushButton("Import settings")
     update_app_button = QtWidgets.QPushButton("Update App")
+    apworlds_button = QtWidgets.QPushButton("APWorlds…")
     rollback_button = QtWidgets.QPushButton("Rollback")
     reset_settings_button = QtWidgets.QPushButton("Reset settings")
     uninstall_button = QtWidgets.QPushButton("Uninstall")
@@ -699,6 +721,7 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     button_row_top.addWidget(copy_status_button)
     button_row_top.addWidget(managed_dirs_button)
     button_row_top.addWidget(update_app_button)
+    button_row_top.addWidget(apworlds_button)
     button_row_top.addStretch()
     layout.addLayout(button_row_top)
 
@@ -744,6 +767,7 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
         lambda: QtWidgets.QApplication.clipboard().setText(_format_status_text())
     )
     managed_dirs_button.clicked.connect(lambda: show_managed_dirs_dialog(dialog))
+    apworlds_button.clicked.connect(lambda _=False: show_apworlds_dialog(dialog))
     export_settings_button.clicked.connect(_export_settings)
     open_exports_button.clicked.connect(
         lambda: _open_path_in_manager(EXPORTS_DIR)
@@ -787,11 +811,6 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
 
             force_button.clicked.connect(lambda _=False, cb=row.force_update: _run_action(cb))
             manual_button.clicked.connect(lambda _=False, cb=row.manual_select: _run_action(cb))
-
-            if row_index == 0:
-                apworlds_button = QtWidgets.QPushButton("APWorlds…")
-                action_layout.addWidget(apworlds_button)
-                apworlds_button.clicked.connect(lambda _=False: show_apworlds_dialog(dialog))
 
             table.setCellWidget(row_index, 5, action_widget)
 
