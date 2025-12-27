@@ -211,6 +211,7 @@ def _maybe_relaunch_via_steam(argv: list[str], settings: dict) -> None:
                 stream="stderr",
             )
             error_dialog(message)
+            _clear_relaunch_cache(settings, force_save=True)
             sys.exit(1)
 
         if str(settings.get("STEAM_APPID")) != str(appid):
