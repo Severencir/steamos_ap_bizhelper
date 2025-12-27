@@ -43,7 +43,7 @@ from .ap_bizhelper_config import (
 from .dialog_shim import prepare_dialog_shim_env
 from .logging_utils import RUNNER_LOG_ENV, get_app_logger
 from .ap_bizhelper_worlds import ensure_apworld_for_patch
-from .ui_utils import show_utils_dialog
+from .ui_utils import ensure_local_action_scripts, show_uninstall_dialog, show_utils_dialog
 
 
 APP_LOGGER = get_app_logger()
@@ -1199,6 +1199,7 @@ def main(argv: list[str]) -> int:
         except RuntimeError:
             return 1
         settings = load_settings()
+        ensure_local_action_scripts(settings)
 
         try:
             _ensure_qt_app(settings)
@@ -1252,7 +1253,7 @@ def main(argv: list[str]) -> int:
         if patch_arg == "ensure":
             if len(user_args) > 1:
                 APP_LOGGER.log(
-                    "Usage: ap_bizhelper.py [--nosteam] [ensure]",
+                    "Usage: ap_bizhelper.py [--nosteam] [ensure|utils|uninstall]",
                     level="ERROR",
                     include_context=True,
                     mirror_console=True,
@@ -1269,7 +1270,7 @@ def main(argv: list[str]) -> int:
         if patch_arg == "utils":
             if len(user_args) > 1:
                 APP_LOGGER.log(
-                    "Usage: ap_bizhelper.py [--nosteam] [utils]",
+                    "Usage: ap_bizhelper.py [--nosteam] [ensure|utils|uninstall]",
                     level="ERROR",
                     include_context=True,
                     mirror_console=True,
@@ -1277,6 +1278,18 @@ def main(argv: list[str]) -> int:
                 )
                 return 1
             show_utils_dialog()
+            return 0
+        if patch_arg == "uninstall":
+            if len(user_args) > 1:
+                APP_LOGGER.log(
+                    "Usage: ap_bizhelper.py [--nosteam] [ensure|utils|uninstall]",
+                    level="ERROR",
+                    include_context=True,
+                    mirror_console=True,
+                    stream="stderr",
+                )
+                return 1
+            show_uninstall_dialog()
             return 0
 
         if len(user_args) > 1:
