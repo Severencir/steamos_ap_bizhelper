@@ -594,6 +594,8 @@ def ensure_connectors(
         if chosen_ap_archive is not None:
             tag = _stage_archipelago_from_archive(chosen_ap_archive)
             settings["BIZHAWK_AP_CONNECTOR_VERSION"] = tag
+            if tag and tag != "manual":
+                settings["BIZHAWK_AP_CONNECTOR_LATEST_SEEN_VERSION"] = tag
             updated = True
         elif allow_download:
             try:
@@ -614,6 +616,8 @@ def ensure_connectors(
                 else:
                     raise
             settings["BIZHAWK_AP_CONNECTOR_VERSION"] = tag
+            if tag:
+                settings["BIZHAWK_AP_CONNECTOR_LATEST_SEEN_VERSION"] = tag
             updated = True
 
     current_sni_version = str(settings.get("BIZHAWK_SNI_VERSION", "") or "")

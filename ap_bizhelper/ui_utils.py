@@ -120,8 +120,6 @@ def _apworld_latest_seen(playable_cache: dict[str, object]) -> str:
 
 def _build_component_rows() -> list[_ComponentRow]:
     settings = load_settings()
-    cache = load_apworld_cache()
-    playable_cache = cache.get("playable_worlds", {})
 
     ap_path = str(settings.get("AP_APPIMAGE", "") or "")
     ap_appimage = Path(ap_path) if ap_path else None
@@ -135,14 +133,13 @@ def _build_component_rows() -> list[_ComponentRow]:
         settings.get("BIZHAWK_AP_CONNECTOR_LATEST_SEEN_VERSION", "") or ""
     )
 
-    connectors_source = "unknown"
-    if connectors_ap_version or connectors_sni_version:
-        connectors_source = "download"
-        if "manual" in (connectors_ap_version, connectors_sni_version):
-            connectors_source = "manual"
+    ap_connectors_source = "unknown"
+    if connectors_ap_version:
+        ap_connectors_source = "manual" if connectors_ap_version == "manual" else "download"
 
-    apworld_count = len(playable_cache)
-    apworld_installed = f"{apworld_count} cached" if apworld_count else "—"
+    sni_connectors_source = "unknown"
+    if connectors_sni_version:
+        sni_connectors_source = "manual" if connectors_sni_version == "manual" else "download"
 
     return [
         _ComponentRow(
@@ -164,24 +161,22 @@ def _build_component_rows() -> list[_ComponentRow]:
             manual_select=lambda: bool(manual_select_bizhawk(settings)),
         ),
         _ComponentRow(
-            name="Connectors",
-            installed_version=_dash_if_empty(
-                f"AP: {connectors_ap_version or '—'} / SNI: {connectors_sni_version or '—'}"
-            ),
-            latest_seen=_dash_if_empty(f"AP: {connectors_latest_seen or '—'} / SNI: —"),
+            name="AP Connectors",
+            installed_version=_dash_if_empty(connectors_ap_version),
+            latest_seen=_dash_if_empty(connectors_latest_seen),
             skip_version="—",
-            source=connectors_source,
+            source=ap_connectors_source,
             force_update=lambda: force_update_connectors(settings),
             manual_select=lambda: manual_select_connectors(settings),
         ),
         _ComponentRow(
-            name="APWorlds",
-            installed_version=apworld_installed,
-            latest_seen=_apworld_latest_seen(playable_cache),
+            name="SNI Connectors",
+            installed_version=_dash_if_empty(connectors_sni_version),
+            latest_seen="pinned",
             skip_version="—",
-            source=_apworld_source(playable_cache),
-            force_update=force_update_apworlds,
-            manual_select=manual_select_apworld,
+            source=sni_connectors_source,
+            force_update=lambda: force_update_connectors(settings),
+            manual_select=lambda: manual_select_connectors(settings),
         ),
     ]
 
@@ -278,6 +273,57 @@ def _format_status_text() -> str:
     _path_line("Cached APWorlds", str(len(cache.get("playable_worlds", {}))))
 
     return "\n".join(lines)
+
+
+def show_apworlds_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
+    """Display managed APWorlds with actions to refresh them."""
+
+    ensure_qt_available()
+    from PySide6 import QtCore, QtWidgets
+
+    dialog = QtWidgets.QDialog(parent)
+    dialog.setWindowTitle("ap-bizhelper APWorlds")
+
+    layout = QtWidgets.QVBoxLayout(dialog)
+    header = QtWidgets.QLabel("Managed APWorlds")
+    layout.addWidget(header)
+
+    list_widget = QtWidgets.QListWidget()
+    list_widget.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+    list_widget.setFocusPolicy(QtCore.Qt.NoFocus)
+    layout.addWidget(list_widget)
+
+    def _refresh_list() -> None:
+        list_widget.clear()
+        cache = load_apworld_cache()
+        playable_cache = cache.get("playable_worlds", {})
+        if not playable_cache:
+            list_widget.addItem("—")
+            return
+        for world_name in sorted(playable_cache.keys(), key=str.casefold):
+            list_widget.addItem(world_name)
+
+    button_row = QtWidgets.QHBoxLayout()
+    force_button = QtWidgets.QPushButton("Force update")
+    manual_button = QtWidgets.QPushButton("Manual select")
+    close_button = QtWidgets.QPushButton("Close")
+    button_row.addWidget(force_button)
+    button_row.addWidget(manual_button)
+    button_row.addStretch()
+    button_row.addWidget(close_button)
+    layout.addLayout(button_row)
+
+    def _run_action(action: Callable[[], bool]) -> None:
+        action()
+        _refresh_list()
+
+    force_button.clicked.connect(lambda _=False: _run_action(force_update_apworlds))
+    manual_button.clicked.connect(lambda _=False: _run_action(manual_select_apworld))
+    close_button.clicked.connect(dialog.reject)
+
+    enable_dialog_gamepad(dialog, affirmative=close_button, negative=close_button, default=close_button)
+    _refresh_list()
+    dialog.exec()
 
 
 AP_CONFIG_DIR = Path(os.path.expanduser("~/.config/Archipelago"))
@@ -741,6 +787,11 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
 
             force_button.clicked.connect(lambda _=False, cb=row.force_update: _run_action(cb))
             manual_button.clicked.connect(lambda _=False, cb=row.manual_select: _run_action(cb))
+
+            if row_index == 0:
+                apworlds_button = QtWidgets.QPushButton("APWorlds…")
+                action_layout.addWidget(apworlds_button)
+                apworlds_button.clicked.connect(lambda _=False: show_apworlds_dialog(dialog))
 
             table.setCellWidget(row_index, 5, action_widget)
 
