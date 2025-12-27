@@ -720,18 +720,19 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
             for col_index, value in enumerate(values):
                 item = QtWidgets.QTableWidgetItem(value)
                 item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
+                item.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
                 table.setItem(row_index, col_index, item)
 
             action_widget = QtWidgets.QWidget()
             action_layout = QtWidgets.QHBoxLayout(action_widget)
             action_layout.setContentsMargins(0, 0, 0, 0)
             action_layout.setSpacing(6)
+            action_layout.addStretch()
 
             force_button = QtWidgets.QPushButton("Force update")
             manual_button = QtWidgets.QPushButton("Manual select")
             action_layout.addWidget(force_button)
             action_layout.addWidget(manual_button)
-            action_layout.addStretch()
 
             force_button.clicked.connect(lambda _=False, cb=row.force_update: _run_action(cb))
             manual_button.clicked.connect(lambda _=False, cb=row.manual_select: _run_action(cb))
