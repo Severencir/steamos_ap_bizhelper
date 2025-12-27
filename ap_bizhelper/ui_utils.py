@@ -759,7 +759,7 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     table.resizeColumnsToContents()
     dialog.adjustSize()
     size_hint = dialog.sizeHint()
-    target_width = int(1200)
+    target_width = int(1400)
     dialog.setMinimumWidth(target_width)
     dialog.resize(target_width, size_hint.height())
     enable_dialog_gamepad(dialog, affirmative=close_button, negative=close_button, default=close_button)
