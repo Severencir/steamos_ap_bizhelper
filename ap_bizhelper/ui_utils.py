@@ -395,7 +395,9 @@ def _relocate_appimage(
         return None
 
 
-def _uninstall_app(dialog: "QtWidgets.QDialog") -> None:
+def _uninstall_app(
+    dialog: "QtWidgets.QDialog", stored_appimage_path: Optional[Path] = None
+) -> None:
     settings = load_settings()
     selected = checklist_dialog(
         "Uninstall ap-bizhelper",
@@ -415,20 +417,24 @@ def _uninstall_app(dialog: "QtWidgets.QDialog") -> None:
     remove_backups = "Uninstall backups" in selected
     remove_saves = "Uninstall game saves" in selected
     remove_appimage = "Uninstall AppImage" in selected
-    appimage_path = Path(str(settings.get("AP_APPIMAGE") or AP_APPIMAGE_DEFAULT))
+    if stored_appimage_path is None:
+        settings_appimage = str(settings.get("AP_APPIMAGE") or "")
+        if settings_appimage:
+            stored_appimage_path = Path(settings_appimage)
+    appimage_path = stored_appimage_path
 
     deleted: list[str] = []
     preserved: list[str] = []
     errors: list[str] = []
 
     preserved_appimage: Optional[Path] = None
-    if not remove_appimage and appimage_path.exists():
+    if appimage_path and not remove_appimage and appimage_path.exists():
         if _is_under_dir(appimage_path, LAUNCHER_DATA_DIR):
             preserved_appimage = _relocate_appimage(appimage_path, preserved, errors)
         else:
             preserved.append(str(appimage_path))
 
-    if remove_appimage:
+    if remove_appimage and appimage_path:
         _safe_remove_path(appimage_path, deleted, errors)
 
     _safe_remove_path(AP_CONFIG_DIR, deleted, errors)
@@ -598,6 +604,9 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     from PySide6 import QtCore, QtWidgets
 
     ensure_qt_app()
+    settings = load_settings()
+    stored_appimage = str(settings.get("AP_APPIMAGE") or "")
+    stored_appimage_path = Path(stored_appimage) if stored_appimage else None
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("ap-bizhelper utilities")
     dialog.setMinimumWidth(820)
@@ -674,7 +683,9 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
         )
 
     rollback_button.clicked.connect(_show_rollback_placeholder)
-    uninstall_button.clicked.connect(lambda: _uninstall_app(dialog))
+    uninstall_button.clicked.connect(
+        lambda: _uninstall_app(dialog, stored_appimage_path=stored_appimage_path)
+    )
     copy_status_button.clicked.connect(
         lambda: QtWidgets.QApplication.clipboard().setText(_format_status_text())
     )
