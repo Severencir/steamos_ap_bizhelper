@@ -623,8 +623,6 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     table.horizontalHeader().setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeToContents)
     layout.addWidget(table)
 
-    button_row = QtWidgets.QHBoxLayout()
-    button_row.addStretch()
     copy_status_button = QtWidgets.QPushButton("Copy status")
     managed_dirs_button = QtWidgets.QPushButton("Managed dirs")
     export_settings_button = QtWidgets.QPushButton("Export settings")
@@ -635,17 +633,28 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     reset_settings_button = QtWidgets.QPushButton("Reset settings")
     uninstall_button = QtWidgets.QPushButton("Uninstall")
     close_button = QtWidgets.QPushButton("Close")
-    button_row.addWidget(copy_status_button)
-    button_row.addWidget(managed_dirs_button)
-    button_row.addWidget(export_settings_button)
-    button_row.addWidget(open_exports_button)
-    button_row.addWidget(import_settings_button)
-    button_row.addWidget(update_app_button)
-    button_row.addWidget(rollback_button)
-    button_row.addWidget(reset_settings_button)
-    button_row.addWidget(uninstall_button)
-    button_row.addWidget(close_button)
-    layout.addLayout(button_row)
+
+    button_row_top = QtWidgets.QHBoxLayout()
+    button_row_top.addStretch()
+    button_row_top.addWidget(copy_status_button)
+    button_row_top.addWidget(managed_dirs_button)
+    button_row_top.addWidget(export_settings_button)
+    button_row_top.addWidget(open_exports_button)
+    button_row_top.addWidget(import_settings_button)
+    layout.addLayout(button_row_top)
+
+    button_row_middle = QtWidgets.QHBoxLayout()
+    button_row_middle.addStretch()
+    button_row_middle.addWidget(update_app_button)
+    button_row_middle.addWidget(rollback_button)
+    button_row_middle.addWidget(reset_settings_button)
+    layout.addLayout(button_row_middle)
+
+    button_row_bottom = QtWidgets.QHBoxLayout()
+    button_row_bottom.addStretch()
+    button_row_bottom.addWidget(uninstall_button)
+    button_row_bottom.addWidget(close_button)
+    layout.addLayout(button_row_bottom)
 
     def _show_update_app_placeholder() -> None:
         QtWidgets.QMessageBox.information(
