@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import importlib.metadata
 import json
 import os
+import shlex
 from pathlib import Path
 import shutil
 import subprocess
@@ -42,6 +43,7 @@ from .dialogs import (
     info_dialog,
     select_file_dialog,
 )
+from .logging_utils import get_app_logger
 
 
 @dataclass
@@ -288,6 +290,11 @@ BIZHAWK_SHORTCUT = DESKTOP_DIR / "BizHawk-Proton.sh"
 BIZHAWK_LEGACY_SHORTCUT = DESKTOP_DIR / "BizHawk-Proton.desktop"
 SETTINGS_EXPORT_VERSION = 1
 SETTINGS_EXPORT_PREFIX = "ap-bizhelper-settings"
+LOCAL_ACTIONS_CREATED_KEY = "LOCAL_ACTIONS_CREATED"
+LOCAL_ACTION_SCRIPTS = {
+    "ap-bizhelper-utils.sh": ("utils",),
+    "ap-bizhelper-uninstall.sh": ("uninstall",),
+}
 
 _RESET_PRESERVE_KEYS = ("STEAM_APPID",)
 _IMPORT_PRESERVE_KEYS = ("AP_APPIMAGE", "BIZHAWK_EXE", "BIZHAWK_RUNNER", "PROTON_BIN")
@@ -396,16 +403,17 @@ def _relocate_appimage(
 
 
 def _uninstall_app(
-    dialog: "QtWidgets.QDialog", stored_appimage_path: Optional[Path] = None
+    stored_appimage_path: Optional[Path] = None,
 ) -> None:
     settings = load_settings()
     selected = checklist_dialog(
         "Uninstall ap-bizhelper",
-        "Select optional data to remove. Local/config folders and desktop shortcuts will be removed.",
+        "Select what to remove. Desktop shortcuts are always removed.",
         [
+            (True, "Uninstall managed directories"),
             (False, "Uninstall backups"),
             (False, "Uninstall game saves"),
-            (False, "Uninstall AppImage"),
+            (True, "Uninstall AppImage"),
         ],
         ok_label="Uninstall",
         cancel_label="Cancel",
@@ -414,6 +422,7 @@ def _uninstall_app(
     if selected is None:
         return
 
+    remove_managed_dirs = "Uninstall managed directories" in selected
     remove_backups = "Uninstall backups" in selected
     remove_saves = "Uninstall game saves" in selected
     remove_appimage = "Uninstall AppImage" in selected
@@ -429,7 +438,7 @@ def _uninstall_app(
 
     preserved_appimage: Optional[Path] = None
     if appimage_path and not remove_appimage and appimage_path.exists():
-        if _is_under_dir(appimage_path, LAUNCHER_DATA_DIR):
+        if remove_managed_dirs and _is_under_dir(appimage_path, LAUNCHER_DATA_DIR):
             preserved_appimage = _relocate_appimage(appimage_path, preserved, errors)
         else:
             preserved.append(str(appimage_path))
@@ -437,16 +446,17 @@ def _uninstall_app(
     if remove_appimage and appimage_path:
         _safe_remove_path(appimage_path, deleted, errors)
 
-    _safe_remove_path(AP_CONFIG_DIR, deleted, errors)
-    _safe_remove_path(AP_DATA_DIR, deleted, errors)
-    _safe_remove_path(LAUNCHER_CONFIG_DIR, deleted, errors)
-    if preserved_appimage is None:
-        _safe_remove_path(LAUNCHER_DATA_DIR, deleted, errors)
-    else:
-        for child in LAUNCHER_DATA_DIR.glob("*"):
-            if child == preserved_appimage:
-                continue
-            _safe_remove_path(child, deleted, errors)
+    if remove_managed_dirs:
+        _safe_remove_path(AP_CONFIG_DIR, deleted, errors)
+        _safe_remove_path(AP_DATA_DIR, deleted, errors)
+        _safe_remove_path(LAUNCHER_CONFIG_DIR, deleted, errors)
+        if preserved_appimage is None:
+            _safe_remove_path(LAUNCHER_DATA_DIR, deleted, errors)
+        else:
+            for child in LAUNCHER_DATA_DIR.glob("*"):
+                if child == preserved_appimage:
+                    continue
+                _safe_remove_path(child, deleted, errors)
 
     _safe_remove_path(AP_DESKTOP_SHORTCUT, deleted, errors)
     _safe_remove_path(BIZHAWK_SHORTCUT, deleted, errors)
@@ -604,9 +614,6 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     from PySide6 import QtCore, QtWidgets
 
     ensure_qt_app()
-    settings = load_settings()
-    stored_appimage = str(settings.get("AP_APPIMAGE") or "")
-    stored_appimage_path = Path(stored_appimage) if stored_appimage else None
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("ap-bizhelper utilities")
 
@@ -686,9 +693,7 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
         )
 
     rollback_button.clicked.connect(_show_rollback_placeholder)
-    uninstall_button.clicked.connect(
-        lambda: _uninstall_app(dialog, stored_appimage_path=stored_appimage_path)
-    )
+    uninstall_button.clicked.connect(show_uninstall_dialog)
     copy_status_button.clicked.connect(
         lambda: QtWidgets.QApplication.clipboard().setText(_format_status_text())
     )
@@ -765,3 +770,43 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     dialog.resize(target_width, size_hint.height())
     enable_dialog_gamepad(dialog, affirmative=close_button, negative=close_button, default=close_button)
     dialog.exec()
+
+
+def show_uninstall_dialog() -> None:
+    settings = load_settings()
+    stored_appimage = str(settings.get("AP_APPIMAGE") or "")
+    stored_appimage_path = Path(stored_appimage) if stored_appimage else None
+    _uninstall_app(stored_appimage_path=stored_appimage_path)
+
+
+def _write_local_action_script(path: Path, args: tuple[str, ...]) -> None:
+    quoted_args = " ".join(shlex.quote(arg) for arg in args)
+    content = f"#!/usr/bin/env bash\nexec ap-bizhelper --nosteam {quoted_args}\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def ensure_local_action_scripts(settings: dict) -> None:
+    if settings.get(LOCAL_ACTIONS_CREATED_KEY):
+        return
+
+    logger = get_app_logger()
+    created = []
+    for filename, args in LOCAL_ACTION_SCRIPTS.items():
+        target = LAUNCHER_DATA_DIR / filename
+        try:
+            _write_local_action_script(target, args)
+            created.append(str(target))
+        except Exception as exc:
+            logger.log(
+                f"Failed to create local action script {target}: {exc}",
+                level="WARNING",
+                location="local-actions",
+                include_context=True,
+                mirror_console=True,
+            )
+
+    if len(created) == len(LOCAL_ACTION_SCRIPTS):
+        settings[LOCAL_ACTIONS_CREATED_KEY] = True
+        save_settings(settings)
