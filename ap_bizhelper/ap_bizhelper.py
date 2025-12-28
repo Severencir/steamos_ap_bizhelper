@@ -49,6 +49,33 @@ from .ui_utils import ensure_local_action_scripts, show_uninstall_dialog, show_u
 APP_LOGGER = get_app_logger()
 _SHUTDOWN_SIGNAL_ACTIVE = False
 _SIGNAL_HANDLERS_INSTALLED = False
+_SHUTDOWN_DEBUG_ENV = "AP_BIZHELPER_DEBUG_SHUTDOWN"
+
+
+def _shutdown_debug_enabled() -> bool:
+    value = str(os.environ.get(_SHUTDOWN_DEBUG_ENV, "")).strip().lower()
+    return value not in ("", "0", "false", "no", "off")
+
+
+def _shutdown_debug_log(
+    message: str,
+    *,
+    location: str,
+    data: Optional[dict[str, object]] = None,
+) -> None:
+    if not _shutdown_debug_enabled():
+        return
+    if data:
+        extras = " ".join(f"{key}={data[key]!r}" for key in sorted(data))
+        message = f"{message} | {extras}"
+    try:
+        APP_LOGGER.log(
+            message,
+            include_context=True,
+            location=location,
+        )
+    except Exception:
+        pass
 
 
 def _tracked_bizhawk_pids(baseline_bizhawk_pids: Set[int]) -> Set[int]:
@@ -904,8 +931,19 @@ def _wait_for_launched_apps_to_close(appimage: Path, baseline_bizhawk_pids: Set[
     print("[ap-bizhelper] Waiting for Archipelago/BizHawk to close before ending Steam session...")
     while True:
         archipelago_running = _is_archipelago_running() or _is_appimage_mounted(appimage)
-        bizhawk_running = any(
-            pid not in baseline_bizhawk_pids for pid in _list_bizhawk_pids()
+        bizhawk_pids = _list_bizhawk_pids()
+        tracked_bizhawk = {pid for pid in bizhawk_pids if pid not in baseline_bizhawk_pids}
+        bizhawk_running = bool(tracked_bizhawk)
+
+        _shutdown_debug_log(
+            "Shutdown wait status",
+            location="shutdown-wait",
+            data={
+                "archipelago_running": archipelago_running,
+                "appimage": str(appimage),
+                "bizhawk_pids": sorted(bizhawk_pids),
+                "tracked_bizhawk_pids": sorted(tracked_bizhawk),
+            },
         )
 
         if not archipelago_running and not bizhawk_running:
@@ -937,20 +975,46 @@ def _resolve_bizhawk_root(settings: dict) -> Optional[Path]:
 
 def sync_bizhawk_saveram(settings: dict) -> None:
     with APP_LOGGER.context("sync_bizhawk_saveram"):
-        if _list_bizhawk_pids():
+        bizhawk_pids = _list_bizhawk_pids()
+        if bizhawk_pids:
+            _shutdown_debug_log(
+                "Skipping SaveRAM sync; BizHawk still running.",
+                location="saveram-sync",
+                data={"bizhawk_pids": sorted(bizhawk_pids)},
+            )
             print("[ap-bizhelper] BizHawk still running; skipping SaveRAM sync.")
             return
 
         bizhawk_root = _resolve_bizhawk_root(settings)
         if bizhawk_root is None or not bizhawk_root.is_dir():
+            _shutdown_debug_log(
+                "BizHawk root directory not found; skipping SaveRAM sync.",
+                location="saveram-sync",
+                data={"bizhawk_root": None if bizhawk_root is None else str(bizhawk_root)},
+            )
             print("[ap-bizhelper] BizHawk root directory not found; skipping SaveRAM sync.")
             return
 
-        central_root = Path("~/.local/share/ap-bizhelper/saves").expanduser()
+        central_root = Path("~/Documents/Archipelago/BizHawk/SaveRAM").expanduser()
         save_dirs = [path for path in bizhawk_root.rglob("SaveRAM") if path.is_dir()]
         if not save_dirs:
+            _shutdown_debug_log(
+                "No SaveRAM directories found; skipping SaveRAM sync.",
+                location="saveram-sync",
+                data={"bizhawk_root": str(bizhawk_root)},
+            )
             print(f"[ap-bizhelper] No SaveRAM directories found under {bizhawk_root}.")
             return
+
+        _shutdown_debug_log(
+            "Starting SaveRAM sync",
+            location="saveram-sync",
+            data={
+                "bizhawk_root": str(bizhawk_root),
+                "save_dirs": [str(path) for path in save_dirs],
+                "central_root": str(central_root),
+            },
+        )
 
         for save_ram in save_dirs:
             if save_ram.is_symlink():
@@ -987,6 +1051,14 @@ def sync_bizhawk_saveram(settings: dict) -> None:
             shutil.rmtree(save_ram)
             os.symlink(dest_root, save_ram)
             print(f"[ap-bizhelper] Synced SaveRAM to {dest_root} and linked {save_ram}.")
+            _shutdown_debug_log(
+                "SaveRAM sync completed",
+                location="saveram-sync",
+                data={
+                    "save_ram": str(save_ram),
+                    "dest_root": str(dest_root),
+                },
+            )
 
 
 def _notify_steam_game_exit(appid: str) -> None:
