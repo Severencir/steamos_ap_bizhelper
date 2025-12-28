@@ -226,6 +226,7 @@ def _build_managed_dir_rows() -> list[_ManagedDirRow]:
         _ManagedDirRow("AP local", AP_DATA_DIR),
         _ManagedDirRow("Launcher data", LAUNCHER_DATA_DIR),
         _ManagedDirRow("APWorlds", WORLD_DIR),
+        _ManagedDirRow("BizHawk SaveRAM", BIZHAWK_SAVERAM_DIR),
     ]
 
     for install_dir in _bizhawk_install_dirs(settings):
@@ -643,7 +644,8 @@ def show_managed_dirs_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> No
     ensure_qt_app()
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("Managed directories")
-    dialog.setMinimumWidth(720)
+    dialog.setMinimumSize(1000, 600)
+    dialog.resize(1000, 600)
 
     layout = QtWidgets.QVBoxLayout(dialog)
     table = QtWidgets.QTableWidget()
@@ -674,6 +676,7 @@ def show_managed_dirs_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> No
         label = QtWidgets.QLabel(path_text)
         label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         path_layout.addWidget(label)
+        path_layout.addStretch()
 
         open_button = QtWidgets.QPushButton("Open")
         if row.path and _managed_dir_exists(row.path):
@@ -682,7 +685,6 @@ def show_managed_dirs_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> No
             open_button.setEnabled(False)
             open_button.setToolTip("Path not available.")
         path_layout.addWidget(open_button)
-        path_layout.addStretch()
 
         table.setCellWidget(row_index, 1, path_widget)
 
@@ -751,8 +753,8 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     button_row_middle = QtWidgets.QHBoxLayout()
     button_row_middle.addWidget(import_settings_button)
     button_row_middle.addWidget(export_settings_button)
-    button_row_middle.addWidget(open_exports_button)
     button_row_middle.addStretch()
+    button_row_middle.addWidget(open_exports_button)
     layout.addLayout(button_row_middle)
 
     button_row_bottom = QtWidgets.QHBoxLayout()
