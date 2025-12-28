@@ -9,6 +9,7 @@ passing load/save callbacks for file dialogs.
 
 import importlib.util
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -84,6 +85,7 @@ def _describe_index(view: object, idx: object) -> str:
 _QT_APP: Optional["QtWidgets.QApplication"] = None
 _QT_BASE_FONT: Optional["QtGui.QFont"] = None
 _QT_IMPORT_ERROR: Optional[BaseException] = None
+_ACTIVE_DIALOGS = 0
 
 
 DialogButtonRole = str
@@ -103,6 +105,29 @@ class DialogResult:
     checklist: List[str]
     progress_cancelled: bool = False
     radio_selection: Optional[str] = None
+
+
+def _mark_dialog_open() -> None:
+    global _ACTIVE_DIALOGS
+    _ACTIVE_DIALOGS += 1
+
+
+def _mark_dialog_closed() -> None:
+    global _ACTIVE_DIALOGS
+    _ACTIVE_DIALOGS = max(0, _ACTIVE_DIALOGS - 1)
+
+
+@contextmanager
+def _track_dialog_activity() -> "Iterable[None]":
+    _mark_dialog_open()
+    try:
+        yield
+    finally:
+        _mark_dialog_closed()
+
+
+def dialogs_active() -> bool:
+    return _ACTIVE_DIALOGS > 0
 
 
 def merge_dialog_settings(settings: Optional[Dict[str, object]] = None) -> Dict[str, object]:
@@ -493,7 +518,8 @@ def modular_dialog(
     if progress_stream is None:
         dialog.activateWindow()
         dialog.raise_()
-        exec_result = dialog.exec()
+        with _track_dialog_activity():
+            exec_result = dialog.exec()
         _capture_checklist()
         _capture_radio_selection()
         if result.role is None:
@@ -513,42 +539,43 @@ def modular_dialog(
         return result
 
     dialog.setWindowModality(QtCore.Qt.ApplicationModal)
-    dialog.show()
+    with _track_dialog_activity():
+        dialog.show()
 
-    for line in progress_stream:
+        for line in progress_stream:
+            app.processEvents()
+            if result.role == "negative" or result.progress_cancelled:
+                result.progress_cancelled = True
+                break
+            if not dialog.isVisible():
+                result.progress_cancelled = True
+                break
+            if progress_bar is not None:
+                value = line.strip()
+                if not value:
+                    continue
+                try:
+                    percent = int(float(value))
+                except ValueError:
+                    continue
+                progress_bar.setValue(max(0, min(100, percent)))
+
+        if progress_bar is not None and not result.progress_cancelled:
+            progress_bar.setValue(100)
         app.processEvents()
-        if result.role == "negative" or result.progress_cancelled:
-            result.progress_cancelled = True
-            break
-        if not dialog.isVisible():
-            result.progress_cancelled = True
-            break
-        if progress_bar is not None:
-            value = line.strip()
-            if not value:
-                continue
-            try:
-                percent = int(float(value))
-            except ValueError:
-                continue
-            progress_bar.setValue(max(0, min(100, percent)))
 
-    if progress_bar is not None and not result.progress_cancelled:
-        progress_bar.setValue(100)
-    app.processEvents()
-
-    if result.role is None and not result.progress_cancelled:
-        if positive_spec is not None:
-            _record_selection(positive_spec)
-        elif special_spec is not None:
-            _record_selection(special_spec)
-        else:
-            # A progress dialog without an affirmative button should still complete
-            # successfully when the stream finishes.
-            result.role = "positive"
-    _capture_checklist()
-    _capture_radio_selection()
-    dialog.accept()
+        if result.role is None and not result.progress_cancelled:
+            if positive_spec is not None:
+                _record_selection(positive_spec)
+            elif special_spec is not None:
+                _record_selection(special_spec)
+            else:
+                # A progress dialog without an affirmative button should still complete
+                # successfully when the stream finishes.
+                result.role = "positive"
+        _capture_checklist()
+        _capture_radio_selection()
+        dialog.accept()
     return result
 
 
@@ -1645,7 +1672,8 @@ def file_dialog(
         pass
     gamepad_layer = enable_dialog_gamepad(dialog)
     _fdlogd(fd_logger, 'file_dialog about_to_exec', dir=str(dialog.directory().absolutePath()))
-    result = dialog.exec()
+    with _track_dialog_activity():
+        result = dialog.exec()
     _fdlogd(fd_logger, 'file_dialog exec_return', result=int(result), dir=str(dialog.directory().absolutePath()))
     if result == QtWidgets.QDialog.Accepted:
         selected_files = dialog.selectedFiles()

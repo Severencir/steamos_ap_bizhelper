@@ -20,6 +20,7 @@ from .dialogs import (
     ensure_qt_available as _ensure_qt_available,
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
+    dialogs_active as _dialogs_active,
     error_dialog,
     info_dialog,
 )
@@ -1014,12 +1015,20 @@ def _wait_for_archipelago_ready(appimage: Path, *, timeout: int = 30) -> bool:
     return False
 
 
-def _wait_for_launched_apps_to_close(appimage: Path, baseline_bizhawk_pids: Set[int]) -> None:
+def _wait_for_launched_apps_to_close(
+    appimage: Path,
+    baseline_bizhawk_pids: Set[int],
+    *,
+    timeout: float = 0.0,
+) -> None:
     """Block until Archipelago/AppImage and launched BizHawk exit."""
 
     # Only wait when apps actually launched; the archipelago AppImage is always required
     # for the main flow so appimage is expected to exist.
     print("[ap-bizhelper] Waiting for Archipelago/BizHawk to close before ending Steam session...")
+    timeout_start = time.monotonic()
+    paused_total = 0.0
+    pause_started: Optional[float] = None
     while True:
         archipelago_running = _is_archipelago_running() or _is_appimage_mounted(appimage)
         bizhawk_pids = _list_bizhawk_pids()
@@ -1040,6 +1049,21 @@ def _wait_for_launched_apps_to_close(appimage: Path, baseline_bizhawk_pids: Set[
         if not archipelago_running and not bizhawk_running:
             print("[ap-bizhelper] Archipelago and BizHawk have closed; continuing shutdown.")
             return
+
+        if timeout > 0:
+            now = time.monotonic()
+            if _dialogs_active():
+                if pause_started is None:
+                    pause_started = now
+            elif pause_started is not None:
+                paused_total += now - pause_started
+                pause_started = None
+            paused_duration = paused_total + (now - pause_started if pause_started is not None else 0.0)
+            elapsed = now - timeout_start - paused_duration
+            remaining = timeout - elapsed
+            if remaining <= 0:
+                print("[ap-bizhelper] Shutdown wait timeout reached; ending Steam session anyway.")
+                return
 
         time.sleep(2)
 
@@ -1390,13 +1414,26 @@ def _run_full_flow(
             error_dialog(f"Failed to launch Archipelago: {exc}")
             return 1
 
-        if _wait_for_archipelago_ready(appimage):
+        archipelago_ready = _wait_for_archipelago_ready(appimage)
+        if archipelago_ready:
             _handle_bizhawk_for_patch(patch, runner, baseline_pids)
 
         if allow_steam:
             steam_appid = _get_known_steam_appid(settings)
             if _is_running_under_steam():
-                _wait_for_launched_apps_to_close(appimage, baseline_pids)
+                shutdown_timeout = _get_shutdown_timeout(
+                    settings,
+                    setting_key="STEAM_SHUTDOWN_TIMEOUT",
+                    env_key="AP_BIZHELPER_STEAM_SHUTDOWN_TIMEOUT",
+                    default=0.0,
+                )
+                if not archipelago_ready:
+                    shutdown_timeout = 0.0
+                _wait_for_launched_apps_to_close(
+                    appimage,
+                    baseline_pids,
+                    timeout=shutdown_timeout,
+                )
                 sync_bizhawk_saveram(settings)
             if steam_appid:
                 _notify_steam_game_exit(steam_appid)
