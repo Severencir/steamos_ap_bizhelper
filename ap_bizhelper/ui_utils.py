@@ -849,16 +849,65 @@ def show_uninstall_dialog() -> None:
     _uninstall_app(stored_appimage_path=stored_appimage_path)
 
 
-def _write_local_action_script(path: Path, args: tuple[str, ...]) -> None:
+def _resolve_bizhelper_appimage(settings: dict, *, action: str) -> Optional[Path]:
+    appimage_value = str(settings.get("BIZHELPER_APPIMAGE") or "")
+    if not appimage_value:
+        error_dialog(
+            "The ap-bizhelper AppImage path is missing from settings.\n\n"
+            f"Unable to {action}."
+        )
+        return None
+
+    appimage_path = Path(appimage_value)
+    if not appimage_path.is_file():
+        error_dialog(
+            "The ap-bizhelper AppImage could not be found.\n\n"
+            f"Path: {appimage_path}\n\nUnable to {action}."
+        )
+        return None
+
+    return appimage_path
+
+
+def _remove_local_action_scripts() -> None:
+    for filename in LOCAL_ACTION_SCRIPTS:
+        target = LAUNCHER_DATA_DIR / filename
+        try:
+            if target.exists() or target.is_symlink():
+                target.unlink()
+        except Exception:
+            continue
+
+
+def _write_local_action_script(path: Path, appimage_path: Path, args: tuple[str, ...]) -> None:
     quoted_args = " ".join(shlex.quote(arg) for arg in args)
-    content = f"#!/usr/bin/env bash\nexec ap-bizhelper --nosteam {quoted_args}\n"
+    quoted_appimage = shlex.quote(str(appimage_path))
+    content = (
+        "#!/usr/bin/env bash\n"
+        f"APPIMAGE_PATH={quoted_appimage}\n"
+        "if [ ! -f \"$APPIMAGE_PATH\" ]; then\n"
+        "  if command -v zenity >/dev/null 2>&1; then\n"
+        "    zenity --error --text=\"ap-bizhelper AppImage not found:\\n$APPIMAGE_PATH\"\n"
+        "  elif command -v kdialog >/dev/null 2>&1; then\n"
+        "    kdialog --error \"ap-bizhelper AppImage not found:\\n$APPIMAGE_PATH\"\n"
+        "  else\n"
+        "    echo \"ap-bizhelper AppImage not found: $APPIMAGE_PATH\" >&2\n"
+        "  fi\n"
+        "  exit 1\n"
+        "fi\n"
+        f"exec \"$APPIMAGE_PATH\" --nosteam {quoted_args}\n"
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
 
 
 def ensure_local_action_scripts(settings: dict) -> None:
-    if settings.get(LOCAL_ACTIONS_CREATED_KEY):
+    appimage_path = _resolve_bizhelper_appimage(settings, action="create local action scripts")
+    if not appimage_path:
+        _remove_local_action_scripts()
+        settings.pop(LOCAL_ACTIONS_CREATED_KEY, None)
+        save_settings(settings)
         return
 
     logger = get_app_logger()
@@ -866,7 +915,7 @@ def ensure_local_action_scripts(settings: dict) -> None:
     for filename, args in LOCAL_ACTION_SCRIPTS.items():
         target = LAUNCHER_DATA_DIR / filename
         try:
-            _write_local_action_script(target, args)
+            _write_local_action_script(target, appimage_path, args)
             created.append(str(target))
         except Exception as exc:
             logger.log(
