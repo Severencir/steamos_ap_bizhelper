@@ -430,6 +430,17 @@ if QT_AVAILABLE:
         def _poll_controller(self) -> None:
             if not self._sdl or not self._controller:
                 return
+            if not self._dialog.isEnabled():
+                return
+
+            active_modal = QtWidgets.QApplication.activeModalWidget()
+            if active_modal is not None and active_modal is not self._dialog:
+                return
+
+            active_window = QtWidgets.QApplication.activeWindow()
+            if active_window is not None and active_window is not self._dialog:
+                if not self._dialog.isAncestorOf(active_window):
+                    return
 
             event = SDL_Event()
             while self._sdl.SDL_PollEvent(ctypes.byref(event)) != 0:
