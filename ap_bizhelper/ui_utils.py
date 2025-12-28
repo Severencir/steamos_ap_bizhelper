@@ -288,28 +288,46 @@ def show_apworlds_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     header = QtWidgets.QLabel("Managed APWorlds")
     layout.addWidget(header)
 
-    list_widget = QtWidgets.QListWidget()
-    list_widget.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-    list_widget.setFocusPolicy(QtCore.Qt.StrongFocus)
-    layout.addWidget(list_widget)
+    table = QtWidgets.QTableWidget()
+    table.setColumnCount(4)
+    table.setHorizontalHeaderLabels(["APWorld", "Installed version", "Latest seen", "Source"])
+    table.verticalHeader().setVisible(False)
+    table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+    table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+    table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+    table.setFocusPolicy(QtCore.Qt.StrongFocus)
+    table.horizontalHeader().setStretchLastSection(True)
+    table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+    table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+    table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
+    layout.addWidget(table)
 
-    def _refresh_list() -> None:
-        list_widget.clear()
+    def _refresh_table() -> None:
         cache = load_apworld_cache()
         playable_cache = cache.get("playable_worlds", {})
+        table.clearContents()
         if not playable_cache:
-            list_widget.addItem("—")
-            list_widget.setEnabled(False)
+            table.setRowCount(1)
+            placeholder = QtWidgets.QTableWidgetItem("—")
+            placeholder.setFlags(placeholder.flags() & ~QtCore.Qt.ItemIsEditable)
+            table.setItem(0, 0, placeholder)
+            table.setEnabled(False)
             return
-        list_widget.setEnabled(True)
-        for world_name in sorted(playable_cache.keys(), key=str.casefold):
+        table.setEnabled(True)
+        table.setRowCount(len(playable_cache))
+        for row_index, world_name in enumerate(sorted(playable_cache.keys(), key=str.casefold)):
             entry = playable_cache.get(world_name, {})
             installed_version = _dash_if_empty(str(entry.get("version", "") or ""))
             latest_seen = _dash_if_empty(str(entry.get("latest_seen_version", "") or ""))
-            item_text = f"{world_name} — Installed: {installed_version}, Latest: {latest_seen}"
-            item = QtWidgets.QListWidgetItem(item_text)
-            item.setData(QtCore.Qt.UserRole, world_name)
-            list_widget.addItem(item)
+            source = _dash_if_empty(str(entry.get("source", "") or ""))
+            values = [world_name, installed_version, latest_seen, source]
+            for col_index, value in enumerate(values):
+                item = QtWidgets.QTableWidgetItem(value)
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
+                item.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+                if col_index == 0:
+                    item.setData(QtCore.Qt.UserRole, world_name)
+                table.setItem(row_index, col_index, item)
 
     button_row = QtWidgets.QHBoxLayout()
     force_button = QtWidgets.QPushButton("Force update")
@@ -322,7 +340,10 @@ def show_apworlds_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     layout.addLayout(button_row)
 
     def _selected_world() -> Optional[str]:
-        item = list_widget.currentItem()
+        row = table.currentRow()
+        if row < 0:
+            return None
+        item = table.item(row, 0)
         if item is None:
             return None
         value = item.data(QtCore.Qt.UserRole)
@@ -334,14 +355,15 @@ def show_apworlds_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
             info_dialog("Select an APWorld from the list first.")
             return
         action(selected)
-        _refresh_list()
+        _refresh_table()
 
     force_button.clicked.connect(lambda _=False: _run_action(force_update_apworlds))
     manual_button.clicked.connect(lambda _=False: _run_action(manual_select_apworld))
     close_button.clicked.connect(dialog.reject)
 
     enable_dialog_gamepad(dialog, affirmative=close_button, negative=close_button, default=close_button)
-    _refresh_list()
+    _refresh_table()
+    table.resizeColumnsToContents()
     dialog.setMinimumSize(1400, 800)
     dialog.resize(1400, 800)
     dialog.exec()
