@@ -194,6 +194,26 @@ def _capture_bizhelper_appimage(settings: dict) -> None:
         )
 
 
+def _require_bizhelper_appimage(settings: dict, action: str) -> bool:
+    appimage_value = str(settings.get("BIZHELPER_APPIMAGE") or "")
+    if not appimage_value:
+        error_dialog(
+            "The ap-bizhelper AppImage path is missing from settings.\n\n"
+            f"Unable to {action}."
+        )
+        return False
+
+    appimage_path = Path(appimage_value)
+    if not appimage_path.is_file():
+        error_dialog(
+            "The ap-bizhelper AppImage could not be found.\n\n"
+            f"Path: {appimage_path}\n\nUnable to {action}."
+        )
+        return False
+
+    return True
+
+
 def _get_known_steam_appid(settings: dict) -> Optional[str]:
     """Return the active or cached Steam app id when available."""
 
@@ -1308,6 +1328,8 @@ def main(argv: list[str]) -> int:
                     stream="stderr",
                 )
                 return 1
+            if not _require_bizhelper_appimage(settings, "open utilities"):
+                return 1
             show_utils_dialog()
             return 0
         if patch_arg == "uninstall":
@@ -1319,6 +1341,8 @@ def main(argv: list[str]) -> int:
                     mirror_console=True,
                     stream="stderr",
                 )
+                return 1
+            if not _require_bizhelper_appimage(settings, "run the uninstaller"):
                 return 1
             show_uninstall_dialog()
             return 0
