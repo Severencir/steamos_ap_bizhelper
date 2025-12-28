@@ -41,6 +41,7 @@ INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
 EXT_BEHAVIOR_FILE = CONFIG_DIR / "ext_behavior.json"
 EXT_ASSOCIATION_FILE = CONFIG_DIR / "ext_associations.json"
 APWORLD_CACHE_FILE = CONFIG_DIR / "apworld_cache.json"
+BIZHAWK_SAVERAM_DIR = Path(os.path.expanduser("~/Documents/bizhawk-saveram"))
 
 # Keys we expose back to Bash as shell variables.
 INSTALL_STATE_KEYS = {

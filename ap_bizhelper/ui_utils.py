@@ -27,6 +27,7 @@ from .ap_bizhelper_bizhawk import (
 )
 from .ap_bizhelper_config import (
     APWORLD_CACHE_FILE,
+    BIZHAWK_SAVERAM_DIR,
     CONFIG_DIR as LAUNCHER_CONFIG_DIR,
     load_apworld_cache,
     load_settings,
@@ -497,7 +498,7 @@ def _uninstall_app(
     settings = load_settings()
     selected = checklist_dialog(
         "Uninstall ap-bizhelper",
-        "Select what to remove. Desktop shortcuts are always removed.",
+        "Select what to remove. Desktop shortcuts are removed with managed directories.",
         [
             (True, "Uninstall managed directories"),
             (True, "Uninstall AppImage"),
@@ -546,15 +547,15 @@ def _uninstall_app(
                 if child == preserved_appimage:
                     continue
                 _safe_remove_path(child, deleted, errors)
-
-    _safe_remove_path(AP_DESKTOP_SHORTCUT, deleted, errors)
-    _safe_remove_path(BIZHAWK_SHORTCUT, deleted, errors)
-    _safe_remove_path(BIZHAWK_LEGACY_SHORTCUT, deleted, errors)
+        _safe_remove_path(AP_DESKTOP_SHORTCUT, deleted, errors)
+        _safe_remove_path(BIZHAWK_SHORTCUT, deleted, errors)
+        _safe_remove_path(BIZHAWK_LEGACY_SHORTCUT, deleted, errors)
 
     if remove_backups:
         _safe_remove_path(BACKUPS_DIR, deleted, errors)
     if remove_saves:
         _safe_remove_path(GAME_SAVES_DIR, deleted, errors)
+        _safe_remove_path(BIZHAWK_SAVERAM_DIR, deleted, errors)
 
     if errors:
         error_dialog("Uninstall completed with errors:\n" + "\n".join(errors))
