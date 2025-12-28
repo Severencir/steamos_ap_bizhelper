@@ -1030,7 +1030,7 @@ def _wait_for_launched_apps_to_close(
     paused_total = 0.0
     pause_started: Optional[float] = None
     while True:
-        archipelago_running = _is_archipelago_running() or _is_appimage_mounted(appimage)
+        archipelago_running = _is_archipelago_running()
         bizhawk_pids = _list_bizhawk_pids()
         tracked_bizhawk = {pid for pid in bizhawk_pids if pid not in baseline_bizhawk_pids}
         bizhawk_running = bool(tracked_bizhawk)
