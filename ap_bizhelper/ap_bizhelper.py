@@ -91,15 +91,67 @@ def _wait_for_bizhawk_exit(baseline_bizhawk_pids: Set[int], *, timeout: float = 
     return not _tracked_bizhawk_pids(baseline_bizhawk_pids)
 
 
+def _coerce_timeout_value(value: object, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError):
+        return default
+    if timeout < 0:
+        return default
+    return timeout
+
+
+def _get_shutdown_timeout(
+    settings: dict,
+    *,
+    setting_key: str,
+    env_key: str,
+    default: float,
+) -> float:
+    env_value = os.environ.get(env_key)
+    if env_value is not None:
+        return _coerce_timeout_value(env_value, default)
+    return _coerce_timeout_value(settings.get(setting_key), default)
+
+
+def _coerce_bool(value: object, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    string_value = str(value).strip().lower()
+    if string_value in ("1", "true", "yes", "on", "y"):
+        return True
+    if string_value in ("0", "false", "no", "off", "n"):
+        return False
+    return default
+
+
+def _get_shutdown_flag(
+    settings: dict,
+    *,
+    setting_key: str,
+    env_key: str,
+    default: bool,
+) -> bool:
+    env_value = os.environ.get(env_key)
+    if env_value is not None:
+        return _coerce_bool(env_value, default)
+    return _coerce_bool(settings.get(setting_key), default)
+
+
 def _terminate_bizhawk_processes(
     baseline_bizhawk_pids: Set[int],
     *,
-    term_timeout: float = 4.0,
-    kill_timeout: float = 2.0,
-) -> None:
+    term_timeout: float = 10.0,
+    kill_timeout: float = 4.0,
+    allow_sigkill: bool = True,
+) -> bool:
     tracked_pids = _tracked_bizhawk_pids(baseline_bizhawk_pids)
     if not tracked_pids:
-        return
+        return False
 
     print(f"[ap-bizhelper] Sending SIGTERM to BizHawk (pids: {sorted(tracked_pids)}).")
     for pid in tracked_pids:
@@ -114,7 +166,11 @@ def _terminate_bizhawk_processes(
 
     remaining = _tracked_bizhawk_pids(baseline_bizhawk_pids)
     if not remaining:
-        return
+        return False
+
+    if not allow_sigkill or kill_timeout <= 0:
+        print("[ap-bizhelper] BizHawk still running; skipping SIGKILL.")
+        return True
 
     print(f"[ap-bizhelper] BizHawk still running; sending SIGKILL to {sorted(remaining)}.")
     for pid in remaining:
@@ -126,6 +182,7 @@ def _terminate_bizhawk_processes(
             continue
 
     _wait_for_bizhawk_exit(baseline_bizhawk_pids, timeout=kill_timeout)
+    return bool(_tracked_bizhawk_pids(baseline_bizhawk_pids))
 
 
 def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set[int]) -> None:
@@ -141,7 +198,41 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
 
         try:
             print(f"[ap-bizhelper] Received signal {signum}; attempting BizHawk shutdown.")
-            _terminate_bizhawk_processes(baseline_bizhawk_pids)
+            term_timeout = _get_shutdown_timeout(
+                settings,
+                setting_key="BIZHAWK_TERM_TIMEOUT",
+                env_key="AP_BIZHELPER_BIZHAWK_TERM_TIMEOUT",
+                default=10.0,
+            )
+            kill_timeout = _get_shutdown_timeout(
+                settings,
+                setting_key="BIZHAWK_KILL_TIMEOUT",
+                env_key="AP_BIZHELPER_BIZHAWK_KILL_TIMEOUT",
+                default=4.0,
+            )
+            allow_sigkill = _get_shutdown_flag(
+                settings,
+                setting_key="BIZHAWK_ALLOW_SIGKILL",
+                env_key="AP_BIZHELPER_BIZHAWK_ALLOW_SIGKILL",
+                default=True,
+            )
+            wait_timeout = _get_shutdown_timeout(
+                settings,
+                setting_key="BIZHAWK_SHUTDOWN_WAIT_TIMEOUT",
+                env_key="AP_BIZHELPER_BIZHAWK_SHUTDOWN_WAIT_TIMEOUT",
+                default=6.0,
+            )
+
+            still_running = _terminate_bizhawk_processes(
+                baseline_bizhawk_pids,
+                term_timeout=term_timeout,
+                kill_timeout=kill_timeout,
+                allow_sigkill=allow_sigkill,
+            )
+            if still_running and wait_timeout > 0:
+                print("[ap-bizhelper] Waiting for BizHawk to exit before syncing SaveRAM.")
+                _wait_for_bizhawk_exit(baseline_bizhawk_pids, timeout=wait_timeout)
+
             if not _tracked_bizhawk_pids(baseline_bizhawk_pids):
                 sync_bizhawk_saveram(settings)
             else:
