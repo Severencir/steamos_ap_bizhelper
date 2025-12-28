@@ -31,6 +31,7 @@ from .ap_bizhelper_bizhawk import (
     proton_available,
 )
 from .ap_bizhelper_config import (
+    BIZHAWK_SAVERAM_DIR,
     get_all_associations,
     get_association_mode,
     get_ext_behavior,
@@ -1110,7 +1111,7 @@ def sync_bizhawk_saveram(settings: dict) -> None:
             print("[ap-bizhelper] BizHawk root directory not found; skipping SaveRAM sync.")
             return
 
-        central_root = Path("~/Documents/bizhawk-saveram").expanduser()
+        central_root = BIZHAWK_SAVERAM_DIR
         save_dirs = [path for path in bizhawk_root.rglob("SaveRAM") if path.is_dir()]
         if not save_dirs:
             _shutdown_debug_log(
