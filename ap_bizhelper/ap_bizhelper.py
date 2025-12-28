@@ -164,6 +164,36 @@ def _capture_steam_appid_if_present(settings: dict) -> None:
         )
 
 
+def _capture_bizhelper_appimage(settings: dict) -> None:
+    """Persist the current AppImage path into settings when available."""
+
+    with APP_LOGGER.context("_capture_bizhelper_appimage"):
+        appimage_value = os.environ.get("APPIMAGE")
+        appimage_path: Optional[Path] = None
+
+        if appimage_value:
+            appimage_path = Path(appimage_value)
+        else:
+            argv_path = Path(sys.argv[0]).resolve()
+            if argv_path.is_file():
+                appimage_path = argv_path
+
+        if not appimage_path:
+            return
+
+        cached_path = str(settings.get("BIZHELPER_APPIMAGE") or "")
+        new_path = str(appimage_path)
+        if cached_path == new_path:
+            return
+
+        settings["BIZHELPER_APPIMAGE"] = new_path
+        save_settings(settings)
+        APP_LOGGER.log(
+            f"Captured ap-bizhelper AppImage path: {new_path}",
+            include_context=True,
+        )
+
+
 def _get_known_steam_appid(settings: dict) -> Optional[str]:
     """Return the active or cached Steam app id when available."""
 
@@ -1199,6 +1229,7 @@ def main(argv: list[str]) -> int:
         except RuntimeError:
             return 1
         settings = load_settings()
+        _capture_bizhelper_appimage(settings)
         ensure_local_action_scripts(settings)
 
         try:
