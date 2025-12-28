@@ -478,13 +478,13 @@ def _uninstall_app(
         "Select what to remove. Desktop shortcuts are always removed.",
         [
             (True, "Uninstall managed directories"),
+            (True, "Uninstall AppImage"),
             (False, "Uninstall backups"),
             (False, "Uninstall game saves"),
-            (True, "Uninstall AppImage"),
         ],
         ok_label="Uninstall",
         cancel_label="Cancel",
-        height=260,
+        height=500,
     )
     if selected is None:
         return
@@ -494,7 +494,7 @@ def _uninstall_app(
     remove_saves = "Uninstall game saves" in selected
     remove_appimage = "Uninstall AppImage" in selected
     if stored_appimage_path is None:
-        settings_appimage = str(settings.get("AP_APPIMAGE") or "")
+        settings_appimage = str(settings.get("BIZHELPER_APPIMAGE") or "")
         if settings_appimage:
             stored_appimage_path = Path(settings_appimage)
     appimage_path = stored_appimage_path
@@ -844,7 +844,7 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
 
 def show_uninstall_dialog() -> None:
     settings = load_settings()
-    stored_appimage = str(settings.get("AP_APPIMAGE") or "")
+    stored_appimage = str(settings.get("BIZHELPER_APPIMAGE") or "")
     stored_appimage_path = Path(stored_appimage) if stored_appimage else None
     _uninstall_app(stored_appimage_path=stored_appimage_path)
 
