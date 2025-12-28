@@ -1110,7 +1110,7 @@ def sync_bizhawk_saveram(settings: dict) -> None:
             print("[ap-bizhelper] BizHawk root directory not found; skipping SaveRAM sync.")
             return
 
-        central_root = Path("~/Documents/Archipelago/BizHawk/SaveRAM").expanduser()
+        central_root = Path("~/Documents/bizhawk-saveram").expanduser()
         save_dirs = [path for path in bizhawk_root.rglob("SaveRAM") if path.is_dir()]
         if not save_dirs:
             _shutdown_debug_log(
@@ -1133,7 +1133,13 @@ def sync_bizhawk_saveram(settings: dict) -> None:
 
         for save_ram in save_dirs:
             if save_ram.is_symlink():
-                continue
+                if save_ram.exists():
+                    continue
+                print(f"[ap-bizhelper] Removing broken SaveRAM symlink at {save_ram}.")
+                try:
+                    save_ram.unlink()
+                except OSError:
+                    continue
 
             try:
                 instance_rel = save_ram.parent.relative_to(bizhawk_root)
@@ -1143,27 +1149,36 @@ def sync_bizhawk_saveram(settings: dict) -> None:
             instance_label = str(instance_rel).strip()
             if not instance_label or Path(instance_label) == Path("."):
                 instance_label = "default"
+            instance_label = instance_label.replace("_", "-")
 
-            dest_root = central_root / instance_label
+            dest_root = central_root / instance_label / "saveram"
             if dest_root.is_symlink():
                 continue
             dest_root.mkdir(parents=True, exist_ok=True)
 
             try:
-                source_mode = save_ram.stat().st_mode
-                dest_root.chmod(source_mode)
+                if save_ram.exists():
+                    source_mode = save_ram.stat().st_mode
+                    dest_root.chmod(source_mode)
             except (OSError, PermissionError):
                 pass
 
-            for item in save_ram.iterdir():
-                dest_item = dest_root / item.name
-                if item.is_dir():
-                    shutil.copytree(item, dest_item, copy_function=shutil.copy2, dirs_exist_ok=True)
-                else:
-                    dest_item.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(item, dest_item)
+            if save_ram.exists():
+                for item in save_ram.iterdir():
+                    dest_item = dest_root / item.name
+                    if item.is_dir():
+                        shutil.copytree(
+                            item,
+                            dest_item,
+                            copy_function=shutil.copy2,
+                            dirs_exist_ok=True,
+                        )
+                    else:
+                        dest_item.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(item, dest_item)
 
-            shutil.rmtree(save_ram)
+            if save_ram.exists():
+                shutil.rmtree(save_ram)
             os.symlink(dest_root, save_ram)
             print(f"[ap-bizhelper] Synced SaveRAM to {dest_root} and linked {save_ram}.")
             _shutdown_debug_log(
