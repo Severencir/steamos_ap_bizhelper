@@ -1,6 +1,7 @@
 SteamOS/Steam Deck–like compatibility > minimal dependencies > simple modification to behavior.
 Simplicity of code > readability of code > all else.
 
+All dynamic/configurable values should be initialized to settings from a default value if they are not present, and read from settings when used. this supercedes the constants preference
 Prefer using shared constants to literals where reasonable which should be consolidated to constants.py where possible.
 Prefer reductive changes that solve a problem where reasonable without affecting the default behavior.
 Ask clarifying questions before beginning if instructions are unclear, conflicting, or seem to disagree with the goal.
