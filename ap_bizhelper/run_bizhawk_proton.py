@@ -209,7 +209,7 @@ def _find_sni_connector(sni_dir: Path) -> Path | None:
 def _missing_connector(connectors_dir: Path, connector_name: str) -> None:
     connectors_dir.mkdir(parents=True, exist_ok=True)
     error_dialog(
-        f"{AP_BIZHELPER_PREFIX} Could not find the required BizHawk connector\n"
+        f"{LOG_PREFIX} Could not find the required BizHawk connector\n"
         f"Expected to locate {connector_name} inside:\n{connectors_dir}\n\n"
         "Drag the correct connector into this directory and try again."
     )
@@ -236,10 +236,10 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> 
             _missing_connector(sni_dir, CONNECTOR_SNI)
         if ap_lua_arg:
             print(
-                f"{AP_BIZHELPER_PREFIX} Ignoring AP-supplied --lua for SNES ROM; using local SNI connector."
+                f"{LOG_PREFIX} Ignoring AP-supplied --lua for SNES ROM; using local SNI connector."
             )
         lua_ap_path = _connector_windows_path(bizhawk_dir, connector_path)
-        print(f"{AP_BIZHELPER_PREFIX} Using SNI Lua connector for SNES ROM: {lua_ap_path}")
+        print(f"{LOG_PREFIX} Using SNI Lua connector for SNES ROM: {lua_ap_path}")
         RUNNER_LOGGER.log(
             f"Selected SNI connector for SNES ROM at {lua_ap_path}",
             include_context=True,
@@ -253,7 +253,7 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> 
         _missing_connector(connectors_dir, connector_name)
 
     lua_ap_path = _connector_windows_path(bizhawk_dir, connector_path)
-    print(f"{AP_BIZHELPER_PREFIX} Using BizHawk Lua connector: {lua_ap_path}")
+    print(f"{LOG_PREFIX} Using BizHawk Lua connector: {lua_ap_path}")
     RUNNER_LOGGER.log(
         f"Using connector {connector_name} at {lua_ap_path}",
         include_context=True,
@@ -273,15 +273,15 @@ def build_bizhawk_command(argv):
 
     if rom_path is None:
         final_args = emu_args
-        print(f"{AP_BIZHELPER_PREFIX} No ROM detected; launching BizHawk without AP connector.")
+        print(f"{LOG_PREFIX} No ROM detected; launching BizHawk without AP connector.")
     else:
         lua_arg = decide_lua_arg(bizhawk_dir, rom_path, ap_lua_arg)
         final_args = [rom_path, lua_arg] + emu_args
 
-        print(f"{AP_BIZHELPER_PREFIX} Running BizHawk via Proton:")
-        print(f"  BIZHAWK_EXE: {bizhawk_exe}")
-        print(f"  ROM:         {rom_path}")
-        print(f"  Lua:         {lua_arg}")
+        print(f"{LOG_PREFIX} Running BizHawk via Proton:")
+        print(f"{LOG_PREFIX} BIZHAWK_EXE: {bizhawk_exe}")
+        print(f"{LOG_PREFIX} ROM:         {rom_path}")
+        print(f"{LOG_PREFIX} Lua:         {lua_arg}")
 
     bizhawk_exe_rel = bizhawk_exe.name
 
