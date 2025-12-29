@@ -12,6 +12,7 @@ except ImportError:  # pragma: no cover - fallback when executed outside the pac
     from .ap_bizhelper_config import load_settings as _load_shared_settings
 
 from ap_bizhelper.logging_utils import RUNNER_LOG_ENV, create_component_logger
+from ap_bizhelper.constants import DATA_DIR, LOG_PREFIX
 from ap_bizhelper.dialogs import (
     enable_dialog_gamepad as _enable_dialog_gamepad,
     ensure_qt_app as _ensure_qt_app,
@@ -19,7 +20,6 @@ from ap_bizhelper.dialogs import (
     error_dialog as _shared_error_dialog,
 )
 
-AP_BIZHELPER_PREFIX = "[ap-bizhelper]"
 BIZHAWK_EXE_KEY = "BIZHAWK_EXE"
 COMMAND_LOCATION = "command"
 CONNECTOR_GENERIC = "connector_bizhawk_generic.lua"
@@ -89,20 +89,19 @@ def get_env_or_config(var: str):
 def ensure_bizhawk_exe() -> Path:
     exe = get_env_or_config(BIZHAWK_EXE_KEY)
     if not exe or not Path(exe).is_file():
-        error_dialog(f"{AP_BIZHELPER_PREFIX} BIZHAWK_EXE is not set or not a file; cannot launch BizHawk.")
+        error_dialog(f"{LOG_PREFIX} BIZHAWK_EXE is not set or not a file; cannot launch BizHawk.")
         sys.exit(1)
     RUNNER_LOGGER.log(f"Resolved BizHawk executable: {exe}", include_context=True)
     return Path(exe)
 
 
 def configure_proton_env():
-    home = Path.home()
     proton_bin = get_env_or_config(PROTON_BIN_KEY) or "proton"
     proton_prefix = get_env_or_config(PROTON_PREFIX_KEY) or str(
-        home / LOCAL_DIRNAME / SHARE_DIRNAME / "ap-bizhelper" / "proton_prefix"
+        DATA_DIR / "proton_prefix"
     )
     steam_root = get_env_or_config(STEAM_ROOT_KEY) or str(
-        home / LOCAL_DIRNAME / SHARE_DIRNAME / "Steam"
+        Path.home() / LOCAL_DIRNAME / SHARE_DIRNAME / "Steam"
     )
 
     os.environ[ENV_COMPAT_DATA_PATH] = proton_prefix

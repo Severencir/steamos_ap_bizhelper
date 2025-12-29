@@ -16,12 +16,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from .ap_bizhelper_ap import (
-    DATA_DIR,
-    LEGACY_DATA_DIR,
     _is_newer_version,
     _normalize_asset_digest,
     download_with_progress,
 )
+from .constants import DATA_DIR, USER_AGENT
 from .dialogs import (
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
@@ -117,17 +116,11 @@ STEAM_ROOT_PATH = "~/.steam/steam"
 TAR_TYPE_HINT = "tar"
 TAG_NAME_KEY = "tag_name"
 USER_AGENT_HEADER = "User-Agent"
-USER_AGENT_VALUE = "ap-bizhelper/1.0"
 WIN_X64_SUFFIX = "win-x64.zip"
 YES_VALUE = "yes"
 
 
 def _ensure_dirs() -> None:
-    if LEGACY_DATA_DIR.exists() and not DATA_DIR.exists():
-        try:
-            shutil.move(str(LEGACY_DATA_DIR), str(DATA_DIR))
-        except Exception:
-            pass
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     BIZHAWK_WIN_DIR.mkdir(parents=True, exist_ok=True)
@@ -150,7 +143,7 @@ def _github_latest_bizhawk() -> Tuple[str, str, str, str]:
     """
     import urllib.request
 
-    req = urllib.request.Request(GITHUB_API_LATEST, headers={USER_AGENT_HEADER: USER_AGENT_VALUE})
+    req = urllib.request.Request(GITHUB_API_LATEST, headers={USER_AGENT_HEADER: USER_AGENT})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = resp.read().decode(ENCODING_UTF8)
     j = json.loads(data)

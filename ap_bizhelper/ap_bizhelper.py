@@ -43,6 +43,7 @@ from .ap_bizhelper_config import (
     set_ext_association,
 )
 from .dialog_shim import prepare_dialog_shim_env
+from .constants import LOG_PREFIX
 from .logging_utils import RUNNER_LOG_ENV, get_app_logger
 from .ap_bizhelper_worlds import ensure_apworld_for_patch
 from .ui_utils import ensure_local_action_scripts, show_uninstall_dialog, show_utils_dialog
@@ -155,7 +156,7 @@ def _terminate_bizhawk_processes(
     if not tracked_pids:
         return False
 
-    print(f"[ap-bizhelper] Sending SIGTERM to BizHawk (pids: {sorted(tracked_pids)}).")
+    print(f"{LOG_PREFIX} Sending SIGTERM to BizHawk (pids: {sorted(tracked_pids)}).")
     for pid in tracked_pids:
         try:
             os.kill(pid, signal.SIGTERM)
@@ -171,10 +172,10 @@ def _terminate_bizhawk_processes(
         return False
 
     if not allow_sigkill or kill_timeout <= 0:
-        print("[ap-bizhelper] BizHawk still running; skipping SIGKILL.")
+        print(f"{LOG_PREFIX} BizHawk still running; skipping SIGKILL.")
         return True
 
-    print(f"[ap-bizhelper] BizHawk still running; sending SIGKILL to {sorted(remaining)}.")
+    print(f"{LOG_PREFIX} BizHawk still running; sending SIGKILL to {sorted(remaining)}.")
     for pid in remaining:
         try:
             os.kill(pid, signal.SIGKILL)
@@ -199,7 +200,7 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
         _SHUTDOWN_SIGNAL_ACTIVE = True
 
         try:
-            print(f"[ap-bizhelper] Received signal {signum}; attempting BizHawk shutdown.")
+            print(f"{LOG_PREFIX} Received signal {signum}; attempting BizHawk shutdown.")
             term_timeout = _get_shutdown_timeout(
                 settings,
                 setting_key="BIZHAWK_TERM_TIMEOUT",
@@ -232,13 +233,13 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
                 allow_sigkill=allow_sigkill,
             )
             if still_running and wait_timeout > 0:
-                print("[ap-bizhelper] Waiting for BizHawk to exit before syncing SaveRAM.")
+                print(f"{LOG_PREFIX} Waiting for BizHawk to exit before syncing SaveRAM.")
                 _wait_for_bizhawk_exit(baseline_bizhawk_pids, timeout=wait_timeout)
 
             if not _tracked_bizhawk_pids(baseline_bizhawk_pids):
                 sync_bizhawk_saveram(settings)
             else:
-                print("[ap-bizhelper] BizHawk still running; skipping SaveRAM sync.")
+                print(f"{LOG_PREFIX} BizHawk still running; skipping SaveRAM sync.")
         finally:
             raise SystemExit(0)
 
@@ -668,7 +669,7 @@ def _ensure_apworld_for_extension(ext: str) -> None:
         cancel_label="Skip",
     )
     if choice != "ok":
-        print(f"[ap-bizhelper] User skipped APWorld selection for .{ext}.")
+        print(f"{LOG_PREFIX} User skipped APWorld selection for .{ext}.")
         return
 
     apworld_path = _select_file_dialog(
@@ -1010,7 +1011,7 @@ def _wait_for_archipelago_ready(appimage: Path, *, timeout: int = 30) -> bool:
         time.sleep(1)
 
     print(
-        "[ap-bizhelper] Archipelago did not appear to start within the timeout; "
+        f"{LOG_PREFIX} Archipelago did not appear to start within the timeout; "
         "skipping BizHawk auto-launch."
     )
     return False
@@ -1026,7 +1027,7 @@ def _wait_for_launched_apps_to_close(
 
     # Only wait when apps actually launched; the archipelago AppImage is always required
     # for the main flow so appimage is expected to exist.
-    print("[ap-bizhelper] Waiting for Archipelago/BizHawk to close before ending Steam session...")
+    print(f"{LOG_PREFIX} Waiting for Archipelago/BizHawk to close before ending Steam session...")
     timeout_start = time.monotonic()
     paused_total = 0.0
     pause_started: Optional[float] = None
@@ -1048,7 +1049,7 @@ def _wait_for_launched_apps_to_close(
         )
 
         if not archipelago_running and not bizhawk_running:
-            print("[ap-bizhelper] Archipelago and BizHawk have closed; continuing shutdown.")
+            print(f"{LOG_PREFIX} Archipelago and BizHawk have closed; continuing shutdown.")
             return
 
         if timeout > 0:
@@ -1063,7 +1064,7 @@ def _wait_for_launched_apps_to_close(
             elapsed = now - timeout_start - paused_duration
             remaining = timeout - elapsed
             if remaining <= 0:
-                print("[ap-bizhelper] Shutdown wait timeout reached; ending Steam session anyway.")
+                print(f"{LOG_PREFIX} Shutdown wait timeout reached; ending Steam session anyway.")
                 return
 
         time.sleep(2)
@@ -1098,7 +1099,7 @@ def sync_bizhawk_saveram(settings: dict) -> None:
                 location="saveram-sync",
                 data={"bizhawk_pids": sorted(bizhawk_pids)},
             )
-            print("[ap-bizhelper] BizHawk still running; skipping SaveRAM sync.")
+            print(f"{LOG_PREFIX} BizHawk still running; skipping SaveRAM sync.")
             return
 
         bizhawk_root = _resolve_bizhawk_root(settings)
@@ -1108,7 +1109,7 @@ def sync_bizhawk_saveram(settings: dict) -> None:
                 location="saveram-sync",
                 data={"bizhawk_root": None if bizhawk_root is None else str(bizhawk_root)},
             )
-            print("[ap-bizhelper] BizHawk root directory not found; skipping SaveRAM sync.")
+            print(f"{LOG_PREFIX} BizHawk root directory not found; skipping SaveRAM sync.")
             return
 
         central_root = BIZHAWK_SAVERAM_DIR
@@ -1119,7 +1120,7 @@ def sync_bizhawk_saveram(settings: dict) -> None:
                 location="saveram-sync",
                 data={"bizhawk_root": str(bizhawk_root)},
             )
-            print(f"[ap-bizhelper] No SaveRAM directories found under {bizhawk_root}.")
+            print(f"{LOG_PREFIX} No SaveRAM directories found under {bizhawk_root}.")
             return
 
         _shutdown_debug_log(
@@ -1136,7 +1137,7 @@ def sync_bizhawk_saveram(settings: dict) -> None:
             if save_ram.is_symlink():
                 if save_ram.exists():
                     continue
-                print(f"[ap-bizhelper] Removing broken SaveRAM symlink at {save_ram}.")
+                print(f"{LOG_PREFIX} Removing broken SaveRAM symlink at {save_ram}.")
                 try:
                     save_ram.unlink()
                 except OSError:
@@ -1186,7 +1187,7 @@ def sync_bizhawk_saveram(settings: dict) -> None:
             if save_ram.exists():
                 shutil.rmtree(save_ram)
             os.symlink(dest_root, save_ram)
-            print(f"[ap-bizhelper] Synced SaveRAM to {dest_root} and linked {save_ram}.")
+            print(f"{LOG_PREFIX} Synced SaveRAM to {dest_root} and linked {save_ram}.")
             _shutdown_debug_log(
                 "SaveRAM sync completed",
                 location="saveram-sync",
@@ -1210,7 +1211,7 @@ def _notify_steam_game_exit(appid: str) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        print(f"[ap-bizhelper] Requested Steam to end session for app id {appid}.")
+        print(f"{LOG_PREFIX} Requested Steam to end session for app id {appid}.")
     except Exception:
         # Nothing else to do if Steam is unavailable or refusing the command
         pass
@@ -1242,15 +1243,15 @@ def _wait_for_rom(patch: Path, *, timeout: int = 60) -> Optional[Path]:
     while time.time() < deadline:
         rom = _find_matching_rom(patch)
         if rom:
-            print(f"[ap-bizhelper] ROM detected: {rom}")
+            print(f"{LOG_PREFIX} ROM detected: {rom}")
             return rom
         time.sleep(1)
-    print("[ap-bizhelper] Timed out waiting for ROM; not launching BizHawk.")
+    print(f"{LOG_PREFIX} Timed out waiting for ROM; not launching BizHawk.")
     return None
 
 
 def _launch_bizhawk(runner: Path, rom: Path) -> None:
-    print(f"[ap-bizhelper] Launching BizHawk runner: {runner} {rom}")
+    print(f"{LOG_PREFIX} Launching BizHawk runner: {runner} {rom}")
     try:
         env = APP_LOGGER.component_environ(
             env=os.environ.copy(),
@@ -1276,7 +1277,7 @@ def _detect_new_bizhawk(baseline: Iterable[int], *, timeout: int = 10) -> bool:
 
 def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids: Iterable[int]) -> None:
     if runner is None or not runner.is_file():
-        print("[ap-bizhelper] BizHawk runner not configured or not executable; skipping auto-launch.")
+        print(f"{LOG_PREFIX} BizHawk runner not configured or not executable; skipping auto-launch.")
         return
 
     rom = _wait_for_rom(patch)
@@ -1287,36 +1288,36 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids
 
     if ext != "sfc":
         print(
-            "[ap-bizhelper] Non-SFC ROM detected; skipping BizHawk auto-launch and "
+            f"{LOG_PREFIX} Non-SFC ROM detected; skipping BizHawk auto-launch and "
             "deferring to Archipelago."
         )
         return
 
     behavior = get_ext_behavior(ext)
-    print(f"[ap-bizhelper] Patch: {patch}")
-    print(f"[ap-bizhelper] ROM: {rom}")
-    print(f"[ap-bizhelper] Detected extension: .{ext}")
-    print(f"[ap-bizhelper] Saved behavior for .{ext}: {behavior or '<none>'}")
+    print(f"{LOG_PREFIX} Patch: {patch}")
+    print(f"{LOG_PREFIX} ROM: {rom}")
+    print(f"{LOG_PREFIX} Detected extension: .{ext}")
+    print(f"{LOG_PREFIX} Saved behavior for .{ext}: {behavior or '<none>'}")
 
     if behavior == "auto":
-        print("[ap-bizhelper] Behavior 'auto': not launching BizHawk; assuming AP/user handles it.")
+        print(f"{LOG_PREFIX} Behavior 'auto': not launching BizHawk; assuming AP/user handles it.")
         return
     if behavior == "fallback":
-        print("[ap-bizhelper] Behavior 'fallback': launching BizHawk via Proton.")
+        print(f"{LOG_PREFIX} Behavior 'fallback': launching BizHawk via Proton.")
         _launch_bizhawk(runner, rom)
         return
     if behavior not in (None, ""):
-        print(f"[ap-bizhelper] Unknown behavior '{behavior}' for .{ext}; doing nothing for safety.")
+        print(f"{LOG_PREFIX} Unknown behavior '{behavior}' for .{ext}; doing nothing for safety.")
         return
 
-    print("[ap-bizhelper] No behavior stored yet; waiting briefly to see if BizHawk appears on its own.")
+    print(f"{LOG_PREFIX} No behavior stored yet; waiting briefly to see if BizHawk appears on its own.")
     if _detect_new_bizhawk(baseline_pids):
-        print(f"[ap-bizhelper] Detected new BizHawk instance; recording .{ext} as 'auto'.")
+        print(f"{LOG_PREFIX} Detected new BizHawk instance; recording .{ext} as 'auto'.")
         set_ext_behavior(ext, "auto")
         return
 
     print(
-        "[ap-bizhelper] No BizHawk detected after fallback timeout; "
+        f"{LOG_PREFIX} No BizHawk detected after fallback timeout; "
         f"switching .{ext} to 'fallback' and launching runner."
     )
     set_ext_behavior(ext, "fallback")

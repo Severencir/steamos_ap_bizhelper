@@ -30,14 +30,11 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import shutil
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
-# These match the paths used by the original Bash script.
-LEGACY_CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper"))
-CONFIG_DIR = Path(os.path.expanduser("~/.config/ap-bizhelper"))
+from .constants import CONFIG_DIR
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
 EXT_BEHAVIOR_FILE = CONFIG_DIR / "ext_behavior.json"
@@ -251,7 +248,6 @@ def get_all_associations() -> Dict[str, str]:
 
 
 def _ensure_config_dir() -> None:
-    _migrate_legacy_config_dir()
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     except Exception:
@@ -261,7 +257,6 @@ def _ensure_config_dir() -> None:
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
-    _migrate_legacy_config_dir()
     if not path.exists():
         return {}
     try:
@@ -280,16 +275,6 @@ def _save_json(path: Path, data: Dict[str, Any]) -> None:
         json.dump(data, f, indent=2, sort_keys=True)
         f.write("\n")
     tmp.replace(path)
-
-
-def _migrate_legacy_config_dir() -> None:
-    if not LEGACY_CONFIG_DIR.exists() or CONFIG_DIR.exists():
-        return
-    try:
-        shutil.move(str(LEGACY_CONFIG_DIR), str(CONFIG_DIR))
-    except Exception:
-        # If migration fails we fall back to treating this like a fresh run.
-        pass
 
 
 def cmd_export_shell() -> int:
