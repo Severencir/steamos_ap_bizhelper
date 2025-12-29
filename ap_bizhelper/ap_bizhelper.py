@@ -43,7 +43,13 @@ from .ap_bizhelper_config import (
     set_ext_association,
 )
 from .dialog_shim import prepare_dialog_shim_env
-from .constants import LOG_PREFIX
+from .constants import (
+    APPLICATIONS_DIR,
+    ARCHIPELAGO_WORLDS_DIR,
+    FILE_FILTER_APWORLD,
+    LOG_PREFIX,
+    MIME_PACKAGES_DIR,
+)
 from .logging_utils import RUNNER_LOG_ENV, get_app_logger
 from .ap_bizhelper_worlds import ensure_apworld_for_patch
 from .ui_utils import ensure_local_action_scripts, show_uninstall_dialog, show_utils_dialog
@@ -653,7 +659,7 @@ def _ensure_apworld_for_extension(ext: str) -> None:
     if behavior:
         return
 
-    worlds_dir = Path.home() / ".local/share/Archipelago/worlds"
+    worlds_dir = ARCHIPELAGO_WORLDS_DIR
     text = (
         f"This looks like a new Archipelago patch extension (.{ext}).\n\n"
         "If this game requires an external .apworld file and it isn't already installed, "
@@ -675,7 +681,7 @@ def _ensure_apworld_for_extension(ext: str) -> None:
     apworld_path = _select_file_dialog(
         title=f"Select .apworld file for .{ext}",
         initial=Path.home(),
-        file_filter="*.apworld",
+        file_filter=FILE_FILTER_APWORLD,
         dialog_key="apworld",
     )
 
@@ -733,8 +739,8 @@ def _apply_association_files(associated_exts: list[str]) -> None:
     if sys.platform != "linux":
         return
 
-    applications_dir = Path.home() / ".local/share/applications"
-    mime_packages_dir = Path.home() / ".local/share/mime/packages"
+    applications_dir = APPLICATIONS_DIR
+    mime_packages_dir = MIME_PACKAGES_DIR
     desktop_path = applications_dir / "ap-bizhelper.desktop"
 
     # Remove stale xml files first
