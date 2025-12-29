@@ -26,16 +26,16 @@ from .dialogs import (
     info_dialog,
 )
 from .ap_bizhelper_config import load_apworld_cache, save_apworld_cache
-from .logging_utils import USER_AGENT
+from .constants import USER_AGENT, USER_AGENT_HEADER
 
 SPREADSHEET_ID = "1iuzDTOAvdoNe8Ne8i461qGNucg5OuEoF-Ikqs8aUQZw"
 CORE_SHEET_NAME = "Core-Verified Worlds"
 PLAYABLE_SHEET_NAME = "Playable Worlds"
 WORLD_DIR = Path.home() / ".local/share/Archipelago/worlds"
 CACHE_KEY = "APWORLD_CACHE"
-USER_AGENT_HEADER = {"User-Agent": USER_AGENT}
 GITHUB_ACCEPT_HEADER = "application/vnd.github+json"
-GITHUB_API_HEADERS = {**USER_AGENT_HEADER, "Accept": GITHUB_ACCEPT_HEADER}
+USER_AGENT_HEADERS = {USER_AGENT_HEADER: USER_AGENT}
+GITHUB_API_HEADERS = {**USER_AGENT_HEADERS, "Accept": GITHUB_ACCEPT_HEADER}
 APWORLD_EXTENSION = ".apworld"
 APWORLD_FILENAME_DEFAULT = "world.apworld"
 APWORLD_FILE_FILTER = "*.apworld"
@@ -80,7 +80,7 @@ def _read_url(url: str, headers: Dict[str, str]) -> Optional[bytes]:
 def _fetch_sheet(sheet_name: str) -> Optional[list[list[str]]]:
     quoted = urllib.parse.quote(sheet_name)
     url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={quoted}"
-    data = _read_url(url, USER_AGENT_HEADER)
+    data = _read_url(url, USER_AGENT_HEADERS)
     if data is None:
         return None
     content = data.decode(ENCODING_UTF8, errors="replace")

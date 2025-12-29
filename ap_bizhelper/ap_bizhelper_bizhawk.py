@@ -20,7 +20,7 @@ from .ap_bizhelper_ap import (
     _normalize_asset_digest,
     download_with_progress,
 )
-from .constants import DATA_DIR, USER_AGENT
+from .constants import DATA_DIR, USER_AGENT, USER_AGENT_HEADER
 from .dialogs import (
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
@@ -113,7 +113,6 @@ RUNNER_FILENAME = "run_bizhawk_proton.py"
 STEAM_ROOT_PATH = "~/.steam/steam"
 TAR_TYPE_HINT = "tar"
 TAG_NAME_KEY = "tag_name"
-USER_AGENT_HEADER = "User-Agent"
 WIN_X64_SUFFIX = "win-x64.zip"
 YES_VALUE = "yes"
 MIGRATABLE_BIZHAWK_ITEMS = (CONNECTORS_DIRNAME, SNI_DIRNAME, "Scripts", "Lua", CONFIG_FILENAME)

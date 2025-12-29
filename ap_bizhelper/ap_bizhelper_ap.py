@@ -19,8 +19,8 @@ from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
-from .constants import DATA_DIR
-from .logging_utils import USER_AGENT, get_app_logger
+from .constants import DATA_DIR, USER_AGENT, USER_AGENT_HEADER
+from .logging_utils import get_app_logger
 
 # Paths mirror the bash script and the config helper.
 AP_APPIMAGE_DEFAULT = DATA_DIR / "Archipelago.AppImage"
@@ -762,7 +762,7 @@ def _github_latest_appimage() -> Tuple[str, str, str, str]:
     import urllib.request
     import json as _json
 
-    req = urllib.request.Request(GITHUB_API_LATEST, headers={"User-Agent": USER_AGENT})
+    req = urllib.request.Request(GITHUB_API_LATEST, headers={USER_AGENT_HEADER: USER_AGENT})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = resp.read().decode("utf-8")
     j = _json.loads(data)
@@ -809,7 +809,7 @@ def download_with_progress(
     _ensure_dirs()
     _ensure_qt_available()
 
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    req = urllib.request.Request(url, headers={USER_AGENT_HEADER: USER_AGENT})
 
     response_headers: dict[str, str] = {}
     temp_path: Optional[Path] = None
