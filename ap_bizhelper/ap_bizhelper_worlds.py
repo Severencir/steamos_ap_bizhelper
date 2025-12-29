@@ -26,7 +26,7 @@ from .dialogs import (
     info_dialog,
 )
 from .ap_bizhelper_config import load_apworld_cache, save_apworld_cache
-from .constants import USER_AGENT
+from .logging_utils import USER_AGENT
 
 SPREADSHEET_ID = "1iuzDTOAvdoNe8Ne8i461qGNucg5OuEoF-Ikqs8aUQZw"
 CORE_SHEET_NAME = "Core-Verified Worlds"

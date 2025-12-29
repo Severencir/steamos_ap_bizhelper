@@ -19,8 +19,7 @@ from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
-from .constants import DATA_DIR, USER_AGENT
-from .logging_utils import get_app_logger
+from .logging_utils import USER_AGENT, get_app_logger
 
 # Paths mirror the bash script and the config helper.
 AP_APPIMAGE_DEFAULT = DATA_DIR / "Archipelago.AppImage"

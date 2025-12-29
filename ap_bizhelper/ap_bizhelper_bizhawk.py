@@ -32,6 +32,7 @@ from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
+from .logging_utils import USER_AGENT
 
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 

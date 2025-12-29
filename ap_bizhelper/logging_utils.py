@@ -8,7 +8,8 @@ from datetime import datetime
 from typing import Dict, Iterable, Optional
 from uuid import uuid4
 
-from .constants import APP_NAME, LOG_ROOT, USER_AGENT
+
+APP_NAME = "ap-bizhelper"
 USER_AGENT = f"{APP_NAME}/1.0"
 BRACKET_CLOSE = "]"
 BRACKET_OPEN = "["
@@ -283,6 +284,7 @@ __all__ = [
     "RUN_ID_ENV",
     "SHIM_LOG_ENV",
     "TIMESTAMP_ENV",
+    "USER_AGENT",
     "create_component_logger",
     "get_app_logger",
 ]
