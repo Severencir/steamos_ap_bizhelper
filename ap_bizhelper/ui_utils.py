@@ -28,11 +28,29 @@ from .ap_bizhelper_config import (
 )
 from .ap_bizhelper_worlds import WORLD_DIR, force_update_apworlds, manual_select_apworld
 from .constants import (
+    AP_APPIMAGE_KEY,
+    AP_LATEST_SEEN_VERSION_KEY,
+    AP_SKIP_VERSION_KEY,
+    AP_VERSION_KEY,
     ARCHIPELAGO_CONFIG_DIR,
     ARCHIPELAGO_DATA_DIR,
     BACKUPS_DIR,
+    BIZHELPER_APPIMAGE_KEY,
+    BIZHAWK_AP_CONNECTOR_LATEST_SEEN_KEY,
+    BIZHAWK_AP_CONNECTOR_VERSION_KEY,
+    BIZHAWK_EXE_KEY,
+    BIZHAWK_LATEST_SEEN_KEY,
+    BIZHAWK_RUNNER_KEY,
+    BIZHAWK_SKIP_VERSION_KEY,
+    BIZHAWK_SNI_VERSION_KEY,
+    BIZHAWK_VERSION_KEY,
     DATA_DIR as LAUNCHER_DATA_DIR,
+    DESKTOP_DIR_KEY,
+    DOWNLOADS_DIR_KEY,
     GAME_SAVES_DIR,
+    PROTON_BIN_KEY,
+    SFC_LUA_PATH_KEY,
+    STEAM_APPID_KEY,
 )
 from .dialogs import (
     DIALOG_DEFAULTS,
@@ -122,16 +140,16 @@ def _apworld_latest_seen(playable_cache: dict[str, object]) -> str:
 def _build_component_rows() -> list[_ComponentRow]:
     settings = load_settings()
 
-    ap_path = str(settings.get("AP_APPIMAGE", "") or "")
+    ap_path = str(settings.get(AP_APPIMAGE_KEY, "") or "")
     ap_appimage = Path(ap_path) if ap_path else None
 
-    bizhawk_path = str(settings.get("BIZHAWK_EXE", "") or "")
+    bizhawk_path = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
     bizhawk_exe = Path(bizhawk_path) if bizhawk_path else None
 
-    connectors_ap_version = str(settings.get("BIZHAWK_AP_CONNECTOR_VERSION", "") or "")
-    connectors_sni_version = str(settings.get("BIZHAWK_SNI_VERSION", "") or "")
+    connectors_ap_version = str(settings.get(BIZHAWK_AP_CONNECTOR_VERSION_KEY, "") or "")
+    connectors_sni_version = str(settings.get(BIZHAWK_SNI_VERSION_KEY, "") or "")
     connectors_latest_seen = str(
-        settings.get("BIZHAWK_AP_CONNECTOR_LATEST_SEEN_VERSION", "") or ""
+        settings.get(BIZHAWK_AP_CONNECTOR_LATEST_SEEN_KEY, "") or ""
     )
 
     ap_connectors_source = "unknown"
@@ -145,18 +163,18 @@ def _build_component_rows() -> list[_ComponentRow]:
     return [
         _ComponentRow(
             name="AP AppImage",
-            installed_version=_dash_if_empty(str(settings.get("AP_VERSION", "") or "")),
-            latest_seen=_dash_if_empty(str(settings.get("AP_LATEST_SEEN_VERSION", "") or "")),
-            skip_version=_dash_if_empty(str(settings.get("AP_SKIP_VERSION", "") or "")),
+            installed_version=_dash_if_empty(str(settings.get(AP_VERSION_KEY, "") or "")),
+            latest_seen=_dash_if_empty(str(settings.get(AP_LATEST_SEEN_VERSION_KEY, "") or "")),
+            skip_version=_dash_if_empty(str(settings.get(AP_SKIP_VERSION_KEY, "") or "")),
             source=_source_from_path(ap_appimage, AP_APPIMAGE_DEFAULT),
             force_update=lambda: force_update_appimage(settings),
             manual_select=lambda: bool(manual_select_appimage(settings)),
         ),
         _ComponentRow(
             name="BizHawk",
-            installed_version=_dash_if_empty(str(settings.get("BIZHAWK_VERSION", "") or "")),
-            latest_seen=_dash_if_empty(str(settings.get("BIZHAWK_LATEST_SEEN_VERSION", "") or "")),
-            skip_version=_dash_if_empty(str(settings.get("BIZHAWK_SKIP_VERSION", "") or "")),
+            installed_version=_dash_if_empty(str(settings.get(BIZHAWK_VERSION_KEY, "") or "")),
+            latest_seen=_dash_if_empty(str(settings.get(BIZHAWK_LATEST_SEEN_KEY, "") or "")),
+            skip_version=_dash_if_empty(str(settings.get(BIZHAWK_SKIP_VERSION_KEY, "") or "")),
             source=_source_from_path(bizhawk_exe, BIZHAWK_WIN_DIR),
             force_update=lambda: force_update_bizhawk(settings),
             manual_select=lambda: bool(manual_select_bizhawk(settings)),
@@ -195,11 +213,11 @@ def _managed_dir_exists(path: Optional[Path]) -> bool:
 
 
 def _downloads_dir(settings: dict) -> Path:
-    return get_path_setting(settings, "DOWNLOADS_DIR")
+    return get_path_setting(settings, DOWNLOADS_DIR_KEY)
 
 
 def _desktop_dir(settings: dict) -> Path:
-    return get_path_setting(settings, "DESKTOP_DIR")
+    return get_path_setting(settings, DESKTOP_DIR_KEY)
 
 
 def _bizhawk_saveram_dir(settings: dict) -> Path:
@@ -221,7 +239,7 @@ def _bizhawk_install_dirs(settings: dict) -> list[Path]:
 
     _add(BIZHAWK_WIN_DIR)
 
-    bizhawk_path = str(settings.get("BIZHAWK_EXE", "") or "")
+    bizhawk_path = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
     if bizhawk_path:
         candidate = Path(bizhawk_path)
         if candidate.is_file():
@@ -278,11 +296,11 @@ def _format_status_text() -> str:
     def _path_line(label: str, value: Optional[str]) -> None:
         lines.append(f"- {label}: {_dash_if_empty(value or '')}")
 
-    _path_line("AP AppImage", str(settings.get("AP_APPIMAGE", "") or ""))
-    _path_line("BizHawk EXE", str(settings.get("BIZHAWK_EXE", "") or ""))
-    _path_line("Proton bin", str(settings.get("PROTON_BIN", "") or ""))
-    _path_line("BizHawk runner", str(settings.get("BIZHAWK_RUNNER", "") or ""))
-    _path_line("SFC Lua path", str(settings.get("SFC_LUA_PATH", "") or ""))
+    _path_line("AP AppImage", str(settings.get(AP_APPIMAGE_KEY, "") or ""))
+    _path_line("BizHawk EXE", str(settings.get(BIZHAWK_EXE_KEY, "") or ""))
+    _path_line("Proton bin", str(settings.get(PROTON_BIN_KEY, "") or ""))
+    _path_line("BizHawk runner", str(settings.get(BIZHAWK_RUNNER_KEY, "") or ""))
+    _path_line("SFC Lua path", str(settings.get(SFC_LUA_PATH_KEY, "") or ""))
     _path_line("APWorld cache", str(APWORLD_CACHE_FILE))
     _path_line("Cached APWorlds", str(len(cache.get("playable_worlds", {}))))
 
@@ -394,8 +412,13 @@ LOCAL_ACTION_SCRIPTS = {
     "ap-bizhelper-uninstall.sh": ("uninstall",),
 }
 
-_RESET_PRESERVE_KEYS = ("STEAM_APPID",)
-_IMPORT_PRESERVE_KEYS = ("AP_APPIMAGE", "BIZHAWK_EXE", "BIZHAWK_RUNNER", "PROTON_BIN")
+_RESET_PRESERVE_KEYS = (STEAM_APPID_KEY,)
+_IMPORT_PRESERVE_KEYS = (
+    AP_APPIMAGE_KEY,
+    BIZHAWK_EXE_KEY,
+    BIZHAWK_RUNNER_KEY,
+    PROTON_BIN_KEY,
+)
 
 
 def _ensure_exports_dir() -> Optional[Path]:
@@ -524,7 +547,7 @@ def _uninstall_app(
     remove_saves = "Uninstall game saves" in selected
     remove_appimage = "Uninstall AppImage" in selected
     if stored_appimage_path is None:
-        settings_appimage = str(settings.get("BIZHELPER_APPIMAGE") or "")
+        settings_appimage = str(settings.get(BIZHELPER_APPIMAGE_KEY) or "")
         if settings_appimage:
             stored_appimage_path = Path(settings_appimage)
     appimage_path = stored_appimage_path
@@ -881,13 +904,13 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
 
 def show_uninstall_dialog() -> None:
     settings = load_settings()
-    stored_appimage = str(settings.get("BIZHELPER_APPIMAGE") or "")
+    stored_appimage = str(settings.get(BIZHELPER_APPIMAGE_KEY) or "")
     stored_appimage_path = Path(stored_appimage) if stored_appimage else None
     _uninstall_app(stored_appimage_path=stored_appimage_path)
 
 
 def _resolve_bizhelper_appimage(settings: dict, *, action: str) -> Optional[Path]:
-    appimage_value = str(settings.get("BIZHELPER_APPIMAGE") or "")
+    appimage_value = str(settings.get(BIZHELPER_APPIMAGE_KEY) or "")
     if not appimage_value:
         error_dialog(
             "The ap-bizhelper AppImage path is missing from settings.\n\n"

@@ -1,0 +1,64 @@
+{
+  "settings.json": {
+    "description": "Safe preferences that are safe to change without breaking behavior.",
+    "keys": [
+      "AP_DESKTOP_SHORTCUT",
+      "BIZHAWK_DESKTOP_SHORTCUT",
+      "QT_FILE_DIALOG_DATE_WIDTH",
+      "QT_FILE_DIALOG_HEIGHT",
+      "QT_FILE_DIALOG_MAXIMIZE",
+      "QT_FILE_DIALOG_NAME_WIDTH",
+      "QT_FILE_DIALOG_SIDEBAR_ICON_SIZE",
+      "QT_FILE_DIALOG_SIDEBAR_WIDTH",
+      "QT_FILE_DIALOG_SIZE_WIDTH",
+      "QT_FILE_DIALOG_TYPE_WIDTH",
+      "QT_FILE_DIALOG_WIDTH",
+      "QT_FILE_ICON_SIZE",
+      "QT_FILE_NAME_FONT_SCALE",
+      "QT_FONT_SCALE",
+      "QT_MIN_POINT_SIZE"
+    ]
+  },
+  "path_settings.json": {
+    "description": "Paths and directories that may vary by system and should be configurable.",
+    "keys": [
+      "BIZHAWK_SAVERAM_DIR",
+      "DESKTOP_DIR",
+      "DOWNLOADS_DIR",
+      "LAST_FILE_DIALOG_DIR",
+      "LAST_FILE_DIALOG_DIRS",
+      "LAST_ROM_DIR",
+      "ROM_ROOTS",
+      "SFC_LUA_PATH",
+      "STEAM_ROOT_PATH"
+    ]
+  },
+  "install_state.json": {
+    "description": "Install state and discovered binaries/versions managed by the app.",
+    "keys": [
+      "AP_APPIMAGE",
+      "AP_LATEST_SEEN_VERSION",
+      "AP_SKIP_VERSION",
+      "AP_VERSION",
+      "BIZHELPER_APPIMAGE",
+      "BIZHAWK_AP_CONNECTOR_LATEST_SEEN_VERSION",
+      "BIZHAWK_AP_CONNECTOR_VERSION",
+      "BIZHAWK_EXE",
+      "BIZHAWK_LATEST_SEEN_VERSION",
+      "BIZHAWK_RUNNER",
+      "BIZHAWK_SKIP_VERSION",
+      "BIZHAWK_SNI_VERSION",
+      "BIZHAWK_VERSION",
+      "PROTON_BIN"
+    ]
+  },
+  "state_settings.json": {
+    "description": "Ephemeral/internal state that should persist but is not user-facing.",
+    "keys": [
+      "PENDING_RELAUNCH_ARGS",
+      "ROM_HASH_CACHE",
+      "STEAM_APPID",
+      "USE_CACHED_RELAUNCH_ARGS"
+    ]
+  }
+}

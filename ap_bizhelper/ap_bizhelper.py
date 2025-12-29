@@ -44,11 +44,20 @@ from .ap_bizhelper_config import (
 )
 from .dialog_shim import prepare_dialog_shim_env
 from .constants import (
+    AP_APPIMAGE_KEY,
+    AP_VERSION_KEY,
     APPLICATIONS_DIR,
     ARCHIPELAGO_WORLDS_DIR,
+    BIZHELPER_APPIMAGE_KEY,
+    BIZHAWK_EXE_KEY,
+    BIZHAWK_RUNNER_KEY,
     FILE_FILTER_APWORLD,
     LOG_PREFIX,
     MIME_PACKAGES_DIR,
+    PENDING_RELAUNCH_ARGS_KEY,
+    PROTON_BIN_KEY,
+    STEAM_APPID_KEY,
+    USE_CACHED_RELAUNCH_ARGS_KEY,
 )
 from .logging_utils import RUNNER_LOG_ENV, get_app_logger
 from .ap_bizhelper_worlds import ensure_apworld_for_patch
@@ -278,11 +287,11 @@ def _capture_steam_appid_if_present(settings: dict) -> None:
         if not steam_game_id:
             return
 
-        cached_appid = str(settings.get("STEAM_APPID") or "")
+        cached_appid = str(settings.get(STEAM_APPID_KEY) or "")
         if cached_appid == steam_game_id:
             return
 
-        settings["STEAM_APPID"] = steam_game_id
+        settings[STEAM_APPID_KEY] = steam_game_id
         save_settings(settings)
         APP_LOGGER.log(
             f"Detected Steam launch; cached app id {steam_game_id} for future relaunches.",
@@ -308,12 +317,12 @@ def _capture_bizhelper_appimage(settings: dict) -> None:
         if not appimage_path:
             return
 
-        cached_path = str(settings.get("BIZHELPER_APPIMAGE") or "")
+        cached_path = str(settings.get(BIZHELPER_APPIMAGE_KEY) or "")
         new_path = str(appimage_path)
         if cached_path == new_path:
             return
 
-        settings["BIZHELPER_APPIMAGE"] = new_path
+        settings[BIZHELPER_APPIMAGE_KEY] = new_path
         save_settings(settings)
         APP_LOGGER.log(
             f"Captured ap-bizhelper AppImage path: {new_path}",
@@ -322,7 +331,7 @@ def _capture_bizhelper_appimage(settings: dict) -> None:
 
 
 def _require_bizhelper_appimage(settings: dict, action: str) -> bool:
-    appimage_value = str(settings.get("BIZHELPER_APPIMAGE") or "")
+    appimage_value = str(settings.get(BIZHELPER_APPIMAGE_KEY) or "")
     if not appimage_value:
         error_dialog(
             "The ap-bizhelper AppImage path is missing from settings.\n\n"
@@ -348,7 +357,7 @@ def _get_known_steam_appid(settings: dict) -> Optional[str]:
     if steam_game_id:
         return steam_game_id
 
-    cached_appid = str(settings.get("STEAM_APPID") or "")
+    cached_appid = str(settings.get(STEAM_APPID_KEY) or "")
     if cached_appid.isdigit():
         return cached_appid
 
@@ -363,7 +372,7 @@ def _maybe_relaunch_via_steam(argv: list[str], settings: dict) -> None:
             return
 
         steam_appid_env = os.environ.get("AP_BIZHELPER_STEAM_APPID")
-        cached_appid = str(settings.get("STEAM_APPID") or "")
+        cached_appid = str(settings.get(STEAM_APPID_KEY) or "")
 
         appid: Optional[int]
         appid_source: str
@@ -391,8 +400,8 @@ def _maybe_relaunch_via_steam(argv: list[str], settings: dict) -> None:
             _clear_relaunch_cache(settings, force_save=True)
             sys.exit(1)
 
-        if str(settings.get("STEAM_APPID")) != str(appid):
-            settings["STEAM_APPID"] = str(appid)
+        if str(settings.get(STEAM_APPID_KEY)) != str(appid):
+            settings[STEAM_APPID_KEY] = str(appid)
             save_settings(settings)
             APP_LOGGER.log(
                 f"Stored Steam app id {appid} ({appid_source}) for future relaunches.",
@@ -460,8 +469,8 @@ def _maybe_relaunch_via_steam(argv: list[str], settings: dict) -> None:
 
                 if proc.returncode == 0:
                     if len(argv) > 1:
-                        settings["PENDING_RELAUNCH_ARGS"] = argv[1:]
-                        settings["USE_CACHED_RELAUNCH_ARGS"] = True
+                        settings[PENDING_RELAUNCH_ARGS_KEY] = argv[1:]
+                        settings[USE_CACHED_RELAUNCH_ARGS_KEY] = True
                         save_settings(settings)
                     APP_LOGGER.log(
                         f"{launcher_name} command reported exit code 0; exiting current process.",
@@ -506,7 +515,7 @@ def _clear_relaunch_cache(settings: dict, force_save: bool = False) -> None:
     """Remove any stored relaunch arguments from the settings file."""
 
     cache_removed = force_save
-    for cache_key in ("PENDING_RELAUNCH_ARGS", "USE_CACHED_RELAUNCH_ARGS"):
+    for cache_key in (PENDING_RELAUNCH_ARGS_KEY, USE_CACHED_RELAUNCH_ARGS_KEY):
         if cache_key in settings:
             settings.pop(cache_key, None)
             cache_removed = True
@@ -531,7 +540,7 @@ def _select_patch_file() -> Path:
 
 
 def _needs_archipelago_download(settings: dict) -> bool:
-    app_path_str = str(settings.get("AP_APPIMAGE", "") or "")
+    app_path_str = str(settings.get(AP_APPIMAGE_KEY, "") or "")
     app_path = Path(app_path_str) if app_path_str else None
 
     if app_path and app_path.is_file() and os.access(str(app_path), os.X_OK):
@@ -544,9 +553,9 @@ def _needs_archipelago_download(settings: dict) -> bool:
 
 
 def _needs_bizhawk_download(settings: dict) -> bool:
-    exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
-    runner_str = str(settings.get("BIZHAWK_RUNNER", "") or "")
-    proton_str = str(settings.get("PROTON_BIN", "") or "")
+    exe_str = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
+    runner_str = str(settings.get(BIZHAWK_RUNNER_KEY, "") or "")
+    proton_str = str(settings.get(PROTON_BIN_KEY, "") or "")
 
     exe = Path(exe_str) if exe_str else None
     runner = Path(runner_str) if runner_str else None
@@ -562,7 +571,7 @@ def _needs_proton_download(settings: dict) -> bool:
 
 
 def _needs_connector_download(settings: dict, *, ap_version: str) -> bool:
-    exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+    exe_str = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
     exe = Path(exe_str) if exe_str else None
     return connectors_need_download(settings, exe, ap_version=ap_version)
 
@@ -1077,13 +1086,13 @@ def _wait_for_launched_apps_to_close(
 
 
 def _resolve_bizhawk_root(settings: dict) -> Optional[Path]:
-    exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+    exe_str = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
     if exe_str:
         exe_path = Path(exe_str)
         if exe_path.is_file():
             return exe_path.parent
 
-    runner_str = str(settings.get("BIZHAWK_RUNNER", "") or "")
+    runner_str = str(settings.get(BIZHAWK_RUNNER_KEY, "") or "")
     if runner_str:
         runner_path = Path(runner_str)
         if runner_path.is_file():
@@ -1335,7 +1344,7 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
         need_arch = _needs_archipelago_download(settings)
         need_bizhawk = _needs_bizhawk_download(settings)
         need_proton = _needs_proton_download(settings)
-        ap_version = str(settings.get("AP_VERSION", "") or "")
+        ap_version = str(settings.get(AP_VERSION_KEY, "") or "")
         need_connectors = need_bizhawk or _needs_connector_download(settings, ap_version=ap_version)
 
         if any((need_arch, need_bizhawk, need_connectors, need_proton)):
@@ -1494,13 +1503,13 @@ def main(argv: list[str]) -> int:
 
         settings_dirty = False
 
-        cached_relaunch_args = settings.pop("PENDING_RELAUNCH_ARGS", [])
+        cached_relaunch_args = settings.pop(PENDING_RELAUNCH_ARGS_KEY, [])
         if cached_relaunch_args:
             settings_dirty = True
 
-        if "USE_CACHED_RELAUNCH_ARGS" in settings:
+        if USE_CACHED_RELAUNCH_ARGS_KEY in settings:
             settings_dirty = True
-            settings.pop("USE_CACHED_RELAUNCH_ARGS", None)
+            settings.pop(USE_CACHED_RELAUNCH_ARGS_KEY, None)
 
         if settings_dirty:
             save_settings(settings)
@@ -1523,7 +1532,7 @@ def main(argv: list[str]) -> int:
                     user_args = [str(arg) for arg in cached_relaunch_args if str(arg).strip()]
                     _clear_relaunch_cache(settings, force_save=True)
             else:
-                settings["PENDING_RELAUNCH_ARGS"] = user_args
+                settings[PENDING_RELAUNCH_ARGS_KEY] = user_args
                 save_settings(settings)
                 _maybe_relaunch_via_steam(argv, settings)
 

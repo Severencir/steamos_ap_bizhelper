@@ -19,6 +19,11 @@ from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
+from .constants import (
+    DOWNLOADS_DIR_KEY,
+    LAST_FILE_DIALOG_DIR_KEY,
+    LAST_FILE_DIALOG_DIRS_KEY,
+)
 from .logging_utils import AppLogger, get_app_logger
 
 DIALOG_DEFAULTS = {
@@ -617,7 +622,7 @@ def _sidebar_urls(*, start_dir: Optional[Path] = None, settings: Optional[Dict[s
         if p:
             paths.append(Path(p))
 
-    downloads_dir = get_path_setting(settings or {}, "DOWNLOADS_DIR")
+    downloads_dir = get_path_setting(settings or {}, DOWNLOADS_DIR_KEY)
     # Fall back to the configured Downloads dir if Qt doesn't provide one.
     if downloads_dir not in paths:
         paths.append(downloads_dir)
@@ -627,7 +632,7 @@ def _sidebar_urls(*, start_dir: Optional[Path] = None, settings: Optional[Dict[s
     if start_dir is not None:
         extra_candidates.append(start_dir)
     if settings is not None:
-        last_dir_setting = str(settings.get("LAST_FILE_DIALOG_DIR", "") or "")
+        last_dir_setting = str(settings.get(LAST_FILE_DIALOG_DIR_KEY, "") or "")
         if last_dir_setting:
             extra_candidates.append(Path(last_dir_setting))
 
@@ -1492,9 +1497,11 @@ def error_dialog(message: str, *, title: str = "Error", logger: Optional[AppLogg
 
 
 def preferred_start_dir(initial: Optional[Path], settings: Dict[str, object], dialog_key: str) -> Path:
-    last_dir_setting = str(settings.get("LAST_FILE_DIALOG_DIR", "") or "")
-    per_dialog_dir = str(settings.get("LAST_FILE_DIALOG_DIRS", {}).get(dialog_key, "") or "")
-    downloads_dir = get_path_setting(settings, "DOWNLOADS_DIR")
+    last_dir_setting = str(settings.get(LAST_FILE_DIALOG_DIR_KEY, "") or "")
+    per_dialog_dir = str(
+        settings.get(LAST_FILE_DIALOG_DIRS_KEY, {}).get(dialog_key, "") or ""
+    )
+    downloads_dir = get_path_setting(settings, DOWNLOADS_DIR_KEY)
 
     candidates = [
         initial if initial and initial.expanduser() != Path.home() else None,
@@ -1517,10 +1524,10 @@ def preferred_start_dir(initial: Optional[Path], settings: Dict[str, object], di
 
 def remember_file_dialog_dir(settings: Dict[str, object], selection: Path, dialog_key: str) -> None:
     parent = selection.parent if selection.is_file() else selection
-    dialog_dirs = settings.get("LAST_FILE_DIALOG_DIRS", {})
+    dialog_dirs = settings.get(LAST_FILE_DIALOG_DIRS_KEY, {})
     dialog_dirs[dialog_key] = str(parent)
-    settings["LAST_FILE_DIALOG_DIRS"] = dialog_dirs
-    settings["LAST_FILE_DIALOG_DIR"] = str(parent)
+    settings[LAST_FILE_DIALOG_DIRS_KEY] = dialog_dirs
+    settings[LAST_FILE_DIALOG_DIR_KEY] = str(parent)
 
 
 def file_dialog(
@@ -1704,8 +1711,11 @@ def select_file_dialog(
     fd_logger: Optional["AppLogger"] = get_app_logger() if _file_dialog_debug_enabled() else None
     # Log how we decide the starting directory (per-dialog memory > global memory > defaults).
     try:
-        per_dialog = str((settings_obj.get('LAST_FILE_DIALOG_DIRS', {}) or {}).get(dialog_key, '') or '')
-        global_last = str(settings_obj.get('LAST_FILE_DIALOG_DIR', '') or '')
+        per_dialog = str(
+            (settings_obj.get(LAST_FILE_DIALOG_DIRS_KEY, {}) or {}).get(dialog_key, "")
+            or ""
+        )
+        global_last = str(settings_obj.get(LAST_FILE_DIALOG_DIR_KEY, "") or "")
     except Exception:
         per_dialog = ''
         global_last = ''
@@ -1717,7 +1727,7 @@ def select_file_dialog(
         initial=str(initial) if initial else None,
         per_dialog_last=per_dialog or None,
         global_last=global_last or None,
-        downloads=str(get_path_setting(settings_obj, "DOWNLOADS_DIR")),
+        downloads=str(get_path_setting(settings_obj, DOWNLOADS_DIR_KEY)),
         home=str(Path.home()),
     )
     start_dir = preferred_start_dir(initial, settings_obj, dialog_key)

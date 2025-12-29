@@ -20,7 +20,20 @@ from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
-from .constants import DATA_DIR, USER_AGENT, USER_AGENT_HEADER
+from .constants import (
+    AP_APPIMAGE_KEY,
+    AP_DESKTOP_SHORTCUT_KEY,
+    AP_LATEST_SEEN_VERSION_KEY,
+    AP_SKIP_VERSION_KEY,
+    AP_VERSION_KEY,
+    DATA_DIR,
+    DESKTOP_DIR_KEY,
+    DOWNLOADS_DIR_KEY,
+    LAST_FILE_DIALOG_DIR_KEY,
+    LAST_FILE_DIALOG_DIRS_KEY,
+    USER_AGENT,
+    USER_AGENT_HEADER,
+)
 from .logging_utils import get_app_logger
 
 # Paths mirror the bash script and the config helper.
@@ -30,22 +43,8 @@ APP_LOGGER = get_app_logger()
 
 GITHUB_API_LATEST = "https://api.github.com/repos/ArchipelagoMW/Archipelago/releases/latest"
 
-_QT_APP: Optional["QtWidgets.QApplication"] = None
-_QT_BASE_FONT: Optional["QtGui.QFont"] = None
-_QT_FONT_SCALE = 1
-_QT_MIN_POINT_SIZE = 12
-_QT_FILE_NAME_FONT_SCALE = 1.4
-_QT_FILE_DIALOG_WIDTH = 1280
-_QT_FILE_DIALOG_HEIGHT = 800
-_QT_FILE_DIALOG_MAXIMIZE = True
-_QT_FILE_DIALOG_NAME_WIDTH = 850
-_QT_FILE_DIALOG_TYPE_WIDTH = 200
-_QT_FILE_DIALOG_SIZE_WIDTH = 200
-_QT_FILE_DIALOG_DATE_WIDTH = 0
-_QT_FILE_DIALOG_SIDEBAR_WIDTH = 200
 _QT_FILE_DIALOG_COLUMN_SCALE = 1.8
 _QT_FILE_DIALOG_DEFAULT_SHRINK = 0.95
-_QT_IMPORT_ERROR: Optional[BaseException] = None
 _DEFAULT_SETTINGS = dialogs.DIALOG_DEFAULTS
 
 
@@ -234,16 +233,16 @@ def _enable_dialog_gamepad(
 
 
 def _dialog_dir_map(settings: Dict[str, Any]) -> Dict[str, str]:
-    stored = settings.get("LAST_FILE_DIALOG_DIRS", {})
+    stored = settings.get(LAST_FILE_DIALOG_DIRS_KEY, {})
     if isinstance(stored, dict):
         return stored
     return {}
 
 
 def _preferred_start_dir(initial: Optional[Path], settings: Dict[str, Any], dialog_key: str) -> Path:
-    last_dir_setting = str(settings.get("LAST_FILE_DIALOG_DIR", "") or "")
+    last_dir_setting = str(settings.get(LAST_FILE_DIALOG_DIR_KEY, "") or "")
     per_dialog_dir = str(_dialog_dir_map(settings).get(dialog_key, "") or "")
-    downloads_dir = get_path_setting(settings, "DOWNLOADS_DIR")
+    downloads_dir = get_path_setting(settings, DOWNLOADS_DIR_KEY)
 
     candidates = [
         initial if initial and initial.expanduser() != Path.home() else None,
@@ -268,15 +267,15 @@ def _remember_file_dialog_dir(settings: Dict[str, Any], selection: Path, dialog_
     parent = selection.parent if selection.is_file() else selection
     dialog_dirs = _dialog_dir_map(settings)
     dialog_dirs[dialog_key] = str(parent)
-    settings["LAST_FILE_DIALOG_DIRS"] = dialog_dirs
-    settings["LAST_FILE_DIALOG_DIR"] = str(parent)
+    settings[LAST_FILE_DIALOG_DIRS_KEY] = dialog_dirs
+    settings[LAST_FILE_DIALOG_DIR_KEY] = str(parent)
 
 
 def _sidebar_urls(settings: Dict[str, Any]) -> list["QtCore.QUrl"]:
     from PySide6 import QtCore
 
-    downloads_dir = get_path_setting(settings, "DOWNLOADS_DIR")
-    desktop_dir = get_path_setting(settings, "DESKTOP_DIR")
+    downloads_dir = get_path_setting(settings, DOWNLOADS_DIR_KEY)
+    desktop_dir = get_path_setting(settings, DESKTOP_DIR_KEY)
     common_dirs = [
         Path.home(),
         downloads_dir,
@@ -298,7 +297,10 @@ def _widen_file_dialog_sidebar(
 
     sidebar = dialog.findChild(QtWidgets.QListView, "sidebar")
     width = _coerce_int_setting(
-        settings_obj, "QT_FILE_DIALOG_SIDEBAR_WIDTH", _QT_FILE_DIALOG_SIDEBAR_WIDTH, minimum=0
+        settings_obj,
+        "QT_FILE_DIALOG_SIDEBAR_WIDTH",
+        int(_DEFAULT_SETTINGS["QT_FILE_DIALOG_SIDEBAR_WIDTH"]),
+        minimum=0,
     )
     if sidebar is None or width <= 0:
         return
@@ -497,10 +499,16 @@ def _qt_file_dialog(
     dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
     dialog.setOption(QtWidgets.QFileDialog.ReadOnly, False)
     width = _coerce_int_setting(
-        settings_obj, "QT_FILE_DIALOG_WIDTH", _QT_FILE_DIALOG_WIDTH, minimum=0
+        settings_obj,
+        "QT_FILE_DIALOG_WIDTH",
+        int(_DEFAULT_SETTINGS["QT_FILE_DIALOG_WIDTH"]),
+        minimum=0,
     )
     height = _coerce_int_setting(
-        settings_obj, "QT_FILE_DIALOG_HEIGHT", _QT_FILE_DIALOG_HEIGHT, minimum=0
+        settings_obj,
+        "QT_FILE_DIALOG_HEIGHT",
+        int(_DEFAULT_SETTINGS["QT_FILE_DIALOG_HEIGHT"]),
+        minimum=0,
     )
     if width > 0 and height > 0:
         dialog.resize(width, height)
@@ -515,7 +523,10 @@ def _qt_file_dialog(
         base_font = widget.font()
         scaled_font = QtGui.QFont(base_font)
         name_font_scale = _coerce_font_setting(
-            settings_obj, "QT_FILE_NAME_FONT_SCALE", _QT_FILE_NAME_FONT_SCALE, minimum=0.1
+            settings_obj,
+            "QT_FILE_NAME_FONT_SCALE",
+            float(_DEFAULT_SETTINGS["QT_FILE_NAME_FONT_SCALE"]),
+            minimum=0.1,
         )
         effective_name_font_scale = name_font_scale / global_scale
         if base_font.pointSize() > 0:
@@ -544,7 +555,9 @@ def _qt_file_dialog(
         dialog.setSidebarUrls(sidebar_urls)
     _widen_file_dialog_sidebar(dialog, settings_obj)
     if _coerce_bool_setting(
-        settings_obj, "QT_FILE_DIALOG_MAXIMIZE", _QT_FILE_DIALOG_MAXIMIZE
+        settings_obj,
+        "QT_FILE_DIALOG_MAXIMIZE",
+        bool(_DEFAULT_SETTINGS["QT_FILE_DIALOG_MAXIMIZE"]),
     ):
         dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
     _configure_file_view_columns(dialog, settings_obj)
@@ -671,9 +684,9 @@ def manual_select_appimage(settings: Optional[Dict[str, Any]] = None) -> Optiona
     if selection is None:
         return None
 
-    settings["AP_APPIMAGE"] = str(selection)
-    settings["AP_VERSION"] = ""
-    settings["AP_SKIP_VERSION"] = ""
+    settings[AP_APPIMAGE_KEY] = str(selection)
+    settings[AP_VERSION_KEY] = ""
+    settings[AP_SKIP_VERSION_KEY] = ""
     _save_settings(settings)
 
     if provided_settings is not None and settings is not provided_settings:
@@ -708,10 +721,10 @@ def force_update_appimage(settings: Optional[Dict[str, Any]] = None) -> bool:
         error_dialog(f"Archipelago download failed or was cancelled: {exc}")
         return False
 
-    settings["AP_APPIMAGE"] = str(AP_APPIMAGE_DEFAULT)
-    settings["AP_VERSION"] = latest_ver
-    settings["AP_SKIP_VERSION"] = ""
-    settings["AP_LATEST_SEEN_VERSION"] = latest_ver
+    settings[AP_APPIMAGE_KEY] = str(AP_APPIMAGE_DEFAULT)
+    settings[AP_VERSION_KEY] = latest_ver
+    settings[AP_SKIP_VERSION_KEY] = ""
+    settings[AP_LATEST_SEEN_VERSION_KEY] = latest_ver
     _save_settings(settings)
 
     if provided_settings is not None and settings is not provided_settings:
@@ -943,7 +956,7 @@ def download_appimage(
 
 
 def _desktop_shortcut_path(settings: Dict[str, Any], name: str) -> Path:
-    desktop_dir = get_path_setting(settings, "DESKTOP_DIR")
+    desktop_dir = get_path_setting(settings, DESKTOP_DIR_KEY)
     return desktop_dir / f"{name}.desktop"
 
 
@@ -1005,12 +1018,12 @@ def maybe_update_appimage(
     except Exception:
         return appimage, False
 
-    current_ver = str(settings.get("AP_VERSION", "") or "")
-    skip_ver = str(settings.get("AP_SKIP_VERSION", "") or "")
-    latest_seen = str(settings.get("AP_LATEST_SEEN_VERSION", "") or "")
+    current_ver = str(settings.get(AP_VERSION_KEY, "") or "")
+    skip_ver = str(settings.get(AP_SKIP_VERSION_KEY, "") or "")
+    latest_seen = str(settings.get(AP_LATEST_SEEN_VERSION_KEY, "") or "")
     should_prompt = _is_newer_version(latest_ver, latest_seen)
     if latest_ver and latest_ver != latest_seen:
-        settings["AP_LATEST_SEEN_VERSION"] = latest_ver
+        settings[AP_LATEST_SEEN_VERSION_KEY] = latest_ver
         _save_settings(settings)
 
     if not current_ver:
@@ -1031,8 +1044,8 @@ def maybe_update_appimage(
     if choice == "cancel":
         return appimage, False
     if choice == "extra":
-        settings["AP_SKIP_VERSION"] = latest_ver
-        settings["AP_LATEST_SEEN_VERSION"] = latest_ver
+        settings[AP_SKIP_VERSION_KEY] = latest_ver
+        settings[AP_LATEST_SEEN_VERSION_KEY] = latest_ver
         _save_settings(settings)
         return appimage, False
 
@@ -1050,10 +1063,10 @@ def maybe_update_appimage(
         error_dialog(f"Archipelago update failed: {e}")
         return appimage, False
 
-    settings["AP_APPIMAGE"] = str(AP_APPIMAGE_DEFAULT)
-    settings["AP_VERSION"] = latest_ver
-    settings["AP_SKIP_VERSION"] = ""
-    settings["AP_LATEST_SEEN_VERSION"] = latest_ver
+    settings[AP_APPIMAGE_KEY] = str(AP_APPIMAGE_DEFAULT)
+    settings[AP_VERSION_KEY] = latest_ver
+    settings[AP_SKIP_VERSION_KEY] = ""
+    settings[AP_LATEST_SEEN_VERSION_KEY] = latest_ver
     _save_settings(settings)
     if download_messages is not None:
         download_messages.append(f"Updated Archipelago to {latest_ver}")
@@ -1091,7 +1104,7 @@ def ensure_appimage(
     downloaded = False
 
     # 1. Try stored path
-    app_path_str = str(settings.get("AP_APPIMAGE", "") or "")
+    app_path_str = str(settings.get(AP_APPIMAGE_KEY, "") or "")
     app_path = Path(app_path_str) if app_path_str else None
 
     if app_path and app_path.is_file():
@@ -1117,7 +1130,7 @@ def ensure_appimage(
             except Exception as e:
                 error_dialog(f"Failed to query latest Archipelago release: {e}")
                 raise RuntimeError("Failed to query latest Archipelago release") from e
-            settings["AP_LATEST_SEEN_VERSION"] = ver
+            settings[AP_LATEST_SEEN_VERSION_KEY] = ver
             try:
                 download_appimage(
                     url,
@@ -1131,17 +1144,17 @@ def ensure_appimage(
                 error_dialog(f"Archipelago download failed or was cancelled: {e}")
                 raise RuntimeError("Archipelago download failed") from e
             app_path = AP_APPIMAGE_DEFAULT
-            settings["AP_APPIMAGE"] = str(AP_APPIMAGE_DEFAULT)
-            settings["AP_VERSION"] = ver
-            settings["AP_SKIP_VERSION"] = ""
-            settings["AP_LATEST_SEEN_VERSION"] = ver
+            settings[AP_APPIMAGE_KEY] = str(AP_APPIMAGE_DEFAULT)
+            settings[AP_VERSION_KEY] = ver
+            settings[AP_SKIP_VERSION_KEY] = ""
+            settings[AP_LATEST_SEEN_VERSION_KEY] = ver
             _merge_and_save_settings()
             downloaded = True
         else:
             app_path = _prompt_select_existing_appimage(
                 Path(os.path.expanduser("~")), settings=settings
             )
-            settings["AP_APPIMAGE"] = str(app_path)
+            settings[AP_APPIMAGE_KEY] = str(app_path)
             # No version information when manually selected.
             _merge_and_save_settings()
 
@@ -1161,7 +1174,7 @@ def ensure_appimage(
             settings,
             "Archipelago",
             app_path,
-            "AP_DESKTOP_SHORTCUT",
+            AP_DESKTOP_SHORTCUT_KEY,
             enabled=create_shortcut,
         )
 

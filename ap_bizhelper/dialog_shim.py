@@ -26,6 +26,13 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from ap_bizhelper import dialogs
 from .ap_bizhelper_config import load_settings, save_settings
+from .constants import (
+    BIZHAWK_EXE_KEY,
+    BIZHAWK_RUNNER_KEY,
+    LAST_ROM_DIR_KEY,
+    ROM_HASH_CACHE_KEY,
+    ROM_ROOTS_KEY,
+)
 from .logging_utils import (
     SHIM_LOG_ENV,
     AppLogger,
@@ -165,14 +172,14 @@ def _extract_patch_hints(metadata: dict) -> tuple[Optional[str], Optional[str], 
 
 def _load_rom_state(logger: AppLogger) -> tuple[dict, list[str], str, dict]:
     settings = load_settings()
-    rom_roots = settings.get("ROM_ROOTS")
+    rom_roots = settings.get(ROM_ROOTS_KEY)
     if not isinstance(rom_roots, list):
         rom_roots = []
     rom_roots = [str(root) for root in rom_roots if str(root).strip()]
-    last_rom_dir = settings.get("LAST_ROM_DIR")
+    last_rom_dir = settings.get(LAST_ROM_DIR_KEY)
     if not isinstance(last_rom_dir, str):
         last_rom_dir = ""
-    cache = settings.get("ROM_HASH_CACHE")
+    cache = settings.get(ROM_HASH_CACHE_KEY)
     if not isinstance(cache, dict):
         cache = {}
     if not isinstance(cache.get("by_file"), dict):
@@ -357,14 +364,14 @@ def _update_rom_state_for_manual_selection(
     settings: dict, cache: dict, selection: Path, logger: AppLogger
 ) -> None:
     parent = selection.parent
-    roots = settings.get("ROM_ROOTS")
+    roots = settings.get(ROM_ROOTS_KEY)
     if not isinstance(roots, list):
         roots = []
     parent_str = str(parent)
     if parent_str not in roots:
         roots.append(parent_str)
-    settings["ROM_ROOTS"] = roots
-    settings["LAST_ROM_DIR"] = parent_str
+    settings[ROM_ROOTS_KEY] = roots
+    settings[LAST_ROM_DIR_KEY] = parent_str
     try:
         stat = selection.stat()
         md5 = _hash_file(selection, logger)
@@ -372,7 +379,7 @@ def _update_rom_state_for_manual_selection(
             _record_hash(cache, selection, md5, stat.st_size, stat.st_mtime)
     except Exception as exc:
         _rom_log(logger, f"Failed updating ROM cache for {selection}: {exc}")
-    settings["ROM_HASH_CACHE"] = cache
+    settings[ROM_HASH_CACHE_KEY] = cache
 
 
 def _select_rom_aware_file_dialog(
@@ -432,7 +439,7 @@ def _select_rom_aware_file_dialog(
                     cache_updated = cache_updated or scan_updated
 
                 if cache_updated:
-                    settings["ROM_HASH_CACHE"] = cache
+                    settings[ROM_HASH_CACHE_KEY] = cache
                     save_settings(settings)
 
                 if matches:
@@ -481,19 +488,19 @@ def _locate_bizhawk_runner(logger: AppLogger) -> Optional[Path]:
         return None
 
     settings = _load_ap_settings()
-    runner_str = str(settings.get("BIZHAWK_RUNNER", "") or "")
-    exe_str = str(settings.get("BIZHAWK_EXE", "") or "")
+    runner_str = str(settings.get(BIZHAWK_RUNNER_KEY, "") or "")
+    exe_str = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
 
     candidates: List[Path] = []
     candidate_sources = []
     if runner_str:
         runner_path = Path(runner_str)
         candidates.append(runner_path)
-        candidate_sources.append((runner_path, "BIZHAWK_RUNNER"))
+        candidate_sources.append((runner_path, BIZHAWK_RUNNER_KEY))
     if exe_str:
         exe_candidate = Path(exe_str).parent / "run_bizhawk_proton.py"
         candidates.append(exe_candidate)
-        candidate_sources.append((exe_candidate, "BIZHAWK_EXE"))
+        candidate_sources.append((exe_candidate, BIZHAWK_EXE_KEY))
 
     local_candidate = Path(__file__).resolve().parent / "run_bizhawk_proton.py"
     candidates.append(local_candidate)
