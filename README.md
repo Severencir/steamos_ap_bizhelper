@@ -10,6 +10,10 @@ Run the helper directly from source with:
 python -m ap_bizhelper
 ```
 
+## Supported platform
+
+ap-bizhelper is only supported on Steam Deck–like devices running SteamOS. Other platforms are untested and unsupported.
+
 ## Building a one-file release
 
 1. Ensure `build` is available (e.g., `python -m pip install build`).
@@ -57,4 +61,3 @@ python -m ap_bizhelper.ap_bizhelper_config clear-ext-association apbp
 ```
 
 Setting the mode to `disabled` stops future prompts and removes the handler entries on the next run; changing back to `prompt` or `enabled` will recreate them for stored extensions.
-

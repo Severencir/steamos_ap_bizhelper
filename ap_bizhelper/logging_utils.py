@@ -11,6 +11,7 @@ from uuid import uuid4
 
 
 APP_NAME = "ap-bizhelper"
+USER_AGENT = f"{APP_NAME}/1.0"
 BRACKET_CLOSE = "]"
 BRACKET_OPEN = "["
 COLON_SPACE = ": "
@@ -285,6 +286,7 @@ __all__ = [
     "RUN_ID_ENV",
     "SHIM_LOG_ENV",
     "TIMESTAMP_ENV",
+    "USER_AGENT",
     "create_component_logger",
     "get_app_logger",
 ]
