@@ -20,8 +20,8 @@ from .ap_bizhelper_bizhawk import (
 )
 from .ap_bizhelper_config import (
     APWORLD_CACHE_FILE,
-    BIZHAWK_SAVERAM_DIR,
     CONFIG_DIR as LAUNCHER_CONFIG_DIR,
+    get_path_setting,
     load_apworld_cache,
     load_settings,
     save_settings,
@@ -32,8 +32,6 @@ from .constants import (
     ARCHIPELAGO_DATA_DIR,
     BACKUPS_DIR,
     DATA_DIR as LAUNCHER_DATA_DIR,
-    DESKTOP_DIR,
-    DOWNLOADS_DIR,
     GAME_SAVES_DIR,
 )
 from .dialogs import (
@@ -196,6 +194,18 @@ def _managed_dir_exists(path: Optional[Path]) -> bool:
     return path.exists()
 
 
+def _downloads_dir(settings: dict) -> Path:
+    return get_path_setting(settings, "DOWNLOADS_DIR")
+
+
+def _desktop_dir(settings: dict) -> Path:
+    return get_path_setting(settings, "DESKTOP_DIR")
+
+
+def _bizhawk_saveram_dir(settings: dict) -> Path:
+    return get_path_setting(settings, "BIZHAWK_SAVERAM_DIR")
+
+
 def _bizhawk_install_dirs(settings: dict) -> list[Path]:
     installs: list[Path] = []
 
@@ -228,7 +238,7 @@ def _build_managed_dir_rows() -> list[_ManagedDirRow]:
         _ManagedDirRow("AP local", AP_DATA_DIR),
         _ManagedDirRow("Launcher data", LAUNCHER_DATA_DIR),
         _ManagedDirRow("APWorlds", WORLD_DIR),
-        _ManagedDirRow("BizHawk SaveRAM", BIZHAWK_SAVERAM_DIR),
+        _ManagedDirRow("BizHawk SaveRAM", _bizhawk_saveram_dir(settings)),
     ]
 
     for install_dir in _bizhawk_install_dirs(settings):
@@ -376,9 +386,6 @@ def show_apworlds_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
 AP_CONFIG_DIR = ARCHIPELAGO_CONFIG_DIR
 AP_DATA_DIR = ARCHIPELAGO_DATA_DIR
 EXPORTS_DIR = LAUNCHER_DATA_DIR / "exports"
-AP_DESKTOP_SHORTCUT = DESKTOP_DIR / "Archipelago.desktop"
-BIZHAWK_SHORTCUT = DESKTOP_DIR / "BizHawk-Proton.sh"
-BIZHAWK_LEGACY_SHORTCUT = DESKTOP_DIR / "BizHawk-Proton.desktop"
 SETTINGS_EXPORT_VERSION = 1
 SETTINGS_EXPORT_PREFIX = "ap-bizhelper-settings"
 LOCAL_ACTIONS_CREATED_KEY = "LOCAL_ACTIONS_CREATED"
@@ -469,17 +476,17 @@ def _safe_remove_path(path: Path, deleted: list[str], errors: list[str]) -> None
 
 
 def _relocate_appimage(
-    appimage_path: Path, preserved: list[str], errors: list[str]
+    appimage_path: Path, preserved: list[str], errors: list[str], downloads_dir: Path
 ) -> Optional[Path]:
     try:
-        DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
-        target = DOWNLOADS_DIR / appimage_path.name
+        downloads_dir.mkdir(parents=True, exist_ok=True)
+        target = downloads_dir / appimage_path.name
         if target.exists():
             stem = appimage_path.stem
             suffix = appimage_path.suffix
             counter = 1
             while True:
-                candidate = DOWNLOADS_DIR / f"{stem}-{counter}{suffix}"
+                candidate = downloads_dir / f"{stem}-{counter}{suffix}"
                 if not candidate.exists():
                     target = candidate
                     break
@@ -529,7 +536,9 @@ def _uninstall_app(
     preserved_appimage: Optional[Path] = None
     if appimage_path and not remove_appimage and appimage_path.exists():
         if remove_managed_dirs and _is_under_dir(appimage_path, LAUNCHER_DATA_DIR):
-            preserved_appimage = _relocate_appimage(appimage_path, preserved, errors)
+            preserved_appimage = _relocate_appimage(
+                appimage_path, preserved, errors, _downloads_dir(settings)
+            )
         else:
             preserved.append(str(appimage_path))
 
@@ -537,6 +546,10 @@ def _uninstall_app(
         _safe_remove_path(appimage_path, deleted, errors)
 
     if remove_managed_dirs:
+        desktop_dir = _desktop_dir(settings)
+        ap_desktop_shortcut = desktop_dir / "Archipelago.desktop"
+        bizhawk_shortcut = desktop_dir / "BizHawk-Proton.sh"
+        bizhawk_legacy_shortcut = desktop_dir / "BizHawk-Proton.desktop"
         _safe_remove_path(AP_CONFIG_DIR, deleted, errors)
         _safe_remove_path(AP_DATA_DIR, deleted, errors)
         _safe_remove_path(LAUNCHER_CONFIG_DIR, deleted, errors)
@@ -547,15 +560,15 @@ def _uninstall_app(
                 if child == preserved_appimage:
                     continue
                 _safe_remove_path(child, deleted, errors)
-        _safe_remove_path(AP_DESKTOP_SHORTCUT, deleted, errors)
-        _safe_remove_path(BIZHAWK_SHORTCUT, deleted, errors)
-        _safe_remove_path(BIZHAWK_LEGACY_SHORTCUT, deleted, errors)
+        _safe_remove_path(ap_desktop_shortcut, deleted, errors)
+        _safe_remove_path(bizhawk_shortcut, deleted, errors)
+        _safe_remove_path(bizhawk_legacy_shortcut, deleted, errors)
 
     if remove_backups:
         _safe_remove_path(BACKUPS_DIR, deleted, errors)
     if remove_saves:
         _safe_remove_path(GAME_SAVES_DIR, deleted, errors)
-        _safe_remove_path(BIZHAWK_SAVERAM_DIR, deleted, errors)
+        _safe_remove_path(_bizhawk_saveram_dir(settings), deleted, errors)
 
     if errors:
         error_dialog("Uninstall completed with errors:\n" + "\n".join(errors))

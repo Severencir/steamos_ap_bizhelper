@@ -37,6 +37,7 @@ from .dialogs import (
 )
 from .ap_bizhelper_config import (
     CONFIG_DIR,
+    get_path_setting,
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
@@ -114,7 +115,6 @@ NO_VALUE = "no"
 BIZHAWK_UPDATED_PREFIX = "BizHawk updated to "
 BIZHAWK_UPDATE_FAILED_PREFIX = "BizHawk update failed: "
 RUNNER_FILENAME = "run_bizhawk_proton.py"
-STEAM_ROOT_PATH = "~/.steam/steam"
 TAR_TYPE_HINT = "tar"
 TAG_NAME_KEY = "tag_name"
 WIN_X64_SUFFIX = "win-x64.zip"
@@ -857,7 +857,7 @@ def auto_detect_proton(settings: Dict[str, Any]) -> Optional[Path]:
     """
     Attempt to locate a Proton binary under ~/.steam/steam/steamapps/common.
     """
-    steam_root = Path(os.path.expanduser(STEAM_ROOT_PATH))
+    steam_root = _steam_root_dir(settings)
     common = steam_root / STEAMAPPS_DIRNAME / COMMON_DIRNAME
     if not common.exists():
         return None
@@ -882,8 +882,12 @@ def auto_detect_proton(settings: Dict[str, Any]) -> Optional[Path]:
     return chosen
 
 
-def _default_steam_common_dir() -> Path:
-    steam_root = Path(os.path.expanduser(STEAM_ROOT_PATH))
+def _steam_root_dir(settings: Dict[str, Any]) -> Path:
+    return get_path_setting(settings, "STEAM_ROOT_PATH")
+
+
+def _default_steam_common_dir(settings: Dict[str, Any]) -> Path:
+    steam_root = _steam_root_dir(settings)
     return steam_root / STEAMAPPS_DIRNAME / COMMON_DIRNAME
 
 
@@ -898,8 +902,8 @@ def _find_proton_binary(root: Path) -> Optional[Path]:
     return candidates[0]
 
 
-def detect_pinned_proton_in_steam() -> Optional[Path]:
-    common = _default_steam_common_dir()
+def detect_pinned_proton_in_steam(settings: Dict[str, Any]) -> Optional[Path]:
+    common = _default_steam_common_dir(settings)
     if not common.exists():
         return None
 
@@ -921,7 +925,7 @@ def detect_local_pinned_proton() -> Optional[Path]:
 
 
 def proton_available(settings: Dict[str, Any]) -> bool:
-    if detect_pinned_proton_in_steam():
+    if detect_pinned_proton_in_steam(settings):
         return True
 
     proton_str = str(settings.get(PROTON_BIN_KEY, EMPTY_STRING) or EMPTY_STRING)
@@ -1350,7 +1354,7 @@ def ensure_bizhawk_and_proton(
     exe = Path(exe_str) if exe_str else None
     runner = Path(runner_str) if runner_str else None
     proton_bin = Path(proton_str) if proton_str else None
-    pinned_proton = detect_pinned_proton_in_steam()
+    pinned_proton = detect_pinned_proton_in_steam(settings)
     if pinned_proton and pinned_proton.is_file():
         proton_bin = pinned_proton
         if str(settings.get(PROTON_BIN_KEY, EMPTY_STRING) or EMPTY_STRING) != str(pinned_proton):
@@ -1422,7 +1426,7 @@ def ensure_bizhawk_and_proton(
             _merge_and_save_settings()
 
     # Ensure Proton
-    proton_bin = detect_pinned_proton_in_steam()
+    proton_bin = detect_pinned_proton_in_steam(settings)
     if not proton_bin or not proton_bin.is_file():
         proton_bin = detect_local_pinned_proton()
 
@@ -1443,7 +1447,7 @@ def ensure_bizhawk_and_proton(
                 return None
             downloaded = True
         else:
-            chosen = select_proton_bin(_default_steam_common_dir())
+            chosen = select_proton_bin(_default_steam_common_dir(settings))
             if not chosen:
                 error_dialog(PROTON_SELECTION_CANCELLED_MSG)
                 return None

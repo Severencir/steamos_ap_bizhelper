@@ -16,10 +16,11 @@ from . import dialogs
 from .ap_bizhelper_config import (
     CONFIG_DIR,
     SETTINGS_FILE,
+    get_path_setting,
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
-from .constants import DATA_DIR, DESKTOP_DIR, DOWNLOADS_DIR, USER_AGENT, USER_AGENT_HEADER
+from .constants import DATA_DIR, USER_AGENT, USER_AGENT_HEADER
 from .logging_utils import get_app_logger
 
 # Paths mirror the bash script and the config helper.
@@ -242,12 +243,13 @@ def _dialog_dir_map(settings: Dict[str, Any]) -> Dict[str, str]:
 def _preferred_start_dir(initial: Optional[Path], settings: Dict[str, Any], dialog_key: str) -> Path:
     last_dir_setting = str(settings.get("LAST_FILE_DIALOG_DIR", "") or "")
     per_dialog_dir = str(_dialog_dir_map(settings).get(dialog_key, "") or "")
+    downloads_dir = get_path_setting(settings, "DOWNLOADS_DIR")
 
     candidates = [
         initial if initial and initial.expanduser() != Path.home() else None,
         Path(per_dialog_dir) if per_dialog_dir else None,
         Path(last_dir_setting) if last_dir_setting else None,
-        DOWNLOADS_DIR if DOWNLOADS_DIR.exists() else None,
+        downloads_dir if downloads_dir.exists() else None,
         initial if initial else None,
         Path.home(),
     ]
@@ -270,14 +272,16 @@ def _remember_file_dialog_dir(settings: Dict[str, Any], selection: Path, dialog_
     settings["LAST_FILE_DIALOG_DIR"] = str(parent)
 
 
-def _sidebar_urls() -> list["QtCore.QUrl"]:
+def _sidebar_urls(settings: Dict[str, Any]) -> list["QtCore.QUrl"]:
     from PySide6 import QtCore
 
+    downloads_dir = get_path_setting(settings, "DOWNLOADS_DIR")
+    desktop_dir = get_path_setting(settings, "DESKTOP_DIR")
     common_dirs = [
         Path.home(),
-        DOWNLOADS_DIR,
+        downloads_dir,
         Path(os.path.expanduser("~/Documents")),
-        DESKTOP_DIR,
+        desktop_dir,
         Path(os.path.expanduser("~/Music")),
         Path(os.path.expanduser("~/Pictures")),
         Path(os.path.expanduser("~/Videos")),
@@ -535,7 +539,7 @@ def _qt_file_dialog(
         if file_view is not None:
             _scale_file_name_font(file_view)
 
-    sidebar_urls = _sidebar_urls()
+    sidebar_urls = _sidebar_urls(settings_obj)
     if sidebar_urls:
         dialog.setSidebarUrls(sidebar_urls)
     _widen_file_dialog_sidebar(dialog, settings_obj)
@@ -938,8 +942,9 @@ def download_appimage(
         download_messages.append(f"Downloaded Archipelago {version}")
 
 
-def _desktop_shortcut_path(name: str) -> Path:
-    return DESKTOP_DIR / f"{name}.desktop"
+def _desktop_shortcut_path(settings: Dict[str, Any], name: str) -> Path:
+    desktop_dir = get_path_setting(settings, "DESKTOP_DIR")
+    return desktop_dir / f"{name}.desktop"
 
 
 def _write_desktop_shortcut(path: Path, name: str, exec_path: Path) -> None:
@@ -964,7 +969,7 @@ def _create_desktop_shortcut(
     *,
     enabled: bool,
 ) -> None:
-    shortcut_path = _desktop_shortcut_path(name)
+    shortcut_path = _desktop_shortcut_path(settings, name)
 
     if not enabled:
         settings[settings_key] = "no"

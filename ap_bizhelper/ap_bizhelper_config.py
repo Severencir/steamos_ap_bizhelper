@@ -40,7 +40,14 @@ INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
 EXT_BEHAVIOR_FILE = CONFIG_DIR / "ext_behavior.json"
 EXT_ASSOCIATION_FILE = CONFIG_DIR / "ext_associations.json"
 APWORLD_CACHE_FILE = CONFIG_DIR / "apworld_cache.json"
+PATH_SETTINGS_FILE = CONFIG_DIR / "path_settings.json"
 BIZHAWK_SAVERAM_DIR = Path(os.path.expanduser("~/Documents/bizhawk-saveram"))
+PATH_SETTINGS_DEFAULTS = {
+    "DESKTOP_DIR": str(Path.home() / "Desktop"),
+    "DOWNLOADS_DIR": str(Path.home() / "Downloads"),
+    "BIZHAWK_SAVERAM_DIR": str(BIZHAWK_SAVERAM_DIR),
+    "STEAM_ROOT_PATH": str(Path(os.path.expanduser("~/.steam/steam"))),
+}
 AP_APPIMAGE_KEY = "AP_APPIMAGE"
 AP_SKIP_VERSION_KEY = "AP_SKIP_VERSION"
 AP_VERSION_KEY = "AP_VERSION"
@@ -102,18 +109,33 @@ SETTINGS_KEYS = [
     "AP_DESKTOP_SHORTCUT",
     "STEAM_APPID",
 ]
+PATH_SETTINGS_KEYS = [
+    "DESKTOP_DIR",
+    "DOWNLOADS_DIR",
+    "BIZHAWK_SAVERAM_DIR",
+    "STEAM_ROOT_PATH",
+]
 
 
 def _load_install_state() -> Dict[str, Any]:
     return _load_json(INSTALL_STATE_FILE)
 
 
+def _load_path_settings() -> Dict[str, Any]:
+    return _load_json(PATH_SETTINGS_FILE)
+
+
 def load_settings() -> Dict[str, Any]:
     """Return the persisted settings and install state as one mapping."""
 
     settings = _load_json(SETTINGS_FILE)
-    settings.update(_load_install_state())
-    return settings
+    path_settings = _load_path_settings()
+    needs_save = _apply_defaults(path_settings, PATH_SETTINGS_DEFAULTS)
+    install_state = _load_install_state()
+    merged = {**settings, **path_settings, **install_state}
+    if needs_save:
+        save_settings(merged)
+    return merged
 
 
 def load_apworld_cache() -> Dict[str, Any]:
@@ -129,13 +151,26 @@ def save_settings(settings: Dict[str, Any]) -> None:
     installation paths/versions can be managed independently.
     """
 
-    general_settings = {k: v for k, v in settings.items() if k not in INSTALL_STATE_KEYS}
+    general_settings = {
+        k: v
+        for k, v in settings.items()
+        if k not in INSTALL_STATE_KEYS and k not in PATH_SETTINGS_KEYS
+    }
+    path_settings = {k: v for k, v in settings.items() if k in PATH_SETTINGS_KEYS}
     install_state = {k: v for k, v in settings.items() if k in INSTALL_STATE_KEYS}
 
     # Persist the filtered mappings directly so keys removed from ``settings``
     # are also removed from disk.
     _save_json(SETTINGS_FILE, general_settings)
+    _save_json(PATH_SETTINGS_FILE, path_settings)
     _save_json(INSTALL_STATE_FILE, install_state)
+
+
+def get_path_setting(settings: Dict[str, Any], key: str) -> Path:
+    value = settings.get(key)
+    if value in (None, EMPTY_STRING):
+        value = PATH_SETTINGS_DEFAULTS.get(key, EMPTY_STRING)
+    return Path(os.path.expanduser(str(value))) if value else Path()
 
 
 def save_apworld_cache(cache: Dict[str, Any]) -> None:
@@ -277,6 +312,15 @@ def _save_json(path: Path, data: Dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def _apply_defaults(settings: Dict[str, Any], defaults: Dict[str, Any]) -> bool:
+    updated = False
+    for key, value in defaults.items():
+        if key not in settings:
+            settings[key] = value
+            updated = True
+    return updated
+
+
 def cmd_export_shell() -> int:
     """
     Emit shell assignments for all known settings keys.
@@ -287,7 +331,7 @@ def cmd_export_shell() -> int:
         BIZHAWK_EXE='/path/to/EmuHawk.exe'
     """
     settings = load_settings()
-    for key in SETTINGS_KEYS:
+    for key in SETTINGS_KEYS + PATH_SETTINGS_KEYS:
         if key in settings and settings[key] not in (None, EMPTY_STRING):
             value = str(settings[key])
             # Use shlex.quote to make it safe for eval in Bash.
@@ -306,7 +350,12 @@ def cmd_save_from_env() -> int:
     are unset.
     """
     combined_settings = load_settings()
-    settings = {k: v for k, v in combined_settings.items() if k not in INSTALL_STATE_KEYS}
+    settings = {
+        k: v
+        for k, v in combined_settings.items()
+        if k not in INSTALL_STATE_KEYS and k not in PATH_SETTINGS_KEYS
+    }
+    path_settings = {k: v for k, v in combined_settings.items() if k in PATH_SETTINGS_KEYS}
     install_state = {k: v for k, v in combined_settings.items() if k in INSTALL_STATE_KEYS}
 
     for key in SETTINGS_KEYS:
@@ -316,7 +365,11 @@ def cmd_save_from_env() -> int:
             else:
                 settings[key] = os.environ[key]
 
-    save_settings({**settings, **install_state})
+    for key in PATH_SETTINGS_KEYS:
+        if key in os.environ and os.environ.get(key, EMPTY_STRING) != EMPTY_STRING:
+            path_settings[key] = os.environ[key]
+
+    save_settings({**settings, **path_settings, **install_state})
     return 0
 
 
