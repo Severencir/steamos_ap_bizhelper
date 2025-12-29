@@ -8,7 +8,7 @@ Prefer reductive changes that solve a problem where reasonable without affecting
 Ask clarifying questions before beginning if instructions are unclear, conflicting, or seem to disagree with the goal.
 Ask about any cleanup that might be possible for touched areas of code rather than just piling more code on top of it.
 
-Do not worry about preserving legacy code or compatibility.
+Do not worry about preserving legacy code or compatibility. always assume that we are installing and running each version on a fresh machine.
 Offer unsolicited suggestions or alternatives where reasonable.
 If the repo could benefit from a change to the agents.md file, please make suggestions.
 Prefer modularity where it makes sense.
