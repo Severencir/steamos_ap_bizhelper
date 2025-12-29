@@ -16,12 +16,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from .ap_bizhelper_ap import (
-    DATA_DIR,
-    LEGACY_DATA_DIR,
     _is_newer_version,
     _normalize_asset_digest,
     download_with_progress,
 )
+from .constants import DATA_DIR, USER_AGENT
 from .dialogs import (
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
@@ -123,11 +122,6 @@ YES_VALUE = "yes"
 
 
 def _ensure_dirs() -> None:
-    if LEGACY_DATA_DIR.exists() and not DATA_DIR.exists():
-        try:
-            shutil.move(str(LEGACY_DATA_DIR), str(DATA_DIR))
-        except Exception:
-            pass
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     BIZHAWK_WIN_DIR.mkdir(parents=True, exist_ok=True)

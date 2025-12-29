@@ -13,7 +13,6 @@ from typing import Callable, Optional
 
 from .ap_bizhelper_ap import (
     AP_APPIMAGE_DEFAULT,
-    DATA_DIR as LAUNCHER_DATA_DIR,
     DESKTOP_DIR,
     force_update_appimage,
     manual_select_appimage,
@@ -34,6 +33,7 @@ from .ap_bizhelper_config import (
     save_settings,
 )
 from .ap_bizhelper_worlds import WORLD_DIR, force_update_apworlds, manual_select_apworld
+from .constants import DATA_DIR as LAUNCHER_DATA_DIR
 from .dialogs import (
     DIALOG_DEFAULTS,
     checklist_dialog,

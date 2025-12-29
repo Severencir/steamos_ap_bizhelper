@@ -5,7 +5,6 @@ import contextvars
 import os
 import sys
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, Iterable, Optional
 from uuid import uuid4
 
@@ -20,7 +19,6 @@ FORWARD_SLASH = "/"
 NEWLINE = "\n"
 SPACE = " "
 UNDERSCORE = "_"
-LOG_ROOT = Path.home() / ".local" / "share" / APP_NAME / "logs"
 RUN_ID_ENV = "AP_BIZHELPER_LOG_RUN_ID"
 TIMESTAMP_ENV = "AP_BIZHELPER_LOG_TIMESTAMP"
 SHIM_LOG_ENV = "AP_BIZHELPER_SHIM_LOG_PATH"

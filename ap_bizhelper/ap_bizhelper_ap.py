@@ -6,9 +6,7 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
-import sys
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -24,8 +22,6 @@ from .ap_bizhelper_config import (
 from .logging_utils import USER_AGENT, get_app_logger
 
 # Paths mirror the bash script and the config helper.
-LEGACY_DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper"))
-DATA_DIR = Path(os.path.expanduser("~/.local/share/ap-bizhelper"))
 AP_APPIMAGE_DEFAULT = DATA_DIR / "Archipelago.AppImage"
 DESKTOP_DIR = Path(os.path.expanduser("~/Desktop"))
 DOWNLOADS_DIR = Path(os.path.expanduser("~/Downloads"))
@@ -54,11 +50,6 @@ _DEFAULT_SETTINGS = dialogs.DIALOG_DEFAULTS
 
 
 def _ensure_dirs() -> None:
-    if LEGACY_DATA_DIR.exists() and not DATA_DIR.exists():
-        try:
-            shutil.move(str(LEGACY_DATA_DIR), str(DATA_DIR))
-        except Exception:
-            pass
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1171,19 +1162,3 @@ def ensure_appimage(
         )
 
     return app_path
-
-
-def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] != "ensure":
-        print("Usage: ap_bizhelper_ap.py ensure", file=sys.stderr)
-        return 1
-    try:
-        app_path = ensure_appimage()
-    except RuntimeError:
-        return 1
-    print(str(app_path))
-    return 0
-
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main(sys.argv))
