@@ -1145,14 +1145,19 @@ def sync_bizhawk_saveram(settings: dict) -> None:
             try:
                 instance_rel = save_ram.parent.relative_to(bizhawk_root)
             except ValueError:
-                instance_rel = save_ram.parent.name
+                instance_rel = Path(save_ram.parent.name)
 
-            instance_label = str(instance_rel).strip()
-            if not instance_label or Path(instance_label) == Path("."):
-                instance_label = "default"
-            instance_label = instance_label.replace("_", "-")
+            if instance_rel.parts:
+                console_label = instance_rel.parts[-1]
+            else:
+                console_label = "default"
 
-            dest_root = central_root / "system" / "saveram" / instance_label
+            console_label = console_label.strip() or "default"
+            if console_label == ".":
+                console_label = "default"
+            console_label = console_label.replace("_", "-")
+
+            dest_root = central_root / console_label
             if dest_root.is_symlink():
                 continue
             dest_root.mkdir(parents=True, exist_ok=True)
