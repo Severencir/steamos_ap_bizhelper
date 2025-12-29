@@ -19,6 +19,33 @@ from ap_bizhelper.dialogs import (
     error_dialog as _shared_error_dialog,
 )
 
+AP_BIZHELPER_PREFIX = "[ap-bizhelper]"
+BIZHAWK_EXE_KEY = "BIZHAWK_EXE"
+COMMAND_LOCATION = "command"
+CONNECTOR_GENERIC = "connector_bizhawk_generic.lua"
+CONNECTOR_SNI = "connector.lua"
+CONNECTORS_DIRNAME = "connectors"
+DOLPHIN_CMD = "dolphin"
+ENV_COMPAT_CLIENT_PATH = "STEAM_COMPAT_CLIENT_INSTALL_PATH"
+ENV_COMPAT_DATA_PATH = "STEAM_COMPAT_DATA_PATH"
+ENV_CONFIG_LOCATION = "env-config"
+EXEC_LOCATION = "exec"
+LOG_LEVEL_ERROR = "ERROR"
+LUA_ARG_PREFIX = "--lua="
+LUA_EXTENSION = ".lua"
+GLOB_WILDCARD = "*"
+LOCAL_DIRNAME = ".local"
+LUA_LOCATION = "lua"
+OPTION_PREFIX = "-"
+SHARE_DIRNAME = "share"
+PROTON_BIN_KEY = "PROTON_BIN"
+PROTON_PREFIX_KEY = "PROTON_PREFIX"
+RUNNER_ERROR_TITLE = "BizHawk runner error"
+RUNNER_MAIN_CONTEXT = "runner-main"
+SNI_DIRNAME = "sni"
+STEAM_ROOT_KEY = "STEAM_ROOT"
+XDG_OPEN_CMD = "xdg-open"
+
 
 def _load_settings():
     return _load_shared_settings()
@@ -26,8 +53,8 @@ def _load_settings():
 
 def error_dialog(msg: str) -> None:
     """Show an error using PySide6 message boxes."""
-    RUNNER_LOGGER.log(f"Error dialog requested: {msg}", level="ERROR", include_context=True)
-    _shared_error_dialog(msg, title="BizHawk runner error", logger=RUNNER_LOGGER)
+    RUNNER_LOGGER.log(f"Error dialog requested: {msg}", level=LOG_LEVEL_ERROR, include_context=True)
+    _shared_error_dialog(msg, title=RUNNER_ERROR_TITLE, logger=RUNNER_LOGGER)
 
 
 _SETTINGS_CACHE = None
@@ -39,7 +66,9 @@ def get_env_or_config(var: str):
     value = os.environ.get(var)
     if value:
         RUNNER_LOGGER.log(
-            f"Using environment override for {var}={value}", include_context=True, location="env-config"
+            f"Using environment override for {var}={value}",
+            include_context=True,
+            location=ENV_CONFIG_LOCATION,
         )
         return value
 
@@ -50,15 +79,17 @@ def get_env_or_config(var: str):
     value = _SETTINGS_CACHE.get(var)
     if value:
         RUNNER_LOGGER.log(
-            f"Loaded {var} from cached settings: {value}", include_context=True, location="env-config"
+            f"Loaded {var} from cached settings: {value}",
+            include_context=True,
+            location=ENV_CONFIG_LOCATION,
         )
     return str(value) if value else None
 
 
 def ensure_bizhawk_exe() -> Path:
-    exe = get_env_or_config("BIZHAWK_EXE")
+    exe = get_env_or_config(BIZHAWK_EXE_KEY)
     if not exe or not Path(exe).is_file():
-        error_dialog("[ap-bizhelper] BIZHAWK_EXE is not set or not a file; cannot launch BizHawk.")
+        error_dialog(f"{AP_BIZHELPER_PREFIX} BIZHAWK_EXE is not set or not a file; cannot launch BizHawk.")
         sys.exit(1)
     RUNNER_LOGGER.log(f"Resolved BizHawk executable: {exe}", include_context=True)
     return Path(exe)
@@ -66,16 +97,16 @@ def ensure_bizhawk_exe() -> Path:
 
 def configure_proton_env():
     home = Path.home()
-    proton_bin = get_env_or_config("PROTON_BIN") or "proton"
-    proton_prefix = get_env_or_config("PROTON_PREFIX") or str(
-        home / ".local" / "share" / "ap-bizhelper" / "proton_prefix"
+    proton_bin = get_env_or_config(PROTON_BIN_KEY) or "proton"
+    proton_prefix = get_env_or_config(PROTON_PREFIX_KEY) or str(
+        home / LOCAL_DIRNAME / SHARE_DIRNAME / "ap-bizhelper" / "proton_prefix"
     )
-    steam_root = get_env_or_config("STEAM_ROOT") or str(
-        home / ".local" / "share" / "Steam"
+    steam_root = get_env_or_config(STEAM_ROOT_KEY) or str(
+        home / LOCAL_DIRNAME / SHARE_DIRNAME / "Steam"
     )
 
-    os.environ["STEAM_COMPAT_DATA_PATH"] = proton_prefix
-    os.environ["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = steam_root
+    os.environ[ENV_COMPAT_DATA_PATH] = proton_prefix
+    os.environ[ENV_COMPAT_CLIENT_PATH] = steam_root
 
     RUNNER_LOGGER.log(
         f"Configured Proton env: proton_bin={proton_bin}, prefix={proton_prefix}, steam_root={steam_root}",
@@ -100,14 +131,14 @@ def parse_args(argv):
         arg = argv[i]
         i += 1
 
-        if arg.startswith("--lua="):
+        if arg.startswith(LUA_ARG_PREFIX):
             ap_lua_arg = arg
         elif arg == "--lua":
             if i < n:
-                ap_lua_arg = f"--lua={argv[i]}"
+                ap_lua_arg = f"{LUA_ARG_PREFIX}{argv[i]}"
                 i += 1
         else:
-            if rom_path is None and not arg.startswith("-"):
+            if rom_path is None and not arg.startswith(OPTION_PREFIX):
                 rom_path = arg
             else:
                 emu_args.append(arg)
@@ -115,7 +146,7 @@ def parse_args(argv):
     # Recovery: if we didn't capture ROM earlier, try first non-option in emu_args
     if rom_path is None:
         for idx, a in enumerate(emu_args):
-            if not a.startswith("-"):
+            if not a.startswith(OPTION_PREFIX):
                 rom_path = a
                 emu_args = emu_args[:idx] + emu_args[idx + 1 :]
                 break
@@ -134,26 +165,26 @@ def _detect_connector_name(ap_lua_arg: str | None) -> str | None:
     if not ap_lua_arg:
         return None
 
-    if ap_lua_arg.startswith("--lua="):
-        lua_path = ap_lua_arg[len("--lua=") :]
+    if ap_lua_arg.startswith(LUA_ARG_PREFIX):
+        lua_path = ap_lua_arg[len(LUA_ARG_PREFIX) :]
     else:
         lua_path = ap_lua_arg
 
     name = Path(lua_path).name
     # Always honor the requested name, even if it was provided without a .lua suffix.
-    return name if name.endswith(".lua") else f"{name}.lua"
+    return name if name.endswith(LUA_EXTENSION) else f"{name}{LUA_EXTENSION}"
 
 
 def _open_dolphin(target: Path) -> None:
-    if shutil.which("dolphin"):
+    if shutil.which(DOLPHIN_CMD):
         try:
-            subprocess.Popen(["dolphin", str(target)])
+            subprocess.Popen([DOLPHIN_CMD, str(target)])
             return
         except Exception:
             pass
-    if shutil.which("xdg-open"):
+    if shutil.which(XDG_OPEN_CMD):
         try:
-            subprocess.Popen(["xdg-open", str(target)])
+            subprocess.Popen([XDG_OPEN_CMD, str(target)])
         except Exception:
             pass
 
@@ -169,17 +200,21 @@ def _connector_windows_path(bizhawk_dir: Path, connector_path: Path) -> str:
 def _find_sni_connector(sni_dir: Path) -> Path | None:
     if not sni_dir.is_dir():
         return None
-    preferred = [p for p in sni_dir.glob("*.lua") if p.name.lower() == "connector.lua"]
+    preferred = [
+        p for p in sni_dir.glob(f"{GLOB_WILDCARD}{LUA_EXTENSION}") if p.name.lower() == CONNECTOR_SNI
+    ]
     if preferred:
         return preferred[0]
-    candidates = [p for p in sni_dir.glob("*.lua") if p.is_file()]
+    candidates = [
+        p for p in sni_dir.glob(f"{GLOB_WILDCARD}{LUA_EXTENSION}") if p.is_file()
+    ]
     return candidates[0] if candidates else None
 
 
 def _missing_connector(connectors_dir: Path, connector_name: str) -> None:
     connectors_dir.mkdir(parents=True, exist_ok=True)
     error_dialog(
-        "[ap-bizhelper] Could not find the required BizHawk connector\n"
+        f"{AP_BIZHELPER_PREFIX} Could not find the required BizHawk connector\n"
         f"Expected to locate {connector_name} inside:\n{connectors_dir}\n\n"
         "Drag the correct connector into this directory and try again."
     )
@@ -197,35 +232,39 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> 
     """
 
     ext = Path(rom_path).suffix.lower().lstrip(".")
-    connectors_dir = bizhawk_dir / "connectors"
-    sni_dir = bizhawk_dir / "sni"
+    connectors_dir = bizhawk_dir / CONNECTORS_DIRNAME
+    sni_dir = bizhawk_dir / SNI_DIRNAME
 
     if ext == "sfc":
         connector_path = _find_sni_connector(sni_dir)
         if connector_path is None:
-            _missing_connector(sni_dir, "connector.lua")
+            _missing_connector(sni_dir, CONNECTOR_SNI)
         if ap_lua_arg:
-            print("[ap-bizhelper] Ignoring AP-supplied --lua for SNES ROM; using local SNI connector.")
+            print(
+                f"{AP_BIZHELPER_PREFIX} Ignoring AP-supplied --lua for SNES ROM; using local SNI connector."
+            )
         lua_ap_path = _connector_windows_path(bizhawk_dir, connector_path)
-        print(f"[ap-bizhelper] Using SNI Lua connector for SNES ROM: {lua_ap_path}")
+        print(f"{AP_BIZHELPER_PREFIX} Using SNI Lua connector for SNES ROM: {lua_ap_path}")
         RUNNER_LOGGER.log(
             f"Selected SNI connector for SNES ROM at {lua_ap_path}",
             include_context=True,
-            location="lua",
+            location=LUA_LOCATION,
         )
-        return f"--lua={lua_ap_path}"
+        return f"{LUA_ARG_PREFIX}{lua_ap_path}"
 
-    connector_name = _detect_connector_name(ap_lua_arg) or "connector_bizhawk_generic.lua"
+    connector_name = _detect_connector_name(ap_lua_arg) or CONNECTOR_GENERIC
     connector_path = connectors_dir / connector_name
     if not connector_path.is_file():
         _missing_connector(connectors_dir, connector_name)
 
     lua_ap_path = _connector_windows_path(bizhawk_dir, connector_path)
-    print(f"[ap-bizhelper] Using BizHawk Lua connector: {lua_ap_path}")
+    print(f"{AP_BIZHELPER_PREFIX} Using BizHawk Lua connector: {lua_ap_path}")
     RUNNER_LOGGER.log(
-        f"Using connector {connector_name} at {lua_ap_path}", include_context=True, location="lua"
+        f"Using connector {connector_name} at {lua_ap_path}",
+        include_context=True,
+        location=LUA_LOCATION,
     )
-    return f"--lua={lua_ap_path}"
+    return f"{LUA_ARG_PREFIX}{lua_ap_path}"
 
 
 def build_bizhawk_command(argv):
@@ -239,12 +278,12 @@ def build_bizhawk_command(argv):
 
     if rom_path is None:
         final_args = emu_args
-        print("[ap-bizhelper] No ROM detected; launching BizHawk without AP connector.")
+        print(f"{AP_BIZHELPER_PREFIX} No ROM detected; launching BizHawk without AP connector.")
     else:
         lua_arg = decide_lua_arg(bizhawk_dir, rom_path, ap_lua_arg)
         final_args = [rom_path, lua_arg] + emu_args
 
-        print("[ap-bizhelper] Running BizHawk via Proton:")
+        print(f"{AP_BIZHELPER_PREFIX} Running BizHawk via Proton:")
         print(f"  BIZHAWK_EXE: {bizhawk_exe}")
         print(f"  ROM:         {rom_path}")
         print(f"  Lua:         {lua_arg}")
@@ -255,20 +294,22 @@ def build_bizhawk_command(argv):
     RUNNER_LOGGER.log(
         f"Built BizHawk command: {command} (cwd={bizhawk_dir})",
         include_context=True,
-        location="command",
+        location=COMMAND_LOCATION,
     )
     return proton_bin, bizhawk_dir, command
 
 
 def main(argv):
-    with RUNNER_LOGGER.context("runner-main"):
+    with RUNNER_LOGGER.context(RUNNER_MAIN_CONTEXT):
         RUNNER_LOGGER.log(
             f"Starting BizHawk runner with argv: {argv}", include_context=True, mirror_console=True
         )
         proton_bin, bizhawk_dir, cmd = build_bizhawk_command(argv)
         os.chdir(bizhawk_dir)
         RUNNER_LOGGER.log(
-            f"Executing via execvp: {proton_bin} {cmd}", include_context=True, location="exec"
+            f"Executing via execvp: {proton_bin} {cmd}",
+            include_context=True,
+            location=EXEC_LOCATION,
         )
         os.execvp(proton_bin, cmd)
 

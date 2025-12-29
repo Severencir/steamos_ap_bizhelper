@@ -33,6 +33,32 @@ PLAYABLE_SHEET_NAME = "Playable Worlds"
 WORLD_DIR = Path.home() / ".local/share/Archipelago/worlds"
 CACHE_KEY = "APWORLD_CACHE"
 USER_AGENT = {"User-Agent": "ap-bizhelper/1.0"}
+APWORLD_EXTENSION = ".apworld"
+APWORLD_FILENAME_DEFAULT = "world.apworld"
+APWORLD_FILE_FILTER = "*.apworld"
+APWORLD_DIALOG_KEY = "apworld"
+APWORLD_TITLE_PREFIX = "APWorld for "
+APWORLD_FILE_PROMPT = "Select .apworld file"
+ARCHIPELAGO_METADATA_FILE = "archipelago.json"
+COLON_SPACE = ": "
+CORE_VERIFIED_KEY = "core_verified"
+DOT = "."
+EMPTY_STRING = ""
+ENCODING_UTF8 = "utf-8"
+FILENAME_KEY = "filename"
+GAME_KEY = "game"
+GAME_NAME_KEY = "game_name"
+GITHUB_DOMAIN = "github.com"
+GITHUB_RELEASES_URL_TEMPLATE = "https://api.github.com/repos/{owner}/{repo}/releases/latest"
+LATEST_SEEN_VERSION_KEY = "latest_seen_version"
+MANUAL_SOURCE = "manual"
+PLAYABLE_WORLDS_KEY = "playable_worlds"
+SELECTED_APWORLD_MISSING_MSG = "Selected .apworld file does not exist."
+SLASH = "/"
+SOURCE_KEY = "source"
+VERSION_KEY = "version"
+WORLD_DIR_COPY_LOCATION = "apworld-copy"
+FAILED_STAGE_APWORLD_MSG = "Failed to stage .apworld file"
 
 
 def _normalize_game(name: str) -> str:
@@ -45,7 +71,7 @@ def _fetch_sheet(sheet_name: str) -> Optional[list[list[str]]]:
     try:
         req = urllib.request.Request(url, headers=USER_AGENT)
         with urllib.request.urlopen(req, timeout=30) as resp:
-            content = resp.read().decode("utf-8", errors="replace")
+            content = resp.read().decode(ENCODING_UTF8, errors="replace")
     except Exception:
         return None
 
@@ -64,7 +90,7 @@ def _get_core_games() -> Optional[set[str]]:
         if not row:
             continue
         name = row[0].strip()
-        if not name or name.lower() == "game":
+        if not name or name.lower() == GAME_KEY:
             continue
         games.add(_normalize_game(name))
     return games
@@ -91,7 +117,7 @@ def _get_playable_map() -> Optional[dict[str, str]]:
         if not row or len(row) < 3:
             continue
         name = row[0].strip()
-        if not name or name.lower() == "game":
+        if not name or name.lower() == GAME_KEY:
             continue
         link = _extract_single_link(row[2].strip()) if len(row) >= 3 else None
         if link:
@@ -101,7 +127,7 @@ def _get_playable_map() -> Optional[dict[str, str]]:
 
 def _read_archipelago_game(patch: Path) -> Optional[str]:
     metadata = _read_archipelago_metadata(patch)
-    game = metadata.get("game")
+    game = metadata.get(GAME_KEY)
     if isinstance(game, str) and game.strip():
         return game.strip()
     return None
@@ -110,7 +136,7 @@ def _read_archipelago_game(patch: Path) -> Optional[str]:
 def _read_archipelago_metadata(archive_path: Path) -> Dict[str, Any]:
     try:
         with zipfile.ZipFile(archive_path) as zf:
-            with zf.open("archipelago.json") as f:
+            with zf.open(ARCHIPELAGO_METADATA_FILE) as f:
                 data = json.load(f)
     except (FileNotFoundError, KeyError, zipfile.BadZipFile, json.JSONDecodeError, OSError):
         return {}
@@ -119,7 +145,7 @@ def _read_archipelago_metadata(archive_path: Path) -> Dict[str, Any]:
 
 def _read_apworld_game(apworld_path: Path) -> Optional[str]:
     metadata = _read_archipelago_metadata(apworld_path)
-    for key in ("game", "game_name"):
+    for key in (GAME_KEY, GAME_NAME_KEY):
         value = metadata.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -128,43 +154,43 @@ def _read_apworld_game(apworld_path: Path) -> Optional[str]:
 
 def _read_apworld_version(apworld_path: Path) -> str:
     metadata = _read_archipelago_metadata(apworld_path)
-    for key in ("version", "world_version"):
+    for key in (VERSION_KEY, "world_version"):
         value = metadata.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
         if isinstance(value, (int, float)):
             return str(value)
-    return ""
+    return EMPTY_STRING
 
 
 def _github_latest_apworld(repo_url: str) -> Optional[Tuple[str, str, str]]:
     match = re.match(r"https?://github.com/([^/]+)/([^/#?]+)", repo_url)
     if not match:
         return None
-    owner, repo = match.group(1), match.group(2).rstrip('/')
-    api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+    owner, repo = match.group(1), match.group(2).rstrip(SLASH)
+    api_url = GITHUB_RELEASES_URL_TEMPLATE.format(owner=owner, repo=repo)
     try:
         req = urllib.request.Request(api_url, headers=USER_AGENT)
         with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = json.loads(resp.read().decode(ENCODING_UTF8))
     except Exception:
         return None
 
-    tag = data.get("tag_name") or ""
+    tag = data.get("tag_name") or EMPTY_STRING
     assets = data.get("assets") or []
     for asset in assets:
-        name = asset.get("name") or ""
+        name = asset.get("name") or EMPTY_STRING
         download_url = asset.get("browser_download_url")
-        if name.lower().endswith(".apworld") and download_url:
+        if name.lower().endswith(APWORLD_EXTENSION) and download_url:
             return download_url, tag, name
     return None
 
 
 def _stage_apworld_file(apworld_path: Path, dest_name: Optional[str]) -> Optional[Path]:
     WORLD_DIR.mkdir(parents=True, exist_ok=True)
-    filename = dest_name or apworld_path.name or "world.apworld"
-    if not filename.lower().endswith(".apworld"):
-        filename = f"{filename}.apworld"
+    filename = dest_name or apworld_path.name or APWORLD_FILENAME_DEFAULT
+    if not filename.lower().endswith(APWORLD_EXTENSION):
+        filename = f"{filename}{APWORLD_EXTENSION}"
     dest = WORLD_DIR / filename
     try:
         shutil.copy2(apworld_path, dest)
@@ -174,10 +200,10 @@ def _stage_apworld_file(apworld_path: Path, dest_name: Optional[str]) -> Optiona
 
 
 def _download_apworld(url: str, dest_name: Optional[str]) -> Optional[Path]:
-    filename = dest_name or Path(urllib.parse.urlparse(url).path).name or "world.apworld"
-    if not filename.lower().endswith(".apworld"):
-        filename = f"{filename}.apworld"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".apworld") as tmpf:
+    filename = dest_name or Path(urllib.parse.urlparse(url).path).name or APWORLD_FILENAME_DEFAULT
+    if not filename.lower().endswith(APWORLD_EXTENSION):
+        filename = f"{filename}{APWORLD_EXTENSION}"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=APWORLD_EXTENSION) as tmpf:
         tmp_path = Path(tmpf.name)
     try:
         download_with_progress(
@@ -208,15 +234,15 @@ def _update_playable_cache(
     entry = dict(playable_cache.get(normalized, {}))
     entry.update(
         {
-            "filename": filename,
-            "version": version,
-            "source": source,
+            FILENAME_KEY: filename,
+            VERSION_KEY: version,
+            SOURCE_KEY: source,
         }
     )
     if latest_seen is not None:
-        entry["latest_seen_version"] = latest_seen
+        entry[LATEST_SEEN_VERSION_KEY] = latest_seen
     playable_cache[normalized] = entry
-    cache["playable_worlds"] = playable_cache
+    cache[PLAYABLE_WORLDS_KEY] = playable_cache
     save_apworld_cache(cache)
 
 
@@ -229,9 +255,9 @@ def _update_playable_latest_seen(
     if not normalized:
         return
     entry = dict(playable_cache.get(normalized, {}))
-    entry["latest_seen_version"] = latest_seen
+    entry[LATEST_SEEN_VERSION_KEY] = latest_seen
     playable_cache[normalized] = entry
-    cache["playable_worlds"] = playable_cache
+    cache[PLAYABLE_WORLDS_KEY] = playable_cache
     save_apworld_cache(cache)
 
 
@@ -243,10 +269,10 @@ def _select_custom_apworld(
     target_override: Optional[str] = None,
 ) -> bool:
     selection = _select_file_dialog(
-        title=f"Select .apworld file for {title}",
+        title=f"{APWORLD_FILE_PROMPT} for {title}",
         initial=Path.home(),
-        file_filter="*.apworld",
-        dialog_key="apworld",
+        file_filter=APWORLD_FILE_FILTER,
+        dialog_key=APWORLD_DIALOG_KEY,
     )
     if selection is None:
         return False
@@ -256,17 +282,17 @@ def _select_custom_apworld(
         try:
             dest = _stage_apworld_file(apworld_path, apworld_path.name)
             if dest is None:
-                raise RuntimeError("Failed to stage .apworld file")
+                raise RuntimeError(FAILED_STAGE_APWORLD_MSG)
             APP_LOGGER.log(
                 f"Copied {apworld_path.name} to {WORLD_DIR}",
                 include_context=True,
-                location="apworld-copy",
+                location=WORLD_DIR_COPY_LOCATION,
             )
             target_key = target_override or normalized
             if target_key:
                 existing = playable_cache.get(target_key, {})
                 version = _read_apworld_version(dest)
-                latest_seen = str(existing.get("latest_seen_version", "") or "")
+                latest_seen = str(existing.get(LATEST_SEEN_VERSION_KEY, EMPTY_STRING) or EMPTY_STRING)
                 if version and not latest_seen:
                     latest_seen = version
                 _update_playable_cache(
@@ -274,36 +300,40 @@ def _select_custom_apworld(
                     playable_cache,
                     target_key,
                     dest.name,
-                    version or str(existing.get("version", "") or ""),
-                    str(existing.get("source", "") or ""),
+                    version or str(existing.get(VERSION_KEY, EMPTY_STRING) or EMPTY_STRING),
+                    str(existing.get(SOURCE_KEY, EMPTY_STRING) or EMPTY_STRING),
                     latest_seen=latest_seen or None,
                 )
             return True
         except Exception as exc:  # pragma: no cover - filesystem edge cases
-            error_dialog(f"Failed to copy {apworld_path.name}: {exc}")
+            error_dialog(f"Failed to copy {apworld_path.name}{COLON_SPACE}{exc}")
     else:
-        error_dialog("Selected .apworld file does not exist.")
+        error_dialog(SELECTED_APWORLD_MISSING_MSG)
 
     return False
 
 
 def ensure_apworld_for_patch(patch: Path) -> None:
     game = _read_archipelago_game(patch)
-    normalized = _normalize_game(game) if game else ""
-    display_name = game or (f".{patch.suffix.lstrip('.')} extension" if patch.suffix else "this game")
+    normalized = _normalize_game(game) if game else EMPTY_STRING
+    display_name = game or (
+        f"{DOT}{patch.suffix.lstrip(DOT)} extension" if patch.suffix else "this game"
+    )
 
     cache = load_apworld_cache()
-    core_cached = set(cache.get("core_verified", []))
-    playable_cache = cache.get("playable_worlds", {})
+    core_cached = set(cache.get(CORE_VERIFIED_KEY, []))
+    playable_cache = cache.get(PLAYABLE_WORLDS_KEY, {})
 
     if normalized and normalized in core_cached:
         return
 
     cached_info = playable_cache.get(normalized, {}) if normalized else {}
-    cached_name = str(cached_info.get("filename", "") or "")
-    cached_version = str(cached_info.get("version", "") or "")
-    cached_source = str(cached_info.get("source", "") or "")
-    cached_latest_seen = str(cached_info.get("latest_seen_version", "") or "")
+    cached_name = str(cached_info.get(FILENAME_KEY, EMPTY_STRING) or EMPTY_STRING)
+    cached_version = str(cached_info.get(VERSION_KEY, EMPTY_STRING) or EMPTY_STRING)
+    cached_source = str(cached_info.get(SOURCE_KEY, EMPTY_STRING) or EMPTY_STRING)
+    cached_latest_seen = str(
+        cached_info.get(LATEST_SEEN_VERSION_KEY, EMPTY_STRING) or EMPTY_STRING
+    )
 
     if normalized and cached_name:
         existing = WORLD_DIR / cached_name
@@ -313,16 +343,18 @@ def ensure_apworld_for_patch(patch: Path) -> None:
     core_games = _get_core_games()
     if normalized and core_games is not None and normalized in core_games:
         core_cached.add(normalized)
-        cache["core_verified"] = sorted(core_cached)
+        cache[CORE_VERIFIED_KEY] = sorted(core_cached)
         save_apworld_cache(cache)
         return
 
     playable_map = _get_playable_map()
-    link = cached_source or (playable_map.get(normalized, "") if playable_map and normalized else "")
+    link = cached_source or (
+        playable_map.get(normalized, EMPTY_STRING) if playable_map and normalized else EMPTY_STRING
+    )
 
     download_candidate: Optional[Tuple[str, str, str, str]] = None
     if link:
-        if "github.com" in link:
+        if GITHUB_DOMAIN in link:
             latest = _github_latest_apworld(link)
             if latest:
                 download_url, version_tag, asset_name = latest
@@ -340,18 +372,20 @@ def ensure_apworld_for_patch(patch: Path) -> None:
                     return
                 download_candidate = (download_url, version_tag, asset_name, link)
         else:
-            filename = cached_name or Path(urllib.parse.urlparse(link).path).name or "world.apworld"
-            candidate_name = filename if filename.lower().endswith(".apworld") else f"{filename}.apworld"
+            filename = cached_name or Path(urllib.parse.urlparse(link).path).name or APWORLD_FILENAME_DEFAULT
+            candidate_name = (
+                filename if filename.lower().endswith(APWORLD_EXTENSION) else f"{filename}{APWORLD_EXTENSION}"
+            )
             if (WORLD_DIR / candidate_name).is_file():
                 _update_playable_cache(cache, playable_cache, normalized, candidate_name, cached_version, link)
                 return
-            download_candidate = (link, "", candidate_name, link)
+            download_candidate = (link, EMPTY_STRING, candidate_name, link)
 
     if download_candidate:
         download_url, version_tag, dest_name, source = download_candidate
         version_phrase = f"version {version_tag}" if version_tag else "a download"
         action = choose_install_action(
-            f"APWorld for {display_name}",
+            f"{APWORLD_TITLE_PREFIX}{display_name}",
             (
                 f"An APWorld {version_phrase} was found for {display_name}.\n\n"
                 "Would you like to download it automatically, select your own .apworld file, or cancel?"
@@ -374,13 +408,13 @@ def ensure_apworld_for_patch(patch: Path) -> None:
                     source,
                     latest_seen=latest_seen or None,
                 )
-            info_dialog(f"Installed APWorld for {display_name}: {dest.name}")
+            info_dialog(f"Installed {APWORLD_TITLE_PREFIX}{display_name}{COLON_SPACE}{dest.name}")
         elif action == "Select":
             _select_custom_apworld(display_name, normalized, cache, playable_cache)
         return
 
     choice = _qt_question_dialog(
-        title=f"APWorld for {display_name}",
+        title=f"{APWORLD_TITLE_PREFIX}{display_name}",
         text=(
             f"No downloadable APWorld was found for {display_name}.\n\n"
             "Do you want to select a .apworld file now or cancel?"
@@ -397,26 +431,26 @@ def manual_select_apworld(normalized_override: Optional[str] = None) -> bool:
     """Prompt for a local .apworld file and record it in the cache."""
 
     selection = _select_file_dialog(
-        title="Select .apworld file",
+        title=APWORLD_FILE_PROMPT,
         initial=Path.home(),
-        file_filter="*.apworld",
-        dialog_key="apworld",
+        file_filter=APWORLD_FILE_FILTER,
+        dialog_key=APWORLD_DIALOG_KEY,
     )
     if selection is None:
         return False
 
     apworld_path = Path(selection)
     if not apworld_path.is_file():
-        error_dialog("Selected .apworld file does not exist.")
+        error_dialog(SELECTED_APWORLD_MISSING_MSG)
         return False
 
     dest = _stage_apworld_file(apworld_path, apworld_path.name)
     if dest is None:
-        error_dialog("Failed to stage .apworld file.")
+        error_dialog(FAILED_STAGE_APWORLD_MSG + DOT)
         return False
 
     cache = load_apworld_cache()
-    playable_cache = cache.get("playable_worlds", {})
+    playable_cache = cache.get(PLAYABLE_WORLDS_KEY, {})
     game_name = _read_apworld_game(dest)
     if normalized_override:
         normalized = normalized_override
@@ -430,8 +464,8 @@ def manual_select_apworld(normalized_override: Optional[str] = None) -> bool:
         playable_cache,
         normalized,
         dest.name,
-        version or "manual",
-        "manual",
+        version or MANUAL_SOURCE,
+        MANUAL_SOURCE,
         latest_seen=version or None,
     )
     info_dialog(f"Installed APWorld: {dest.name}")
@@ -441,7 +475,7 @@ def manual_select_apworld(normalized_override: Optional[str] = None) -> bool:
 def _resolve_force_update_target(
     normalized: str, entry: Dict[str, Any]
 ) -> tuple[str, Dict[str, Any]]:
-    filename = str(entry.get("filename", "") or "")
+    filename = str(entry.get(FILENAME_KEY, EMPTY_STRING) or EMPTY_STRING)
     if not filename:
         return normalized, entry
     apworld_path = WORLD_DIR / filename
@@ -460,7 +494,7 @@ def force_update_apworlds(normalized_override: Optional[str] = None) -> bool:
     """Force a refresh of cached APWorld downloads."""
 
     cache = load_apworld_cache()
-    playable_cache = cache.get("playable_worlds", {})
+    playable_cache = cache.get(PLAYABLE_WORLDS_KEY, {})
     updated = False
     playable_map: Optional[dict[str, str]] = None
 
@@ -476,18 +510,20 @@ def force_update_apworlds(normalized_override: Optional[str] = None) -> bool:
         if resolved_normalized != normalized:
             playable_cache.pop(normalized, None)
             playable_cache[resolved_normalized] = resolved_entry
-            cache["playable_worlds"] = playable_cache
+            cache[PLAYABLE_WORLDS_KEY] = playable_cache
             save_apworld_cache(cache)
             normalized = resolved_normalized
             entry = resolved_entry
 
-        version = str(entry.get("version", "") or "")
-        filename = str(entry.get("filename", "") or "")
-        source = str(entry.get("source", "") or "")
-        if not source or source == "manual":
+        version = str(entry.get(VERSION_KEY, EMPTY_STRING) or EMPTY_STRING)
+        filename = str(entry.get(FILENAME_KEY, EMPTY_STRING) or EMPTY_STRING)
+        source = str(entry.get(SOURCE_KEY, EMPTY_STRING) or EMPTY_STRING)
+        if not source or source == MANUAL_SOURCE:
             if playable_map is None:
                 playable_map = _get_playable_map() or {}
-            resolved_source = playable_map.get(normalized, "") if playable_map else ""
+            resolved_source = (
+                playable_map.get(normalized, EMPTY_STRING) if playable_map else EMPTY_STRING
+            )
             if not resolved_source:
                 continue
             source = resolved_source
@@ -498,10 +534,11 @@ def force_update_apworlds(normalized_override: Optional[str] = None) -> bool:
                 filename,
                 version,
                 source,
-                latest_seen=str(entry.get("latest_seen_version", "") or "") or None,
+                latest_seen=str(entry.get(LATEST_SEEN_VERSION_KEY, EMPTY_STRING) or EMPTY_STRING)
+                or None,
             )
             entry = playable_cache.get(normalized, entry)
-        if "github.com" in source:
+        if GITHUB_DOMAIN in source:
             latest = _github_latest_apworld(source)
             if not latest:
                 continue
