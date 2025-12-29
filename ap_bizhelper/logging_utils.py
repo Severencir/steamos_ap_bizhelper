@@ -5,12 +5,12 @@ import contextvars
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Iterable, Optional
 from uuid import uuid4
 
+from ap_bizhelper.constants import APP_NAME, LOG_ROOT, USER_AGENT
 
-APP_NAME = "ap-bizhelper"
-USER_AGENT = f"{APP_NAME}/1.0"
 BRACKET_CLOSE = "]"
 BRACKET_OPEN = "["
 COLON_SPACE = ": "
