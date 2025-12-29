@@ -1,7 +1,7 @@
 SteamOS/Steam Deck–like compatibility > minimal dependencies > simple modification to behavior.
 Simplicity of code > readability of code > all else.
 
-Prefer using shared constants to literals where reasonable.
+Prefer using shared constants to literals where reasonable which should be consolidated to constants.py where possible.
 Prefer reductive changes that solve a problem where reasonable without affecting the default behavior.
 Ask clarifying questions before beginning if instructions are unclear, conflicting, or seem to disagree with the goal.
 Ask about any cleanup that might be possible for touched areas of code rather than just piling more code on top of it.
