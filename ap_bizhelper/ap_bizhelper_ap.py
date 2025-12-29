@@ -16,15 +16,16 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 
 from . import dialogs
 from .ap_bizhelper_config import (
+    CONFIG_DIR,
+    SETTINGS_FILE,
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
 from .logging_utils import get_app_logger
 
 # Paths mirror the bash script and the config helper.
-CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper"))
-SETTINGS_FILE = CONFIG_DIR / "settings.json"
-DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper"))
+LEGACY_DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper"))
+DATA_DIR = Path(os.path.expanduser("~/.local/share/ap-bizhelper"))
 AP_APPIMAGE_DEFAULT = DATA_DIR / "Archipelago.AppImage"
 DESKTOP_DIR = Path(os.path.expanduser("~/Desktop"))
 DOWNLOADS_DIR = Path(os.path.expanduser("~/Downloads"))
@@ -53,6 +54,11 @@ _DEFAULT_SETTINGS = dialogs.DIALOG_DEFAULTS
 
 
 def _ensure_dirs() -> None:
+    if LEGACY_DATA_DIR.exists() and not DATA_DIR.exists():
+        try:
+            shutil.move(str(LEGACY_DATA_DIR), str(DATA_DIR))
+        except Exception:
+            pass
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 

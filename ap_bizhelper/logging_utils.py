@@ -10,7 +10,7 @@ from typing import Dict, Iterable, Optional
 from uuid import uuid4
 
 
-LOG_ROOT = Path.home() / ".local" / "share" / "ap_bizhelper" / "logs"
+LOG_ROOT = Path.home() / ".local" / "share" / "ap-bizhelper" / "logs"
 RUN_ID_ENV = "AP_BIZHELPER_LOG_RUN_ID"
 TIMESTAMP_ENV = "AP_BIZHELPER_LOG_TIMESTAMP"
 SHIM_LOG_ENV = "AP_BIZHELPER_SHIM_LOG_PATH"
