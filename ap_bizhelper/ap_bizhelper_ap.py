@@ -19,13 +19,11 @@ from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
-from .constants import DATA_DIR, USER_AGENT, USER_AGENT_HEADER
+from .constants import DATA_DIR, DESKTOP_DIR, DOWNLOADS_DIR, USER_AGENT, USER_AGENT_HEADER
 from .logging_utils import get_app_logger
 
 # Paths mirror the bash script and the config helper.
 AP_APPIMAGE_DEFAULT = DATA_DIR / "Archipelago.AppImage"
-DESKTOP_DIR = Path(os.path.expanduser("~/Desktop"))
-DOWNLOADS_DIR = Path(os.path.expanduser("~/Downloads"))
 
 APP_LOGGER = get_app_logger()
 
@@ -279,7 +277,7 @@ def _sidebar_urls() -> list["QtCore.QUrl"]:
         Path.home(),
         DOWNLOADS_DIR,
         Path(os.path.expanduser("~/Documents")),
-        Path(os.path.expanduser("~/Desktop")),
+        DESKTOP_DIR,
         Path(os.path.expanduser("~/Music")),
         Path(os.path.expanduser("~/Pictures")),
         Path(os.path.expanduser("~/Videos")),

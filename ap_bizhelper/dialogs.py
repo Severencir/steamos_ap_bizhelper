@@ -15,9 +15,9 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .ap_bizhelper_config import load_settings as _load_shared_settings, save_settings as _save_shared_settings
+from .constants import DOWNLOADS_DIR
 from .logging_utils import AppLogger, get_app_logger
 
-DOWNLOADS_DIR = Path(os.path.expanduser("~/Downloads"))
 DIALOG_DEFAULTS = {
     "QT_FONT_SCALE": 1.5,
     "QT_MIN_POINT_SIZE": 12,

@@ -4,19 +4,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import importlib.metadata
 import json
-import os
 import shlex
 from pathlib import Path
 import shutil
 import subprocess
 from typing import Callable, Optional
 
-from .ap_bizhelper_ap import (
-    AP_APPIMAGE_DEFAULT,
-    DESKTOP_DIR,
-    force_update_appimage,
-    manual_select_appimage,
-)
+from .ap_bizhelper_ap import AP_APPIMAGE_DEFAULT, force_update_appimage, manual_select_appimage
 from .ap_bizhelper_bizhawk import (
     BIZHAWK_WIN_DIR,
     force_update_bizhawk,
@@ -33,7 +27,15 @@ from .ap_bizhelper_config import (
     save_settings,
 )
 from .ap_bizhelper_worlds import WORLD_DIR, force_update_apworlds, manual_select_apworld
-from .constants import DATA_DIR as LAUNCHER_DATA_DIR
+from .constants import (
+    ARCHIPELAGO_CONFIG_DIR,
+    ARCHIPELAGO_DATA_DIR,
+    BACKUPS_DIR,
+    DATA_DIR as LAUNCHER_DATA_DIR,
+    DESKTOP_DIR,
+    DOWNLOADS_DIR,
+    GAME_SAVES_DIR,
+)
 from .dialogs import (
     DIALOG_DEFAULTS,
     checklist_dialog,
@@ -371,11 +373,9 @@ def show_apworlds_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     dialog.exec()
 
 
-AP_CONFIG_DIR = Path(os.path.expanduser("~/.config/Archipelago"))
-AP_DATA_DIR = Path(os.path.expanduser("~/.local/share/Archipelago"))
-BACKUPS_DIR = Path(os.path.expanduser("~/.local/share/ap-bizhelper/backups"))
+AP_CONFIG_DIR = ARCHIPELAGO_CONFIG_DIR
+AP_DATA_DIR = ARCHIPELAGO_DATA_DIR
 EXPORTS_DIR = LAUNCHER_DATA_DIR / "exports"
-GAME_SAVES_DIR = Path(os.path.expanduser("~/.local/share/ap-bizhelper/saves"))
 AP_DESKTOP_SHORTCUT = DESKTOP_DIR / "Archipelago.desktop"
 BIZHAWK_SHORTCUT = DESKTOP_DIR / "BizHawk-Proton.sh"
 BIZHAWK_LEGACY_SHORTCUT = DESKTOP_DIR / "BizHawk-Proton.desktop"
@@ -472,15 +472,14 @@ def _relocate_appimage(
     appimage_path: Path, preserved: list[str], errors: list[str]
 ) -> Optional[Path]:
     try:
-        downloads_dir = Path(os.path.expanduser("~/Downloads"))
-        downloads_dir.mkdir(parents=True, exist_ok=True)
-        target = downloads_dir / appimage_path.name
+        DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        target = DOWNLOADS_DIR / appimage_path.name
         if target.exists():
             stem = appimage_path.stem
             suffix = appimage_path.suffix
             counter = 1
             while True:
-                candidate = downloads_dir / f"{stem}-{counter}{suffix}"
+                candidate = DOWNLOADS_DIR / f"{stem}-{counter}{suffix}"
                 if not candidate.exists():
                     target = candidate
                     break

@@ -12,7 +12,7 @@ except ImportError:  # pragma: no cover - fallback when executed outside the pac
     from .ap_bizhelper_config import load_settings as _load_shared_settings
 
 from ap_bizhelper.logging_utils import RUNNER_LOG_ENV, create_component_logger
-from ap_bizhelper.constants import DATA_DIR, LOG_PREFIX
+from ap_bizhelper.constants import LOG_PREFIX, PROTON_PREFIX, STEAM_ROOT_DIR
 from ap_bizhelper.dialogs import (
     enable_dialog_gamepad as _enable_dialog_gamepad,
     ensure_qt_app as _ensure_qt_app,
@@ -34,10 +34,8 @@ LOG_LEVEL_ERROR = "ERROR"
 LUA_ARG_PREFIX = "--lua="
 LUA_EXTENSION = ".lua"
 GLOB_WILDCARD = "*"
-LOCAL_DIRNAME = ".local"
 LUA_LOCATION = "lua"
 OPTION_PREFIX = "-"
-SHARE_DIRNAME = "share"
 PROTON_BIN_KEY = "PROTON_BIN"
 PROTON_PREFIX_KEY = "PROTON_PREFIX"
 RUNNER_ERROR_TITLE = "BizHawk runner error"
@@ -97,11 +95,9 @@ def ensure_bizhawk_exe() -> Path:
 
 def configure_proton_env():
     proton_bin = get_env_or_config(PROTON_BIN_KEY) or "proton"
-    proton_prefix = get_env_or_config(PROTON_PREFIX_KEY) or str(
-        DATA_DIR / "proton_prefix"
-    )
+    proton_prefix = get_env_or_config(PROTON_PREFIX_KEY) or str(PROTON_PREFIX)
     steam_root = get_env_or_config(STEAM_ROOT_KEY) or str(
-        Path.home() / LOCAL_DIRNAME / SHARE_DIRNAME / "Steam"
+        STEAM_ROOT_DIR
     )
 
     os.environ[ENV_COMPAT_DATA_PATH] = proton_prefix

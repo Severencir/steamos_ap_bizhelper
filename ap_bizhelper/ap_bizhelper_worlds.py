@@ -26,19 +26,19 @@ from .dialogs import (
     info_dialog,
 )
 from .ap_bizhelper_config import load_apworld_cache, save_apworld_cache
-from .constants import USER_AGENT, USER_AGENT_HEADER
+from .constants import ARCHIPELAGO_WORLDS_DIR, FILE_FILTER_APWORLD, USER_AGENT, USER_AGENT_HEADER
 
 SPREADSHEET_ID = "1iuzDTOAvdoNe8Ne8i461qGNucg5OuEoF-Ikqs8aUQZw"
 CORE_SHEET_NAME = "Core-Verified Worlds"
 PLAYABLE_SHEET_NAME = "Playable Worlds"
-WORLD_DIR = Path.home() / ".local/share/Archipelago/worlds"
+WORLD_DIR = ARCHIPELAGO_WORLDS_DIR
 CACHE_KEY = "APWORLD_CACHE"
 GITHUB_ACCEPT_HEADER = "application/vnd.github+json"
 USER_AGENT_HEADERS = {USER_AGENT_HEADER: USER_AGENT}
 GITHUB_API_HEADERS = {**USER_AGENT_HEADERS, "Accept": GITHUB_ACCEPT_HEADER}
 APWORLD_EXTENSION = ".apworld"
 APWORLD_FILENAME_DEFAULT = "world.apworld"
-APWORLD_FILE_FILTER = "*.apworld"
+APWORLD_FILE_FILTER = FILE_FILTER_APWORLD
 APWORLD_DIALOG_KEY = "apworld"
 APWORLD_TITLE_PREFIX = "APWorld for "
 APWORLD_FILE_PROMPT = "Select .apworld file"

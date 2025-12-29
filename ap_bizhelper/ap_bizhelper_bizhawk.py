@@ -20,7 +20,15 @@ from .ap_bizhelper_ap import (
     _normalize_asset_digest,
     download_with_progress,
 )
-from .constants import DATA_DIR, USER_AGENT, USER_AGENT_HEADER
+from .constants import (
+    DATA_DIR,
+    FILE_FILTER_ARCHIVE,
+    FILE_FILTER_EXE,
+    FILE_FILTER_ZIP,
+    PROTON_PREFIX,
+    USER_AGENT,
+    USER_AGENT_HEADER,
+)
 from .dialogs import (
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
@@ -35,7 +43,6 @@ from .ap_bizhelper_config import (
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 
 BIZHAWK_WIN_DIR = DATA_DIR / "bizhawk_win"
-PROTON_PREFIX = DATA_DIR / "proton_prefix"
 PROTON_10_URL = "https://github.com/ValveSoftware/Proton/archive/refs/tags/proton-10.0-3.tar.gz"
 PROTON_10_VERSION = "10.0-3"
 PROTON_10_TAG = "proton-10.0-3"
@@ -82,9 +89,6 @@ DOT = "."
 ELLIPSIS = "..."
 EMPTY_STRING = ""
 ENCODING_UTF8 = "utf-8"
-FILE_FILTER_ARCHIVE = "*.zip *.tar.gz"
-FILE_FILTER_EXE = "*.exe"
-FILE_FILTER_ZIP = "*.zip"
 HOME_TILDE = "~"
 INVALID_DIGEST_PREFIX = "Invalid digest for asset "
 PROTON_BIN_KEY = "PROTON_BIN"
