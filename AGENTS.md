@@ -16,3 +16,49 @@ Prefer modularity where it makes sense.
 This repo is designed to facilitate the use of Archipelago with BizHawk on a Steam Deck–like device.
 The goal is to remove as many user actions as is reasonable, but keep it functional, flexible, and safe.
 The only supported platform is a Steam Deck–like running SteamOS.
+
+Repo structure & low-level flow (minimal highlights)
+
+- Entrypoint & main flow
+  - python -m ap_bizhelper -> ap_bizhelper/__init__.py::console_main -> ap_bizhelper/ap_bizhelper.py::main.
+  - main() orchestrates: settings load -> Qt init -> (optional) Steam relaunch -> prereq downloads -> patch
+    selection -> Archipelago launch -> optional BizHawk auto-launch -> shutdown/SaveRAM sync.
+  - Other commands (ensure, utils, uninstall) are handled in ap_bizhelper.py and do not run the full flow.
+
+- Settings persistence & partitioning (non-obvious but central)
+  - Settings are split across multiple JSON files under ~/.config/ap_bizhelper/ by
+    ap_bizhelper/ap_bizhelper_config.py.
+    - settings.json (safe user prefs), path_settings.json (paths), install_state.json (download/install
+      state), state_settings.json (internal state like relaunch args), plus ext_behavior.json,
+      ext_associations.json, and apworld_cache.json.
+  - load_settings() merges these with defaults; save_settings() re-splits on write. Any new dynamic value
+    should follow this split.
+
+- Archipelago lifecycle
+  - ap_bizhelper/ap_bizhelper_ap.py handles Archipelago AppImage discovery/download and Qt dialog
+    defaults.
+  - AppImage default path is DATA_DIR/Archipelago.AppImage.
+
+- BizHawk + Proton lifecycle
+  - ap_bizhelper/ap_bizhelper_bizhawk.py owns BizHawk download, connectors, and Proton (local copy)
+    management.
+  - run_bizhawk_proton.py is the helper used to launch BizHawk under Proton.
+
+- Auto-launch logic & file associations
+  - Patch arguments can be paths or file:// URIs (_parse_patch_arg).
+  - Patch handling can trigger:
+    - .apworld prompt/copy (in ap_bizhelper_worlds.py),
+    - file association prompting and desktop/mime registration,
+    - extension-based BizHawk auto-launch fallback behavior (ext_behavior.json).
+  - BizHawk auto-launch only happens after Archipelago appears and a ROM is detected; extension behavior
+    controls fallback vs. do-nothing.
+
+- Steam relaunch & shutdown behavior
+  - If not running under Steam, ap_bizhelper.py attempts relaunch via steam://rungameid/<appid> using
+    cached settings.
+  - Shutdown handlers attempt clean BizHawk termination and SaveRAM sync before ending the Steam
+    session.
+
+- SaveRAM sync (confusing from top level)
+  - sync_bizhawk_saveram() centralizes per-instance SaveRAM directories into a shared path (defaults
+    under ~/Documents/bizhawk-saveram) and replaces per-instance SaveRAM dirs with symlinks.
