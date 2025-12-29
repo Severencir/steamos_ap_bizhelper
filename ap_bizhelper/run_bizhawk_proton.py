@@ -12,7 +12,13 @@ except ImportError:  # pragma: no cover - fallback when executed outside the pac
     from .ap_bizhelper_config import load_settings as _load_shared_settings
 
 from ap_bizhelper.logging_utils import RUNNER_LOG_ENV, create_component_logger
-from ap_bizhelper.constants import LOG_PREFIX, PROTON_PREFIX, STEAM_ROOT_DIR
+from ap_bizhelper.constants import (
+    BIZHAWK_EXE_KEY,
+    LOG_PREFIX,
+    PROTON_BIN_KEY,
+    PROTON_PREFIX,
+    STEAM_ROOT_DIR,
+)
 from ap_bizhelper.dialogs import (
     enable_dialog_gamepad as _enable_dialog_gamepad,
     ensure_qt_app as _ensure_qt_app,
@@ -20,7 +26,6 @@ from ap_bizhelper.dialogs import (
     error_dialog as _shared_error_dialog,
 )
 
-BIZHAWK_EXE_KEY = "BIZHAWK_EXE"
 COMMAND_LOCATION = "command"
 CONNECTOR_GENERIC = "connector_bizhawk_generic.lua"
 CONNECTOR_SNI = "connector.lua"
@@ -36,7 +41,6 @@ LUA_EXTENSION = ".lua"
 GLOB_WILDCARD = "*"
 LUA_LOCATION = "lua"
 OPTION_PREFIX = "-"
-PROTON_BIN_KEY = "PROTON_BIN"
 PROTON_PREFIX_KEY = "PROTON_PREFIX"
 RUNNER_ERROR_TITLE = "BizHawk runner error"
 RUNNER_MAIN_CONTEXT = "runner-main"

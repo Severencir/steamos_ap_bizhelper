@@ -27,6 +27,7 @@ Commands:
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import shlex
@@ -34,30 +35,63 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .constants import CONFIG_DIR
+from .constants import (
+    AP_APPIMAGE_KEY,
+    AP_DESKTOP_SHORTCUT_KEY,
+    AP_LATEST_SEEN_VERSION_KEY,
+    AP_SKIP_VERSION_KEY,
+    AP_VERSION_KEY,
+    BIZHELPER_APPIMAGE_KEY,
+    BIZHAWK_AP_CONNECTOR_LATEST_SEEN_KEY,
+    BIZHAWK_AP_CONNECTOR_VERSION_KEY,
+    BIZHAWK_DESKTOP_SHORTCUT_KEY,
+    BIZHAWK_EXE_KEY,
+    BIZHAWK_LATEST_SEEN_KEY,
+    BIZHAWK_RUNNER_KEY,
+    BIZHAWK_SKIP_VERSION_KEY,
+    BIZHAWK_SNI_VERSION_KEY,
+    BIZHAWK_VERSION_KEY,
+    BIZHAWK_SAVERAM_DIR_KEY,
+    CONFIG_DIR,
+    DESKTOP_DIR_KEY,
+    DOWNLOADS_DIR_KEY,
+    LAST_FILE_DIALOG_DIR_KEY,
+    LAST_FILE_DIALOG_DIRS_KEY,
+    LAST_ROM_DIR_KEY,
+    PENDING_RELAUNCH_ARGS_KEY,
+    PROTON_BIN_KEY,
+    ROM_HASH_CACHE_KEY,
+    ROM_ROOTS_KEY,
+    SFC_LUA_PATH_KEY,
+    STEAM_APPID_KEY,
+    STEAM_ROOT_PATH_KEY,
+    USE_CACHED_RELAUNCH_ARGS_KEY,
+)
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
+STATE_SETTINGS_FILE = CONFIG_DIR / "state_settings.json"
 EXT_BEHAVIOR_FILE = CONFIG_DIR / "ext_behavior.json"
 EXT_ASSOCIATION_FILE = CONFIG_DIR / "ext_associations.json"
 APWORLD_CACHE_FILE = CONFIG_DIR / "apworld_cache.json"
 PATH_SETTINGS_FILE = CONFIG_DIR / "path_settings.json"
 BIZHAWK_SAVERAM_DIR = Path(os.path.expanduser("~/Documents/bizhawk-saveram"))
 PATH_SETTINGS_DEFAULTS = {
-    "DESKTOP_DIR": str(Path.home() / "Desktop"),
-    "DOWNLOADS_DIR": str(Path.home() / "Downloads"),
-    "BIZHAWK_SAVERAM_DIR": str(BIZHAWK_SAVERAM_DIR),
-    "STEAM_ROOT_PATH": str(Path(os.path.expanduser("~/.steam/steam"))),
+    DESKTOP_DIR_KEY: str(Path.home() / "Desktop"),
+    DOWNLOADS_DIR_KEY: str(Path.home() / "Downloads"),
+    BIZHAWK_SAVERAM_DIR_KEY: str(BIZHAWK_SAVERAM_DIR),
+    STEAM_ROOT_PATH_KEY: str(Path(os.path.expanduser("~/.steam/steam"))),
+    SFC_LUA_PATH_KEY: "",
+    LAST_FILE_DIALOG_DIR_KEY: "",
+    LAST_FILE_DIALOG_DIRS_KEY: {},
+    LAST_ROM_DIR_KEY: "",
+    ROM_ROOTS_KEY: [],
 }
-AP_APPIMAGE_KEY = "AP_APPIMAGE"
-AP_SKIP_VERSION_KEY = "AP_SKIP_VERSION"
-AP_VERSION_KEY = "AP_VERSION"
-BIZHELPER_APPIMAGE_KEY = "BIZHELPER_APPIMAGE"
-BIZHAWK_AP_CONNECTOR_VERSION_KEY = "BIZHAWK_AP_CONNECTOR_VERSION"
-BIZHAWK_EXE_KEY = "BIZHAWK_EXE"
-BIZHAWK_RUNNER_KEY = "BIZHAWK_RUNNER"
-BIZHAWK_SKIP_VERSION_KEY = "BIZHAWK_SKIP_VERSION"
-BIZHAWK_SNI_VERSION_KEY = "BIZHAWK_SNI_VERSION"
-BIZHAWK_VERSION_KEY = "BIZHAWK_VERSION"
+STATE_SETTINGS_DEFAULTS = {
+    PENDING_RELAUNCH_ARGS_KEY: [],
+    ROM_HASH_CACHE_KEY: {},
+    STEAM_APPID_KEY: "",
+    USE_CACHED_RELAUNCH_ARGS_KEY: False,
+}
 DISABLED_MODE = "disabled"
 ENABLED_MODE = "enabled"
 EMPTY_STRING = ""
@@ -65,30 +99,25 @@ ENCODING_UTF8 = "utf-8"
 EXTENSIONS_KEY = "extensions"
 MODE_KEY = "mode"
 PROMPT_MODE = "prompt"
-PROTON_BIN_KEY = "PROTON_BIN"
-
 # Keys we expose back to Bash as shell variables.
 INSTALL_STATE_KEYS = {
     AP_APPIMAGE_KEY,
     AP_VERSION_KEY,
     AP_SKIP_VERSION_KEY,
+    AP_LATEST_SEEN_VERSION_KEY,
     BIZHELPER_APPIMAGE_KEY,
     BIZHAWK_EXE_KEY,
     BIZHAWK_VERSION_KEY,
     BIZHAWK_SKIP_VERSION_KEY,
+    BIZHAWK_LATEST_SEEN_KEY,
     BIZHAWK_RUNNER_KEY,
     PROTON_BIN_KEY,
     BIZHAWK_AP_CONNECTOR_VERSION_KEY,
+    BIZHAWK_AP_CONNECTOR_LATEST_SEEN_KEY,
     BIZHAWK_SNI_VERSION_KEY,
 }
 
-SETTINGS_KEYS = [
-    AP_APPIMAGE_KEY,
-    BIZHELPER_APPIMAGE_KEY,
-    BIZHAWK_EXE_KEY,
-    PROTON_BIN_KEY,
-    BIZHAWK_RUNNER_KEY,
-    "SFC_LUA_PATH",
+SAFE_SETTINGS_KEYS = [
     "QT_FONT_SCALE",
     "QT_MIN_POINT_SIZE",
     "QT_FILE_NAME_FONT_SCALE",
@@ -102,18 +131,33 @@ SETTINGS_KEYS = [
     "QT_FILE_DIALOG_DATE_WIDTH",
     "QT_FILE_DIALOG_SIDEBAR_WIDTH",
     "QT_FILE_DIALOG_SIDEBAR_ICON_SIZE",
-    AP_VERSION_KEY,
-    AP_SKIP_VERSION_KEY,
-    BIZHAWK_VERSION_KEY,
-    BIZHAWK_SKIP_VERSION_KEY,
-    "AP_DESKTOP_SHORTCUT",
-    "STEAM_APPID",
+    AP_DESKTOP_SHORTCUT_KEY,
+    BIZHAWK_DESKTOP_SHORTCUT_KEY,
 ]
 PATH_SETTINGS_KEYS = [
-    "DESKTOP_DIR",
-    "DOWNLOADS_DIR",
-    "BIZHAWK_SAVERAM_DIR",
-    "STEAM_ROOT_PATH",
+    DESKTOP_DIR_KEY,
+    DOWNLOADS_DIR_KEY,
+    BIZHAWK_SAVERAM_DIR_KEY,
+    STEAM_ROOT_PATH_KEY,
+    SFC_LUA_PATH_KEY,
+    LAST_FILE_DIALOG_DIR_KEY,
+    LAST_FILE_DIALOG_DIRS_KEY,
+    LAST_ROM_DIR_KEY,
+    ROM_ROOTS_KEY,
+]
+STATE_SETTINGS_KEYS = [
+    PENDING_RELAUNCH_ARGS_KEY,
+    ROM_HASH_CACHE_KEY,
+    STEAM_APPID_KEY,
+    USE_CACHED_RELAUNCH_ARGS_KEY,
+]
+SAFE_SETTINGS_SET = set(SAFE_SETTINGS_KEYS)
+PATH_SETTINGS_SET = set(PATH_SETTINGS_KEYS)
+STATE_SETTINGS_SET = set(STATE_SETTINGS_KEYS)
+SETTINGS_KEYS = [
+    *SAFE_SETTINGS_KEYS,
+    *STATE_SETTINGS_KEYS,
+    *sorted(INSTALL_STATE_KEYS),
 ]
 
 
@@ -125,14 +169,20 @@ def _load_path_settings() -> Dict[str, Any]:
     return _load_json(PATH_SETTINGS_FILE)
 
 
+def _load_state_settings() -> Dict[str, Any]:
+    return _load_json(STATE_SETTINGS_FILE)
+
+
 def load_settings() -> Dict[str, Any]:
     """Return the persisted settings and install state as one mapping."""
 
     settings = _load_json(SETTINGS_FILE)
     path_settings = _load_path_settings()
     needs_save = _apply_defaults(path_settings, PATH_SETTINGS_DEFAULTS)
+    state_settings = _load_state_settings()
+    needs_save = _apply_defaults(state_settings, STATE_SETTINGS_DEFAULTS) or needs_save
     install_state = _load_install_state()
-    merged = {**settings, **path_settings, **install_state}
+    merged = {**settings, **path_settings, **state_settings, **install_state}
     if needs_save:
         save_settings(merged)
     return merged
@@ -147,23 +197,26 @@ def load_apworld_cache() -> Dict[str, Any]:
 def save_settings(settings: Dict[str, Any]) -> None:
     """Persist the given settings mapping to disk.
 
-    Settings are split between general parameters and installation state so that
-    installation paths/versions can be managed independently.
+    Settings are split between user-safe preferences, paths, install state,
+    and internal state so each category can be managed independently.
     """
 
-    general_settings = {
-        k: v
-        for k, v in settings.items()
-        if k not in INSTALL_STATE_KEYS and k not in PATH_SETTINGS_KEYS
-    }
+    general_settings = {k: v for k, v in settings.items() if k in SAFE_SETTINGS_SET}
     path_settings = {k: v for k, v in settings.items() if k in PATH_SETTINGS_KEYS}
     install_state = {k: v for k, v in settings.items() if k in INSTALL_STATE_KEYS}
+    state_settings = {
+        k: v
+        for k, v in settings.items()
+        if k in STATE_SETTINGS_SET
+        or k not in SAFE_SETTINGS_SET | PATH_SETTINGS_SET | INSTALL_STATE_KEYS
+    }
 
     # Persist the filtered mappings directly so keys removed from ``settings``
     # are also removed from disk.
     _save_json(SETTINGS_FILE, general_settings)
     _save_json(PATH_SETTINGS_FILE, path_settings)
     _save_json(INSTALL_STATE_FILE, install_state)
+    _save_json(STATE_SETTINGS_FILE, state_settings)
 
 
 def get_path_setting(settings: Dict[str, Any], key: str) -> Path:
@@ -316,7 +369,7 @@ def _apply_defaults(settings: Dict[str, Any], defaults: Dict[str, Any]) -> bool:
     updated = False
     for key, value in defaults.items():
         if key not in settings:
-            settings[key] = value
+            settings[key] = copy.deepcopy(value)
             updated = True
     return updated
 
