@@ -33,6 +33,7 @@ from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
+from .logging_utils import USER_AGENT
 
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 
@@ -117,7 +118,6 @@ STEAM_ROOT_PATH = "~/.steam/steam"
 TAR_TYPE_HINT = "tar"
 TAG_NAME_KEY = "tag_name"
 USER_AGENT_HEADER = "User-Agent"
-USER_AGENT_VALUE = "ap-bizhelper/1.0"
 WIN_X64_SUFFIX = "win-x64.zip"
 YES_VALUE = "yes"
 
@@ -150,7 +150,7 @@ def _github_latest_bizhawk() -> Tuple[str, str, str, str]:
     """
     import urllib.request
 
-    req = urllib.request.Request(GITHUB_API_LATEST, headers={USER_AGENT_HEADER: USER_AGENT_VALUE})
+    req = urllib.request.Request(GITHUB_API_LATEST, headers={USER_AGENT_HEADER: USER_AGENT})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = resp.read().decode(ENCODING_UTF8)
     j = json.loads(data)

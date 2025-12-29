@@ -21,7 +21,7 @@ from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
-from .logging_utils import get_app_logger
+from .logging_utils import USER_AGENT, get_app_logger
 
 # Paths mirror the bash script and the config helper.
 LEGACY_DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper"))
@@ -770,7 +770,7 @@ def _github_latest_appimage() -> Tuple[str, str, str, str]:
     import urllib.request
     import json as _json
 
-    req = urllib.request.Request(GITHUB_API_LATEST, headers={"User-Agent": "ap-bizhelper/1.0"})
+    req = urllib.request.Request(GITHUB_API_LATEST, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = resp.read().decode("utf-8")
     j = _json.loads(data)
@@ -817,7 +817,7 @@ def download_with_progress(
     _ensure_dirs()
     _ensure_qt_available()
 
-    req = urllib.request.Request(url, headers={"User-Agent": "ap-bizhelper/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
 
     response_headers: dict[str, str] = {}
     temp_path: Optional[Path] = None
