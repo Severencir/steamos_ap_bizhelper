@@ -10,26 +10,44 @@ from typing import Dict, Iterable, Optional
 from uuid import uuid4
 
 
-LOG_ROOT = Path.home() / ".local" / "share" / "ap-bizhelper" / "logs"
+APP_NAME = "ap-bizhelper"
+BRACKET_CLOSE = "]"
+BRACKET_OPEN = "["
+COLON_SPACE = ": "
+DASH = "-"
+FORWARD_SLASH = "/"
+NEWLINE = "\n"
+SPACE = " "
+UNDERSCORE = "_"
+LOG_ROOT = Path.home() / ".local" / "share" / APP_NAME / "logs"
 RUN_ID_ENV = "AP_BIZHELPER_LOG_RUN_ID"
 TIMESTAMP_ENV = "AP_BIZHELPER_LOG_TIMESTAMP"
 SHIM_LOG_ENV = "AP_BIZHELPER_SHIM_LOG_PATH"
 RUNNER_LOG_ENV = "AP_BIZHELPER_RUNNER_LOG_PATH"
+CONTEXT_SEPARATOR = " > "
+DEFAULT_CATEGORY = APP_NAME
+DEFAULT_LOCATION = "root"
+ENCODING_UTF8 = "utf-8"
+LOG_FILE_SUFFIX = ".log"
+LOG_LEVEL_ERROR = "ERROR"
+LOG_LEVEL_INFO = "INFO"
+STDERR_STREAM = "stderr"
+STDOUT_STREAM = "stdout"
 _CONTEXT_STACK: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
     "ap_bizhelper_context", default=()
 )
 _SUPPRESS_CAPTURE = contextvars.ContextVar("ap_bizhelper_suppress_capture", default=False)
-_GLOBAL_LOGGER: Optional["AppLogger"] = None
+_GLOBAL_LOGGER: Optional[AppLogger] = None
 
 
 def _slugify(label: str) -> str:
-    return label.strip().replace(" ", "_").replace("/", "-") or "general"
+    return label.strip().replace(SPACE, UNDERSCORE).replace(FORWARD_SLASH, DASH) or "general"
 
 
 class _StreamCapture:
     """Mirror writes to a stream into the app logger with context awareness."""
 
-    def __init__(self, logger: "AppLogger", stream, level: str, location: str) -> None:
+    def __init__(self, logger: AppLogger, stream, level: str, location: str) -> None:
         self._logger = logger
         self._stream = stream
         self._level = level
@@ -77,7 +95,7 @@ class AppLogger:
 
     def __init__(
         self,
-        category: str = "ap-bizhelper",
+        category: str = DEFAULT_CATEGORY,
         *,
         log_dir: Optional[Path] = None,
         log_path: Optional[Path] = None,
@@ -92,13 +110,16 @@ class AppLogger:
         if log_path:
             self.path = Path(log_path)
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            stem_parts = self.path.stem.split("_")
+            stem_parts = self.path.stem.split(UNDERSCORE)
             if timestamp is None and len(stem_parts) >= 2:
                 self.timestamp = stem_parts[-2]
             if run_id is None and len(stem_parts) >= 1:
                 self.run_id = stem_parts[-1]
         else:
-            self.path = base_dir / f"{self.category}_{self.timestamp}_{self.run_id}.log"
+            self.path = (
+                base_dir
+                / f"{self.category}{UNDERSCORE}{self.timestamp}{UNDERSCORE}{self.run_id}{LOG_FILE_SUFFIX}"
+            )
         self._sequence = 0
         self._original_stdout = _unwrap_stream(sys.stdout)
         self._original_stderr = _unwrap_stream(sys.stderr)
@@ -116,14 +137,14 @@ class AppLogger:
 
     def _next_entry_id(self) -> str:
         self._sequence += 1
-        return f"{self.run_id}-{self._sequence:04d}"
+        return f"{self.run_id}{DASH}{self._sequence:04d}"
 
     def _context_label(self) -> str:
         stack = _CONTEXT_STACK.get()
-        return " > ".join(stack)
+        return CONTEXT_SEPARATOR.join(stack)
 
-    def _write_console(self, text: str, *, stream: str = "stdout") -> None:
-        destination = self._original_stdout if stream == "stdout" else self._original_stderr
+    def _write_console(self, text: str, *, stream: str = STDOUT_STREAM) -> None:
+        destination = self._original_stdout if stream == STDOUT_STREAM else self._original_stderr
         token = _SUPPRESS_CAPTURE.set(True)
         try:
             destination.write(text)
@@ -135,46 +156,58 @@ class AppLogger:
         self,
         message: str,
         *,
-        level: str = "INFO",
+        level: str = LOG_LEVEL_INFO,
         location: Optional[str] = None,
         include_context: bool = False,
         mirror_console: bool = False,
-        stream: str = "stdout",
+        stream: str = STDOUT_STREAM,
     ) -> str:
         entry_id = self._next_entry_id()
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         context_label = self._context_label()
-        location_id = _slugify(location or (context_label.split(" > ")[-1] if context_label else "root"))
+        location_id = _slugify(
+            location or (context_label.split(CONTEXT_SEPARATOR)[-1] if context_label else DEFAULT_LOCATION)
+        )
 
-        parts = [f"[{timestamp}]", f"[{entry_id}]", f"[{location_id}]", f"[{level.upper()}]"]
+        parts = [
+            f"{BRACKET_OPEN}{timestamp}{BRACKET_CLOSE}",
+            f"{BRACKET_OPEN}{entry_id}{BRACKET_CLOSE}",
+            f"{BRACKET_OPEN}{location_id}{BRACKET_CLOSE}",
+            f"{BRACKET_OPEN}{level.upper()}{BRACKET_CLOSE}",
+        ]
         if include_context and context_label:
-            parts.append(f"[ctx:{context_label}]")
+            parts.append(f"{BRACKET_OPEN}ctx:{context_label}{BRACKET_CLOSE}")
         parts.append(message)
-        line = " ".join(parts)
-        with self.path.open("a", encoding="utf-8") as log_file:
-            log_file.write(line + "\n")
+        line = SPACE.join(parts)
+        with self.path.open("a", encoding=ENCODING_UTF8) as log_file:
+            log_file.write(line + NEWLINE)
 
         if mirror_console:
-            self._write_console(line + "\n", stream=stream)
+            self._write_console(line + NEWLINE, stream=stream)
         return entry_id
 
     def log_lines(
-        self, prefix: str, lines: Iterable[str], *, level: str = "INFO", location: Optional[str] = None
+        self,
+        prefix: str,
+        lines: Iterable[str],
+        *,
+        level: str = LOG_LEVEL_INFO,
+        location: Optional[str] = None,
     ) -> None:
         for line in lines:
-            self.log(f"{prefix}: {line}", level=level, location=location, include_context=True)
+            self.log(f"{prefix}{COLON_SPACE}{line}", level=level, location=location, include_context=True)
 
     def log_dialog(
         self,
         title: str,
         message: str,
         *,
-        level: str = "INFO",
+        level: str = LOG_LEVEL_INFO,
         backend: str = "qt",
         location: Optional[str] = None,
     ) -> str:
         return self.log(
-            f"Dialog[{backend}] {title}: {message}",
+            f"Dialog{BRACKET_OPEN}{backend}{BRACKET_CLOSE}{SPACE}{title}{COLON_SPACE}{message}",
             level=level,
             location=location or f"dialog-{backend}",
             include_context=True,
@@ -183,8 +216,8 @@ class AppLogger:
     def capture_console_streams(self) -> None:
         if isinstance(sys.stdout, _StreamCapture) or isinstance(sys.stderr, _StreamCapture):
             return
-        sys.stdout = _StreamCapture(self, self._original_stdout, "INFO", "stdout")
-        sys.stderr = _StreamCapture(self, self._original_stderr, "ERROR", "stderr")
+        sys.stdout = _StreamCapture(self, self._original_stdout, LOG_LEVEL_INFO, STDOUT_STREAM)
+        sys.stderr = _StreamCapture(self, self._original_stderr, LOG_LEVEL_ERROR, STDERR_STREAM)
 
     def session_environ(self, *, env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         base = {} if env is None else dict(env)
@@ -195,7 +228,10 @@ class AppLogger:
     def component_log_path(self, category: str, *, subdir: Optional[str] = None) -> Path:
         target_dir = LOG_ROOT / subdir if subdir else LOG_ROOT
         target_dir.mkdir(parents=True, exist_ok=True)
-        return target_dir / f"{_slugify(category)}_{self.timestamp}_{self.run_id}.log"
+        return (
+            target_dir
+            / f"{_slugify(category)}{UNDERSCORE}{self.timestamp}{UNDERSCORE}{self.run_id}{LOG_FILE_SUFFIX}"
+        )
 
     def component_environ(
         self,
@@ -229,7 +265,7 @@ def create_component_logger(
     return logger
 
 
-def get_app_logger(category: str = "ap-bizhelper", *, log_dir: Optional[Path] = None) -> AppLogger:
+def get_app_logger(category: str = DEFAULT_CATEGORY, *, log_dir: Optional[Path] = None) -> AppLogger:
     global _GLOBAL_LOGGER
     if _GLOBAL_LOGGER is None:
         _GLOBAL_LOGGER = AppLogger(

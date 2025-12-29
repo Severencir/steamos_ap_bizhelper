@@ -44,28 +44,46 @@ EXT_BEHAVIOR_FILE = CONFIG_DIR / "ext_behavior.json"
 EXT_ASSOCIATION_FILE = CONFIG_DIR / "ext_associations.json"
 APWORLD_CACHE_FILE = CONFIG_DIR / "apworld_cache.json"
 BIZHAWK_SAVERAM_DIR = Path(os.path.expanduser("~/Documents/bizhawk-saveram"))
+AP_APPIMAGE_KEY = "AP_APPIMAGE"
+AP_SKIP_VERSION_KEY = "AP_SKIP_VERSION"
+AP_VERSION_KEY = "AP_VERSION"
+BIZHELPER_APPIMAGE_KEY = "BIZHELPER_APPIMAGE"
+BIZHAWK_AP_CONNECTOR_VERSION_KEY = "BIZHAWK_AP_CONNECTOR_VERSION"
+BIZHAWK_EXE_KEY = "BIZHAWK_EXE"
+BIZHAWK_RUNNER_KEY = "BIZHAWK_RUNNER"
+BIZHAWK_SKIP_VERSION_KEY = "BIZHAWK_SKIP_VERSION"
+BIZHAWK_SNI_VERSION_KEY = "BIZHAWK_SNI_VERSION"
+BIZHAWK_VERSION_KEY = "BIZHAWK_VERSION"
+DISABLED_MODE = "disabled"
+ENABLED_MODE = "enabled"
+EMPTY_STRING = ""
+ENCODING_UTF8 = "utf-8"
+EXTENSIONS_KEY = "extensions"
+MODE_KEY = "mode"
+PROMPT_MODE = "prompt"
+PROTON_BIN_KEY = "PROTON_BIN"
 
 # Keys we expose back to Bash as shell variables.
 INSTALL_STATE_KEYS = {
-    "AP_APPIMAGE",
-    "AP_VERSION",
-    "AP_SKIP_VERSION",
-    "BIZHELPER_APPIMAGE",
-    "BIZHAWK_EXE",
-    "BIZHAWK_VERSION",
-    "BIZHAWK_SKIP_VERSION",
-    "BIZHAWK_RUNNER",
-    "PROTON_BIN",
-    "BIZHAWK_AP_CONNECTOR_VERSION",
-    "BIZHAWK_SNI_VERSION",
+    AP_APPIMAGE_KEY,
+    AP_VERSION_KEY,
+    AP_SKIP_VERSION_KEY,
+    BIZHELPER_APPIMAGE_KEY,
+    BIZHAWK_EXE_KEY,
+    BIZHAWK_VERSION_KEY,
+    BIZHAWK_SKIP_VERSION_KEY,
+    BIZHAWK_RUNNER_KEY,
+    PROTON_BIN_KEY,
+    BIZHAWK_AP_CONNECTOR_VERSION_KEY,
+    BIZHAWK_SNI_VERSION_KEY,
 }
 
 SETTINGS_KEYS = [
-    "AP_APPIMAGE",
-    "BIZHELPER_APPIMAGE",
-    "BIZHAWK_EXE",
-    "PROTON_BIN",
-    "BIZHAWK_RUNNER",
+    AP_APPIMAGE_KEY,
+    BIZHELPER_APPIMAGE_KEY,
+    BIZHAWK_EXE_KEY,
+    PROTON_BIN_KEY,
+    BIZHAWK_RUNNER_KEY,
     "SFC_LUA_PATH",
     "QT_FONT_SCALE",
     "QT_MIN_POINT_SIZE",
@@ -80,10 +98,10 @@ SETTINGS_KEYS = [
     "QT_FILE_DIALOG_DATE_WIDTH",
     "QT_FILE_DIALOG_SIDEBAR_WIDTH",
     "QT_FILE_DIALOG_SIDEBAR_ICON_SIZE",
-    "AP_VERSION",
-    "AP_SKIP_VERSION",
-    "BIZHAWK_VERSION",
-    "BIZHAWK_SKIP_VERSION",
+    AP_VERSION_KEY,
+    AP_SKIP_VERSION_KEY,
+    BIZHAWK_VERSION_KEY,
+    BIZHAWK_SKIP_VERSION_KEY,
     "AP_DESKTOP_SHORTCUT",
     "STEAM_APPID",
 ]
@@ -137,7 +155,7 @@ def get_ext_behavior(ext: str) -> Optional[str]:
         return None
     behaviors = _load_json(EXT_BEHAVIOR_FILE)
     value = behaviors.get(ext)
-    if value is None or value == "":
+    if value is None or value == EMPTY_STRING:
         return None
     return str(value)
 
@@ -157,27 +175,27 @@ def get_association_mode() -> str:
     """Return the persisted association mode (``prompt`` by default)."""
 
     data = _load_json(EXT_ASSOCIATION_FILE)
-    mode = str(data.get("mode") or "prompt").lower()
-    if mode not in {"prompt", "enabled", "disabled"}:
-        return "prompt"
+    mode = str(data.get(MODE_KEY) or PROMPT_MODE).lower()
+    if mode not in {PROMPT_MODE, ENABLED_MODE, DISABLED_MODE}:
+        return PROMPT_MODE
     return mode
 
 
 def set_association_mode(mode: str) -> None:
     """Persist the association mode (``prompt``, ``enabled``, or ``disabled``)."""
 
-    mode = str(mode or "").strip().lower()
-    if mode not in {"prompt", "enabled", "disabled"}:
+    mode = str(mode or EMPTY_STRING).strip().lower()
+    if mode not in {PROMPT_MODE, ENABLED_MODE, DISABLED_MODE}:
         return
 
     data = _load_json(EXT_ASSOCIATION_FILE)
-    data["mode"] = mode
+    data[MODE_KEY] = mode
     _save_json(EXT_ASSOCIATION_FILE, data)
 
 
 def _load_association_map() -> Dict[str, str]:
     data = _load_json(EXT_ASSOCIATION_FILE)
-    associations = data.get("extensions")
+    associations = data.get(EXTENSIONS_KEY)
     if not isinstance(associations, dict):
         return {}
     return {str(k).strip().lower(): str(v) for k, v in associations.items() if str(k).strip()}
@@ -200,12 +218,12 @@ def set_ext_association(ext: str, value: str) -> None:
         return
 
     data = _load_json(EXT_ASSOCIATION_FILE)
-    associations = data.get("extensions")
+    associations = data.get(EXTENSIONS_KEY)
     if not isinstance(associations, dict):
         associations = {}
 
     associations[ext] = value
-    data["extensions"] = associations
+    data[EXTENSIONS_KEY] = associations
     _save_json(EXT_ASSOCIATION_FILE, data)
 
 
@@ -217,12 +235,12 @@ def clear_ext_association(ext: str) -> None:
         return
 
     data = _load_json(EXT_ASSOCIATION_FILE)
-    associations = data.get("extensions")
+    associations = data.get(EXTENSIONS_KEY)
     if not isinstance(associations, dict):
         return
 
     associations.pop(ext, None)
-    data["extensions"] = associations
+    data[EXTENSIONS_KEY] = associations
     _save_json(EXT_ASSOCIATION_FILE, data)
 
 
@@ -247,7 +265,7 @@ def _load_json(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        with path.open("r", encoding="utf-8") as f:
+        with path.open("r", encoding=ENCODING_UTF8) as f:
             return json.load(f)
     except Exception:
         # Corrupt file? Treat as empty; the Bash side will behave as if
@@ -258,7 +276,7 @@ def _load_json(path: Path) -> Dict[str, Any]:
 def _save_json(path: Path, data: Dict[str, Any]) -> None:
     _ensure_config_dir()
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
+    with tmp.open("w", encoding=ENCODING_UTF8) as f:
         json.dump(data, f, indent=2, sort_keys=True)
         f.write("\n")
     tmp.replace(path)
@@ -285,7 +303,7 @@ def cmd_export_shell() -> int:
     """
     settings = load_settings()
     for key in SETTINGS_KEYS:
-        if key in settings and settings[key] not in (None, ""):
+        if key in settings and settings[key] not in (None, EMPTY_STRING):
             value = str(settings[key])
             # Use shlex.quote to make it safe for eval in Bash.
             print(f"{key}={shlex.quote(value)}")
@@ -307,7 +325,7 @@ def cmd_save_from_env() -> int:
     install_state = {k: v for k, v in combined_settings.items() if k in INSTALL_STATE_KEYS}
 
     for key in SETTINGS_KEYS:
-        if key in os.environ and os.environ.get(key, "") != "":
+        if key in os.environ and os.environ.get(key, EMPTY_STRING) != EMPTY_STRING:
             if key in INSTALL_STATE_KEYS:
                 install_state[key] = os.environ[key]
             else:
@@ -329,7 +347,7 @@ def cmd_get_ext(ext: str) -> int:
         return 1
     behaviors = _load_json(EXT_BEHAVIOR_FILE)
     value = behaviors.get(ext)
-    if value is None or value == "":
+    if value is None or value == EMPTY_STRING:
         return 1
     print(str(value))
     return 0
