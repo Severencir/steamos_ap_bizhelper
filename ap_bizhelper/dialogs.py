@@ -14,8 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .ap_bizhelper_config import load_settings as _load_shared_settings, save_settings as _save_shared_settings
-from .constants import DOWNLOADS_DIR
+from .ap_bizhelper_config import (
+    get_path_setting,
+    load_settings as _load_shared_settings,
+    save_settings as _save_shared_settings,
+)
 from .logging_utils import AppLogger, get_app_logger
 
 DIALOG_DEFAULTS = {
@@ -614,9 +617,10 @@ def _sidebar_urls(*, start_dir: Optional[Path] = None, settings: Optional[Dict[s
         if p:
             paths.append(Path(p))
 
-    # Fall back to the hard-coded Downloads dir if Qt doesn't provide one.
-    if DOWNLOADS_DIR not in paths:
-        paths.append(DOWNLOADS_DIR)
+    downloads_dir = get_path_setting(settings or {}, "DOWNLOADS_DIR")
+    # Fall back to the configured Downloads dir if Qt doesn't provide one.
+    if downloads_dir not in paths:
+        paths.append(downloads_dir)
 
     # Add "most recently used" / start directory if it exists and isn't already present.
     extra_candidates: list[Path] = []
@@ -1490,12 +1494,13 @@ def error_dialog(message: str, *, title: str = "Error", logger: Optional[AppLogg
 def preferred_start_dir(initial: Optional[Path], settings: Dict[str, object], dialog_key: str) -> Path:
     last_dir_setting = str(settings.get("LAST_FILE_DIALOG_DIR", "") or "")
     per_dialog_dir = str(settings.get("LAST_FILE_DIALOG_DIRS", {}).get(dialog_key, "") or "")
+    downloads_dir = get_path_setting(settings, "DOWNLOADS_DIR")
 
     candidates = [
         initial if initial and initial.expanduser() != Path.home() else None,
         Path(per_dialog_dir) if per_dialog_dir else None,
         Path(last_dir_setting) if last_dir_setting else None,
-        DOWNLOADS_DIR if DOWNLOADS_DIR.exists() else None,
+        downloads_dir if downloads_dir.exists() else None,
         initial if initial else None,
         Path.home(),
     ]
@@ -1712,7 +1717,7 @@ def select_file_dialog(
         initial=str(initial) if initial else None,
         per_dialog_last=per_dialog or None,
         global_last=global_last or None,
-        downloads=str(DOWNLOADS_DIR),
+        downloads=str(get_path_setting(settings_obj, "DOWNLOADS_DIR")),
         home=str(Path.home()),
     )
     start_dir = preferred_start_dir(initial, settings_obj, dialog_key)
