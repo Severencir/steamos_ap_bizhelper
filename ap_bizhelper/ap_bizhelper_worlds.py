@@ -34,6 +34,8 @@ PLAYABLE_SHEET_NAME = "Playable Worlds"
 WORLD_DIR = Path.home() / ".local/share/Archipelago/worlds"
 CACHE_KEY = "APWORLD_CACHE"
 USER_AGENT_HEADER = {"User-Agent": USER_AGENT}
+GITHUB_ACCEPT_HEADER = "application/vnd.github+json"
+GITHUB_API_HEADERS = {**USER_AGENT_HEADER, "Accept": GITHUB_ACCEPT_HEADER}
 APWORLD_EXTENSION = ".apworld"
 APWORLD_FILENAME_DEFAULT = "world.apworld"
 APWORLD_FILE_FILTER = "*.apworld"
@@ -66,15 +68,22 @@ def _normalize_game(name: str) -> str:
     return name.strip().lower()
 
 
+def _read_url(url: str, headers: Dict[str, str]) -> Optional[bytes]:
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read()
+    except Exception:
+        return None
+
+
 def _fetch_sheet(sheet_name: str) -> Optional[list[list[str]]]:
     quoted = urllib.parse.quote(sheet_name)
     url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={quoted}"
-    try:
-        req = urllib.request.Request(url, headers=USER_AGENT_HEADER)
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            content = resp.read().decode(ENCODING_UTF8, errors="replace")
-    except Exception:
+    data = _read_url(url, USER_AGENT_HEADER)
+    if data is None:
         return None
+    content = data.decode(ENCODING_UTF8, errors="replace")
 
     rows: list[list[str]] = []
     for row in csv.reader(content.splitlines()):
@@ -170,11 +179,12 @@ def _github_latest_apworld(repo_url: str) -> Optional[Tuple[str, str, str]]:
         return None
     owner, repo = match.group(1), match.group(2).rstrip(SLASH)
     api_url = GITHUB_RELEASES_URL_TEMPLATE.format(owner=owner, repo=repo)
+    raw_data = _read_url(api_url, GITHUB_API_HEADERS)
+    if raw_data is None:
+        return None
     try:
-        req = urllib.request.Request(api_url, headers=USER_AGENT)
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode(ENCODING_UTF8))
-    except Exception:
+        data = json.loads(raw_data.decode(ENCODING_UTF8))
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return None
 
     tag = data.get("tag_name") or EMPTY_STRING
