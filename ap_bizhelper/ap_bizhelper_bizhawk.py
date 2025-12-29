@@ -32,8 +32,6 @@ from .ap_bizhelper_config import (
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
-from .logging_utils import USER_AGENT
-
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 
 BIZHAWK_WIN_DIR = DATA_DIR / "bizhawk_win"
@@ -50,7 +48,6 @@ SNI_DOWNLOAD_URL = (
     "sni-v0.0.102a-windows-amd64.zip"
 )
 SNI_VERSION = "v0.0.102a"
-MIGRATABLE_BIZHAWK_ITEMS = (CONNECTORS_DIRNAME, SNI_DIRNAME, "Scripts", "Lua", CONFIG_FILENAME)
 AP_VERSION_KEY = "AP_VERSION"
 ARCHIVE_READ_AUTO = "r:*"
 ARCHIVE_READ = "r"
@@ -119,6 +116,7 @@ TAG_NAME_KEY = "tag_name"
 USER_AGENT_HEADER = "User-Agent"
 WIN_X64_SUFFIX = "win-x64.zip"
 YES_VALUE = "yes"
+MIGRATABLE_BIZHAWK_ITEMS = (CONNECTORS_DIRNAME, SNI_DIRNAME, "Scripts", "Lua", CONFIG_FILENAME)
 
 
 def _ensure_dirs() -> None:
@@ -191,7 +189,7 @@ def _archipelago_release(tag: Optional[str] = None) -> Tuple[str, str, str, str]
     import urllib.request
 
     url = f"{ARCHIPELAGO_RELEASE_API}/latest" if not tag else f"{ARCHIPELAGO_RELEASE_API}/tags/{tag}"
-    req = urllib.request.Request(url, headers={USER_AGENT_HEADER: USER_AGENT_VALUE})
+    req = urllib.request.Request(url, headers={USER_AGENT_HEADER: USER_AGENT})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = resp.read().decode(ENCODING_UTF8)
     j = json.loads(data)
