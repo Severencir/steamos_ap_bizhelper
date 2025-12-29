@@ -28,9 +28,6 @@ from .constants import (
     AP_VERSION_KEY,
     DATA_DIR,
     DESKTOP_DIR_KEY,
-    DOWNLOADS_DIR_KEY,
-    LAST_FILE_DIALOG_DIR_KEY,
-    LAST_FILE_DIALOG_DIRS_KEY,
     USER_AGENT,
     USER_AGENT_HEADER,
 )
@@ -43,10 +40,6 @@ APP_LOGGER = get_app_logger()
 
 GITHUB_API_LATEST = "https://api.github.com/repos/ArchipelagoMW/Archipelago/releases/latest"
 
-_QT_FILE_DIALOG_COLUMN_SCALE = 1.8
-_QT_FILE_DIALOG_DEFAULT_SHRINK = 0.95
-_DEFAULT_SETTINGS = dialogs.DIALOG_DEFAULTS
-
 
 def _ensure_dirs() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -55,11 +48,11 @@ def _ensure_dirs() -> None:
 
 def _load_settings() -> Dict[str, Any]:
     settings = _load_shared_settings()
-    merged_settings = {**_DEFAULT_SETTINGS, **settings}
+    merged_settings = dialogs.merge_dialog_settings(settings)
 
     needs_save = not SETTINGS_FILE.exists()
     if not needs_save:
-        for key in _DEFAULT_SETTINGS:
+        for key in dialogs.DIALOG_DEFAULTS:
             if key not in settings:
                 needs_save = True
                 break
@@ -72,7 +65,7 @@ def _load_settings() -> Dict[str, Any]:
 
 def _save_settings(settings: Dict[str, Any]) -> None:
     _ensure_dirs()
-    merged_settings = {**_DEFAULT_SETTINGS, **settings}
+    merged_settings = dialogs.merge_dialog_settings(settings)
     _save_shared_settings(merged_settings)
 
 
@@ -89,47 +82,6 @@ def _ensure_qt_available() -> None:
             location="qt-deps",
         )
         raise
-
-
-def _coerce_font_setting(
-    settings: Dict[str, Any], key: str, default: float, *, minimum: Optional[float] = None
-) -> float:
-    value = settings.get(key, default)
-    try:
-        numeric_value = float(value)
-    except Exception:
-        return default
-    if minimum is not None:
-        numeric_value = max(numeric_value, minimum)
-    return numeric_value
-
-
-def _coerce_int_setting(
-    settings: Dict[str, Any], key: str, default: int, *, minimum: Optional[int] = None
-) -> int:
-    value = settings.get(key, default)
-    try:
-        numeric_value = int(value)
-    except Exception:
-        return default
-    if minimum is not None:
-        numeric_value = max(numeric_value, minimum)
-    return numeric_value
-
-
-def _coerce_bool_setting(settings: Dict[str, Any], key: str, default: bool) -> bool:
-    value = settings.get(key, default)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "off"}:
-            return False
-    return default
 
 
 def _version_sort_key(version: str) -> tuple[tuple[int, object], ...]:
@@ -163,424 +115,6 @@ def _is_newer_version(latest: str, seen: str) -> bool:
         return latest > seen
 
 
-def _detect_global_scale() -> float:
-    _ensure_qt_available()
-    from PySide6 import QtGui
-
-    try:
-        screen = QtGui.QGuiApplication.primaryScreen()
-    except Exception:
-        return 1.0
-
-    if screen is None:
-        return 1.0
-
-    dpi_scale = 1.0
-    try:
-        logical_dpi = float(screen.logicalDotsPerInch())
-        if logical_dpi > 0:
-            dpi_scale = logical_dpi / 96.0
-    except Exception:
-        dpi_scale = 1.0
-
-    try:
-        pixel_ratio = float(screen.devicePixelRatio())
-        if pixel_ratio > 0:
-            dpi_scale = max(dpi_scale, pixel_ratio)
-    except Exception:
-        pass
-
-    return max(dpi_scale, 0.1)
-
-
-def _ensure_qt_app(settings: Optional[Dict[str, Any]] = None) -> "QtWidgets.QApplication":
-    return dialogs.ensure_qt_app(settings)
-
-
-def _enable_dialog_gamepad(
-    dialog: "QtWidgets.QDialog | QtWidgets.QMessageBox",
-    *,
-    affirmative: Optional["QtWidgets.QAbstractButton"] = None,
-    negative: Optional["QtWidgets.QAbstractButton"] = None,
-    special: Optional["QtWidgets.QAbstractButton"] = None,
-    default: Optional["QtWidgets.QAbstractButton"] = None,
-) -> Optional["object"]:
-    """Attach controller navigation to ``dialog`` if available."""
-
-    try:
-        from . import gamepad_input
-
-        layer = gamepad_input.install_gamepad_navigation(
-            dialog,
-            actions={
-                "affirmative": affirmative,
-                "negative": negative,
-                "special": special,
-                "default": default,
-            },
-        )
-        if layer is not None:
-            dialog.finished.connect(layer.shutdown)  # type: ignore[attr-defined]
-        return layer
-    except Exception as exc:  # pragma: no cover - runtime guard
-        APP_LOGGER.log(
-            f"Failed to enable gamepad navigation: {exc}",
-            level="WARNING",
-            include_context=True,
-            location="gamepad",
-        )
-    return None
-
-
-def _dialog_dir_map(settings: Dict[str, Any]) -> Dict[str, str]:
-    stored = settings.get(LAST_FILE_DIALOG_DIRS_KEY, {})
-    if isinstance(stored, dict):
-        return stored
-    return {}
-
-
-def _preferred_start_dir(initial: Optional[Path], settings: Dict[str, Any], dialog_key: str) -> Path:
-    last_dir_setting = str(settings.get(LAST_FILE_DIALOG_DIR_KEY, "") or "")
-    per_dialog_dir = str(_dialog_dir_map(settings).get(dialog_key, "") or "")
-    downloads_dir = get_path_setting(settings, DOWNLOADS_DIR_KEY)
-
-    candidates = [
-        initial if initial and initial.expanduser() != Path.home() else None,
-        Path(per_dialog_dir) if per_dialog_dir else None,
-        Path(last_dir_setting) if last_dir_setting else None,
-        downloads_dir if downloads_dir.exists() else None,
-        initial if initial else None,
-        Path.home(),
-    ]
-    for candidate in candidates:
-        if candidate is None:
-            continue
-        candidate_path = candidate.expanduser()
-        if candidate_path.is_file():
-            candidate_path = candidate_path.parent
-        if candidate_path.exists():
-            return candidate_path
-    return Path.home()
-
-
-def _remember_file_dialog_dir(settings: Dict[str, Any], selection: Path, dialog_key: str) -> None:
-    parent = selection.parent if selection.is_file() else selection
-    dialog_dirs = _dialog_dir_map(settings)
-    dialog_dirs[dialog_key] = str(parent)
-    settings[LAST_FILE_DIALOG_DIRS_KEY] = dialog_dirs
-    settings[LAST_FILE_DIALOG_DIR_KEY] = str(parent)
-
-
-def _sidebar_urls(settings: Dict[str, Any]) -> list["QtCore.QUrl"]:
-    from PySide6 import QtCore
-
-    downloads_dir = get_path_setting(settings, DOWNLOADS_DIR_KEY)
-    desktop_dir = get_path_setting(settings, DESKTOP_DIR_KEY)
-    common_dirs = [
-        Path.home(),
-        downloads_dir,
-        Path(os.path.expanduser("~/Documents")),
-        desktop_dir,
-        Path(os.path.expanduser("~/Music")),
-        Path(os.path.expanduser("~/Pictures")),
-        Path(os.path.expanduser("~/Videos")),
-    ]
-    return [
-        QtCore.QUrl.fromLocalFile(str(path)) for path in common_dirs if path.expanduser().exists()
-    ]
-
-
-def _widen_file_dialog_sidebar(
-    dialog: "QtWidgets.QFileDialog", settings_obj: Dict[str, Any]
-) -> None:
-    from PySide6 import QtWidgets
-
-    sidebar = dialog.findChild(QtWidgets.QListView, "sidebar")
-    width = _coerce_int_setting(
-        settings_obj,
-        "QT_FILE_DIALOG_SIDEBAR_WIDTH",
-        int(_DEFAULT_SETTINGS["QT_FILE_DIALOG_SIDEBAR_WIDTH"]),
-        minimum=0,
-    )
-    if sidebar is None or width <= 0:
-        return
-
-    splitter: Optional[QtWidgets.QSplitter] = None
-    parent = sidebar.parent()
-    while parent is not None:
-        if isinstance(parent, QtWidgets.QSplitter):
-            splitter = parent
-            break
-        parent = parent.parent()
-    if splitter is None:
-        splitter = dialog.findChild(QtWidgets.QSplitter)
-
-    if splitter is None:
-        try:
-            sidebar.setFixedWidth(width)
-            sidebar.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
-        except Exception:
-            pass
-        return
-
-    sidebar_index = splitter.indexOf(sidebar)
-    if sidebar_index < 0:
-        sidebar_index = 0
-
-    try:
-        sizes = splitter.sizes()
-    except Exception:
-        sizes = []
-    total_width = splitter.size().width()
-    total_width = max(total_width, sum(sizes))
-    if total_width <= 0:
-        total_width = width * max(2, splitter.count())
-
-    remaining = max(total_width - width, width)
-    other_count = max(splitter.count() - 1, 1)
-    per_other = max(int(remaining / other_count), 1)
-
-    new_sizes = [per_other for _ in range(splitter.count())]
-    if sidebar_index < len(new_sizes):
-        new_sizes[sidebar_index] = width
-
-    try:
-        splitter.setSizes(new_sizes)
-    except Exception:
-        pass
-
-    try:
-        sidebar.setFixedWidth(width)
-        sidebar.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
-    except Exception:
-        pass
-
-    for idx in range(splitter.count()):
-        try:
-            splitter.setStretchFactor(idx, 1 if idx != sidebar_index else 0)
-        except Exception:
-            continue
-
-
-def _configure_file_view_columns(
-    dialog: "QtWidgets.QFileDialog", settings_obj: Dict[str, Any]
-) -> None:
-    from PySide6 import QtCore, QtWidgets
-
-    tree_view = dialog.findChild(QtWidgets.QTreeView, "treeView")
-    if tree_view is None:
-        return
-
-    model = tree_view.model()
-    header = tree_view.header()
-    if model is None or header is None:
-        return
-
-    column_count = model.columnCount()
-    if column_count <= 0:
-        return
-
-    label_to_index: dict[str, int] = {}
-    for idx in range(column_count):
-        try:
-            label = str(
-                model.headerData(idx, QtCore.Qt.Horizontal, QtCore.Qt.DisplayRole) or ""
-            ).strip()
-        except Exception:
-            label = ""
-        if label:
-            label_to_index[label.lower()] = idx
-
-    desired_columns = [
-        ("name", "QT_FILE_DIALOG_NAME_WIDTH"),
-        ("size", "QT_FILE_DIALOG_SIZE_WIDTH"),
-        ("type", "QT_FILE_DIALOG_TYPE_WIDTH"),
-        ("date modified", "QT_FILE_DIALOG_DATE_WIDTH"),
-    ]
-    fallback_indices = {"name": 0, "size": 1, "type": 2, "date modified": 3}
-
-    updated_settings = False
-    for label, setting_key in desired_columns:
-        index = label_to_index.get(label, fallback_indices.get(label))
-        if index is None or index >= column_count:
-            continue
-
-        try:
-            base_width = tree_view.sizeHintForColumn(index)
-        except Exception:
-            base_width = 0
-        if base_width <= 0:
-            try:
-                base_width = header.sectionSizeHint(index)
-            except Exception:
-                base_width = 0
-        if base_width <= 0:
-            try:
-                base_width = header.defaultSectionSize()
-            except Exception:
-                base_width = 0
-
-        configured_width = _coerce_int_setting(
-            settings_obj, setting_key, 0, minimum=0
-        )
-        target_width = configured_width or int(
-            base_width * _QT_FILE_DIALOG_COLUMN_SCALE * _QT_FILE_DIALOG_DEFAULT_SHRINK
-        )
-        if target_width > 0:
-            try:
-                header.setSectionResizeMode(index, QtWidgets.QHeaderView.Interactive)
-            except Exception:
-                pass
-            header.resizeSection(index, target_width)
-            try:
-                header.setSectionResizeMode(index, QtWidgets.QHeaderView.Interactive)
-            except Exception:
-                pass
-            if configured_width <= 0:
-                settings_obj[setting_key] = target_width
-                updated_settings = True
-
-    if updated_settings:
-        _save_settings(settings_obj)
-
-
-def _focus_file_view(dialog: "QtWidgets.QFileDialog") -> None:
-    from PySide6 import QtCore, QtWidgets
-
-    tree_view = dialog.findChild(QtWidgets.QTreeView, "treeView")
-    if tree_view is None:
-        return
-
-    selection_model = tree_view.selectionModel()
-    model = tree_view.model()
-    if model is None or selection_model is None:
-        return
-
-    try:
-        current_index = tree_view.currentIndex()
-        if not current_index.isValid() and model.rowCount() > 0:
-            first_index = model.index(0, 0)
-            if first_index.isValid():
-                tree_view.setCurrentIndex(first_index)
-                selection_model.select(
-                    first_index,
-                    QtCore.QItemSelectionModel.Select
-                    | QtCore.QItemSelectionModel.Rows,
-                )
-    except Exception:
-        pass
-
-    try:
-        tree_view.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-    except Exception:
-        pass
-
-
-def _qt_file_dialog(
-    *,
-    title: str,
-    start_dir: Path,
-    file_filter: Optional[str] = None,
-    settings: Optional[Dict[str, Any]] = None,
-) -> Optional[Path]:
-    from PySide6 import QtCore, QtGui, QtWidgets
-
-    settings_obj = {**_DEFAULT_SETTINGS, **(settings or {})}
-    _ensure_qt_app(settings_obj)
-    global_scale = _detect_global_scale()
-    filter_text = file_filter or "All Files (*)"
-    dialog = QtWidgets.QFileDialog()
-    dialog.setWindowTitle(title)
-    dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptOpen)
-    dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
-    dialog.setDirectory(str(start_dir))
-    dialog.setNameFilter(filter_text)
-    dialog.setViewMode(QtWidgets.QFileDialog.Detail)
-    dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
-    dialog.setOption(QtWidgets.QFileDialog.ReadOnly, False)
-    width = _coerce_int_setting(
-        settings_obj,
-        "QT_FILE_DIALOG_WIDTH",
-        int(_DEFAULT_SETTINGS["QT_FILE_DIALOG_WIDTH"]),
-        minimum=0,
-    )
-    height = _coerce_int_setting(
-        settings_obj,
-        "QT_FILE_DIALOG_HEIGHT",
-        int(_DEFAULT_SETTINGS["QT_FILE_DIALOG_HEIGHT"]),
-        minimum=0,
-    )
-    if width > 0 and height > 0:
-        dialog.resize(width, height)
-    if hasattr(QtGui.QGuiApplication, "setNavigationMode") and hasattr(
-        QtCore.Qt, "NavigationModeKeypadDirectional"
-    ):
-        QtGui.QGuiApplication.setNavigationMode(
-            QtCore.Qt.NavigationModeKeypadDirectional
-        )
-
-    def _scale_file_name_font(widget: "QtWidgets.QWidget") -> None:
-        base_font = widget.font()
-        scaled_font = QtGui.QFont(base_font)
-        name_font_scale = _coerce_font_setting(
-            settings_obj,
-            "QT_FILE_NAME_FONT_SCALE",
-            float(_DEFAULT_SETTINGS["QT_FILE_NAME_FONT_SCALE"]),
-            minimum=0.1,
-        )
-        effective_name_font_scale = name_font_scale / global_scale
-        if base_font.pointSize() > 0:
-            scaled_font.setPointSize(
-                int(
-                    base_font.pointSize()
-                    * effective_name_font_scale
-                )
-            )
-        elif base_font.pixelSize() > 0:
-            scaled_font.setPixelSize(
-                int(
-                    base_font.pixelSize()
-                    * effective_name_font_scale
-                )
-            )
-        widget.setFont(scaled_font)
-
-    for view_name in ("listView", "treeView"):
-        file_view = dialog.findChild(QtWidgets.QWidget, view_name)
-        if file_view is not None:
-            _scale_file_name_font(file_view)
-
-    sidebar_urls = _sidebar_urls(settings_obj)
-    if sidebar_urls:
-        dialog.setSidebarUrls(sidebar_urls)
-    _widen_file_dialog_sidebar(dialog, settings_obj)
-    if _coerce_bool_setting(
-        settings_obj,
-        "QT_FILE_DIALOG_MAXIMIZE",
-        bool(_DEFAULT_SETTINGS["QT_FILE_DIALOG_MAXIMIZE"]),
-    ):
-        dialog.setWindowState(dialog.windowState() | QtCore.Qt.WindowMaximized)
-    _configure_file_view_columns(dialog, settings_obj)
-    _focus_file_view(dialog)
-    try:
-        QtCore.QTimer.singleShot(0, lambda: _focus_file_view(dialog))
-    except Exception:
-        pass
-    dialog.activateWindow()
-    dialog.raise_()
-    dialog.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-    gamepad_layer = _enable_dialog_gamepad(dialog)
-    if dialog.exec() == QtWidgets.QDialog.Accepted:
-        selected_files = dialog.selectedFiles()
-        if selected_files:
-            if gamepad_layer is not None:
-                gamepad_layer.shutdown()
-            return Path(selected_files[0])
-    if gamepad_layer is not None:
-        gamepad_layer.shutdown()
-    return None
-
-
 def _select_file_dialog(
     *,
     title: str,
@@ -591,10 +125,10 @@ def _select_file_dialog(
 ) -> Optional[Path]:
     _ensure_qt_available()
     settings_obj = settings if settings is not None else _load_settings()
-    start_dir = _preferred_start_dir(initial, settings_obj, dialog_key)
+    start_dir = dialogs.preferred_start_dir(initial, settings_obj, dialog_key)
 
     try:
-        selection = _qt_file_dialog(
+        selection = dialogs.file_dialog(
             title=title, start_dir=start_dir, file_filter=file_filter, settings=settings_obj
         )
     except Exception as exc:  # pragma: no cover - GUI/runtime issues
@@ -609,7 +143,7 @@ def _select_file_dialog(
         raise
 
     if selection:
-        _remember_file_dialog_dir(settings_obj, selection, dialog_key)
+        dialogs.remember_file_dialog_dir(settings_obj, selection, dialog_key)
         if settings is None:
             _save_settings(settings_obj)
 
@@ -624,13 +158,6 @@ def error_dialog(message: str) -> None:
     dialogs.error_dialog(message, logger=APP_LOGGER)
 
 
-# Centralize dialog helpers through the shared module.
-_qt_question_dialog = dialogs.question_dialog
-_qt_file_dialog = dialogs.file_dialog
-_enable_dialog_gamepad = dialogs.enable_dialog_gamepad
-_preferred_start_dir = dialogs.preferred_start_dir
-_remember_file_dialog_dir = dialogs.remember_file_dialog_dir
-
 def choose_install_action(title: str, text: str, select_label: str = "Select") -> str:
     """
     Show a dialog offering Download / Select / Cancel.
@@ -638,7 +165,7 @@ def choose_install_action(title: str, text: str, select_label: str = "Select") -
     Returns "Download", "Select", or "Cancel". ``select_label`` customizes the
     text shown for the "Select" button.
     """
-    choice = _qt_question_dialog(
+    choice = dialogs.question_dialog(
         title=title,
         text=text,
         ok_label="Download",
@@ -739,7 +266,7 @@ def force_update_appimage(settings: Optional[Dict[str, Any]] = None) -> bool:
 def _prompt_select_existing_appimage(initial: Path, *, settings: Dict[str, Any]) -> Path:
     """Prompt the user to select an existing AppImage without offering download."""
 
-    choice = _qt_question_dialog(
+    choice = dialogs.question_dialog(
         title="Archipelago setup",
         text="Archipelago was not selected for download.\n\nSelect an existing AppImage to continue?",
         ok_label="Select AppImage",
@@ -753,6 +280,8 @@ def _prompt_select_existing_appimage(initial: Path, *, settings: Dict[str, Any])
         raise RuntimeError("User cancelled Archipelago AppImage selection")
 
     return chosen
+
+
 def _normalize_asset_digest(raw_digest: str, *, default_algorithm: str = "sha256") -> Tuple[str, str]:
     digest = raw_digest.strip()
     if not digest:
@@ -1034,7 +563,7 @@ def maybe_update_appimage(
     if not should_prompt:
         return appimage, False
 
-    choice = _qt_question_dialog(
+    choice = dialogs.question_dialog(
         title="Archipelago update",
         text="An Archipelago update is available. Update now?",
         ok_label="Update now",
@@ -1073,6 +602,8 @@ def maybe_update_appimage(
     else:
         info_dialog(f"Archipelago updated to {latest_ver}.")
     return AP_APPIMAGE_DEFAULT, True
+
+
 def ensure_appimage(
     *,
     download_selected: bool = True,
