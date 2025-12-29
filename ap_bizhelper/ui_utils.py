@@ -644,8 +644,8 @@ def show_managed_dirs_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> No
     ensure_qt_app()
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("Managed directories")
-    dialog.setMinimumSize(1000, 600)
-    dialog.resize(1000, 600)
+    dialog.setMinimumSize(1000, 400)
+    dialog.resize(1000, 400)
 
     layout = QtWidgets.QVBoxLayout(dialog)
     table = QtWidgets.QTableWidget()
@@ -753,8 +753,8 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
     button_row_middle = QtWidgets.QHBoxLayout()
     button_row_middle.addWidget(import_settings_button)
     button_row_middle.addWidget(export_settings_button)
-    button_row_middle.addStretch()
     button_row_middle.addWidget(open_exports_button)
+    button_row_middle.addStretch()
     layout.addLayout(button_row_middle)
 
     button_row_bottom = QtWidgets.QHBoxLayout()

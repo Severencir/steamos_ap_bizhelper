@@ -15,7 +15,13 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .ap_bizhelper_ap import _is_newer_version, _normalize_asset_digest, download_with_progress
+from .ap_bizhelper_ap import (
+    DATA_DIR,
+    LEGACY_DATA_DIR,
+    _is_newer_version,
+    _normalize_asset_digest,
+    download_with_progress,
+)
 from .dialogs import (
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
@@ -23,13 +29,12 @@ from .dialogs import (
     info_dialog,
 )
 from .ap_bizhelper_config import (
+    CONFIG_DIR,
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
 
-CONFIG_DIR = Path(os.path.expanduser("~/.config/ap_bizhelper"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
-DATA_DIR = Path(os.path.expanduser("~/.local/share/ap_bizhelper"))
 
 BIZHAWK_WIN_DIR = DATA_DIR / "bizhawk_win"
 PROTON_PREFIX = DATA_DIR / "proton_prefix"
@@ -49,6 +54,11 @@ MIGRATABLE_BIZHAWK_ITEMS = ("connectors", "sni", "Scripts", "Lua", "config.ini")
 
 
 def _ensure_dirs() -> None:
+    if LEGACY_DATA_DIR.exists() and not DATA_DIR.exists():
+        try:
+            shutil.move(str(LEGACY_DATA_DIR), str(DATA_DIR))
+        except Exception:
+            pass
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     BIZHAWK_WIN_DIR.mkdir(parents=True, exist_ok=True)
