@@ -1000,7 +1000,11 @@ def auto_detect_proton(settings: Dict[str, Any]) -> Optional[Path]:
 
 
 def _steam_root_dir(settings: Dict[str, Any]) -> Path:
-    return get_path_setting(settings, STEAM_ROOT_PATH_KEY)
+    steam_root = get_path_setting(settings, STEAM_ROOT_PATH_KEY)
+    if not settings.get(STEAM_ROOT_PATH_KEY):
+        settings[STEAM_ROOT_PATH_KEY] = str(steam_root)
+        _save_settings(settings)
+    return steam_root
 
 
 def _default_steam_common_dir(settings: Dict[str, Any]) -> Path:
