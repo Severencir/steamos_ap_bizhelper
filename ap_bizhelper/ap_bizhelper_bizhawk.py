@@ -813,8 +813,9 @@ def _try_minimize_bizhawk_window() -> None:
 def _launch_bizhawk_for_config(
     exe: Path,
     proton_bin: Path,
-    steam_root: Path,
+    settings: Dict[str, Any],
 ) -> Optional[subprocess.Popen]:
+    steam_root = get_path_setting(settings, STEAM_ROOT_PATH_KEY)
     env = os.environ.copy()
     env["STEAM_COMPAT_DATA_PATH"] = str(PROTON_PREFIX)
     env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = str(steam_root)
@@ -833,9 +834,9 @@ def _generate_bizhawk_config(
     exe: Path,
     proton_bin: Path,
     target_cfg: Path,
-    steam_root: Path,
+    settings: Dict[str, Any],
 ) -> bool:
-    proc = _launch_bizhawk_for_config(exe, proton_bin, steam_root)
+    proc = _launch_bizhawk_for_config(exe, proton_bin, settings)
     if proc is None:
         return False
 
@@ -879,8 +880,7 @@ def ensure_bizhawk_config(settings: Dict[str, Any], exe: Path, proton_bin: Path)
                 preserved_config.unlink()
         return _patch_bizhawk_config(target_cfg)
 
-    steam_root = get_path_setting(settings, STEAM_ROOT_PATH_KEY)
-    if not _generate_bizhawk_config(exe, proton_bin, target_cfg, steam_root):
+    if not _generate_bizhawk_config(exe, proton_bin, target_cfg, settings):
         return False
     return _patch_bizhawk_config(target_cfg)
 
