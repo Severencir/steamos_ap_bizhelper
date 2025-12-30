@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -98,6 +99,11 @@ PROTON_DIRNAME = "proton"
 PROTON_EXPERIMENTAL_SEGMENT = "Experimental/proton"
 PROTON_RUN_SUBCOMMAND = "run"
 PROTON_SELECTION_CANCELLED_MSG = "Proton selection was cancelled."
+BIZHAWK_CONFIG_BYPASS_KEY = "SkipSuperuserPrivsCheck"
+BIZHAWK_CONFIG_LAUNCH_TIMEOUT = 30.0
+BIZHAWK_CONFIG_POLL_INTERVAL = 0.5
+BIZHAWK_WINDOW_TITLE = "EmuHawk"
+BIZHAWK_MINIMIZE_DELAY = 1.0
 PAREN_CLOSE = ")"
 PAREN_OPEN = "("
 QUERY_BIZHAWK_FAILED_PREFIX = "Failed to query latest BizHawk release: "
@@ -748,36 +754,124 @@ def ensure_connectors(
 
 
 def _stage_bizhawk_config(exe: Path, preserved_config: Optional[Path]) -> None:
-    """Copy a default BizHawk config alongside ``exe`` if one is absent."""
+    """Copy a preserved BizHawk config alongside ``exe`` if one is available."""
 
     target_cfg = exe.parent / CONFIG_FILENAME
-    if target_cfg.exists():
-        if preserved_config is not None and preserved_config.exists():
-            preserved_config.unlink()
+    if preserved_config is None or not preserved_config.is_file():
         return
 
     try:
-        if preserved_config is not None and preserved_config.is_file():
+        if not target_cfg.exists():
             shutil.copy2(preserved_config, target_cfg)
-            return
-
-        try:
-            cfg_resource = resources.files(__package__).joinpath(CONFIG_FILENAME)
-        except (ModuleNotFoundError, AttributeError):
-            cfg_resource = None
-
-        if cfg_resource is not None:
-            with resources.as_file(cfg_resource) as candidate:
-                if candidate.is_file():
-                    shutil.copy2(candidate, target_cfg)
-                    return
-
-        candidate = Path(__file__).with_name(CONFIG_FILENAME)
-        if candidate.is_file():
-            shutil.copy2(candidate, target_cfg)
     finally:
-        if preserved_config is not None and preserved_config.exists():
+        if preserved_config.exists():
             preserved_config.unlink()
+
+
+def _patch_bizhawk_config(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding=ENCODING_UTF8))
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    data[BIZHAWK_CONFIG_BYPASS_KEY] = True
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding=ENCODING_UTF8)
+    tmp.replace(path)
+    return True
+
+
+def _try_minimize_bizhawk_window() -> None:
+    if shutil.which("xdotool"):
+        try:
+            subprocess.run(
+                ["xdotool", "search", "--name", BIZHAWK_WINDOW_TITLE, "windowminimize"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+        return
+
+    if shutil.which("wmctrl"):
+        try:
+            subprocess.run(
+                ["wmctrl", "-r", BIZHAWK_WINDOW_TITLE, "-b", "add,hidden"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+
+
+def _launch_bizhawk_for_config(exe: Path, proton_bin: Path) -> Optional[subprocess.Popen]:
+    env = os.environ.copy()
+    env["STEAM_COMPAT_DATA_PATH"] = str(PROTON_PREFIX)
+    env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = str(STEAM_ROOT_DIR)
+    try:
+        return subprocess.Popen(
+            [str(proton_bin), PROTON_RUN_SUBCOMMAND, str(exe)],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return None
+
+
+def _generate_bizhawk_config(exe: Path, proton_bin: Path, target_cfg: Path) -> bool:
+    proc = _launch_bizhawk_for_config(exe, proton_bin)
+    if proc is None:
+        return False
+
+    started = time.time()
+    minimized = False
+    while time.time() - started < BIZHAWK_CONFIG_LAUNCH_TIMEOUT:
+        if not minimized and time.time() - started >= BIZHAWK_MINIMIZE_DELAY:
+            _try_minimize_bizhawk_window()
+            minimized = True
+        if target_cfg.exists():
+            break
+        if proc.poll() is not None:
+            break
+        time.sleep(BIZHAWK_CONFIG_POLL_INTERVAL)
+
+    if proc.poll() is None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+
+    return target_cfg.exists()
+
+
+def ensure_bizhawk_config(settings: Dict[str, Any], exe: Path, proton_bin: Path) -> bool:
+    target_cfg = exe.parent / CONFIG_FILENAME
+    if target_cfg.exists():
+        return _patch_bizhawk_config(target_cfg)
+
+    preserved_config = _preserve_bizhawk_config()
+    if preserved_config is not None and preserved_config.is_file():
+        try:
+            shutil.copy2(preserved_config, target_cfg)
+        finally:
+            if preserved_config.exists():
+                preserved_config.unlink()
+        return _patch_bizhawk_config(target_cfg)
+
+    if not _generate_bizhawk_config(exe, proton_bin, target_cfg):
+        return False
+    return _patch_bizhawk_config(target_cfg)
 
 
 def _bizhawk_dir_is_safe(bizhawk_dir: Path) -> bool:
@@ -1388,6 +1482,7 @@ def ensure_bizhawk_and_proton(
                     ensure_bizhawk_desktop_shortcut(
                         settings, runner, enabled=create_shortcut
                     )
+                ensure_bizhawk_config(settings, exe, proton_bin)
                 return runner, exe, downloaded
 
     # Need to (re)configure BizHawk
@@ -1501,6 +1596,8 @@ def ensure_bizhawk_and_proton(
     # Create a desktop launcher for the runner only when a download occurred.
     if downloaded:
         ensure_bizhawk_desktop_shortcut(settings, runner, enabled=create_shortcut)
+
+    ensure_bizhawk_config(settings, exe, proton_bin)
 
     return runner, exe, downloaded
 
