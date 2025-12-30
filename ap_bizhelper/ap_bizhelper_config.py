@@ -226,6 +226,11 @@ def get_path_setting(settings: Dict[str, Any], key: str) -> Path:
     return Path(os.path.expanduser(str(value))) if value else Path()
 
 
+def get_default_path_setting(key: str) -> Path:
+    value = PATH_SETTINGS_DEFAULTS.get(key, EMPTY_STRING)
+    return Path(os.path.expanduser(str(value))) if value else Path()
+
+
 def save_apworld_cache(cache: Dict[str, Any]) -> None:
     """Persist the APWorld cache mapping."""
 
