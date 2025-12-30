@@ -32,6 +32,7 @@ from .ap_bizhelper_bizhawk import (
 )
 from .ap_bizhelper_config import (
     get_path_setting,
+    get_default_path_setting,
     get_all_associations,
     get_association_mode,
     get_ext_behavior,
@@ -57,6 +58,7 @@ from .constants import (
     PENDING_RELAUNCH_ARGS_KEY,
     PROTON_BIN_KEY,
     STEAM_APPID_KEY,
+    STEAM_ROOT_PATH_KEY,
     USE_CACHED_RELAUNCH_ARGS_KEY,
 )
 from .logging_utils import RUNNER_LOG_ENV, get_app_logger
@@ -1290,6 +1292,31 @@ def _detect_new_bizhawk(baseline: Iterable[int], *, timeout: int = 10) -> bool:
     return False
 
 
+def _ensure_steam_root(settings: dict) -> None:
+    default_root = get_default_path_setting(STEAM_ROOT_PATH_KEY)
+    current_root = get_path_setting(settings, STEAM_ROOT_PATH_KEY)
+    if current_root != default_root:
+        return
+    if current_root.exists():
+        return
+    selection = _select_file_dialog(
+        title="Select your Steam install folder",
+        dialog_key=STEAM_ROOT_PATH_KEY,
+        initial=default_root,
+        settings=settings,
+        select_directories=True,
+    )
+    if not selection:
+        return
+    settings[STEAM_ROOT_PATH_KEY] = str(selection)
+    save_settings(settings)
+    APP_LOGGER.log(
+        f"Stored Steam root override: {selection}",
+        include_context=True,
+        mirror_console=True,
+    )
+
+
 def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids: Iterable[int]) -> None:
     if runner is None or not runner.is_file():
         print(f"{LOG_PREFIX} BizHawk runner not configured or not executable; skipping auto-launch.")
@@ -1341,6 +1368,7 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids
 
 def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path], Optional[Path]]:
     with APP_LOGGER.context("_run_prereqs"):
+        _ensure_steam_root(settings)
         need_arch = _needs_archipelago_download(settings)
         need_bizhawk = _needs_bizhawk_download(settings)
         need_proton = _needs_proton_download(settings)

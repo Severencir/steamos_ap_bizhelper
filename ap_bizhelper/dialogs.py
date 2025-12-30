@@ -1536,6 +1536,7 @@ def file_dialog(
     start_dir: Path,
     file_filter: Optional[str] = None,
     settings: Optional[Dict[str, object]] = None,
+    select_directories: bool = False,
 ) -> Optional[Path]:
     from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -1548,7 +1549,11 @@ def file_dialog(
     dialog = QtWidgets.QFileDialog()
     dialog.setWindowTitle(title)
     dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptOpen)
-    dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+    if select_directories:
+        dialog.setFileMode(QtWidgets.QFileDialog.Directory)
+        dialog.setOption(QtWidgets.QFileDialog.ShowDirsOnly, True)
+    else:
+        dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
     # Note: we intentionally do not call setDirectory(start_dir) synchronously here.
     # Instead, we seed start_dir as the first sidebar entry and enter it on the next event-loop tick.
     dialog.setNameFilter(filter_text)
@@ -1706,6 +1711,7 @@ def select_file_dialog(
     file_filter: Optional[str] = None,
     settings: Optional[Dict[str, object]] = None,
     save_settings: bool = True,
+    select_directories: bool = False,
 ) -> Optional[Path]:
     settings_obj = _load_dialog_settings(settings)
     fd_logger: Optional["AppLogger"] = get_app_logger() if _file_dialog_debug_enabled() else None
@@ -1728,13 +1734,18 @@ def select_file_dialog(
         per_dialog_last=per_dialog or None,
         global_last=global_last or None,
         downloads=str(get_path_setting(settings_obj, DOWNLOADS_DIR_KEY)),
+        select_directories=select_directories,
         home=str(Path.home()),
     )
     start_dir = preferred_start_dir(initial, settings_obj, dialog_key)
     _fdlogd(fd_logger, 'select_file_dialog start_dir chosen', dialog_key=dialog_key, start_dir=str(start_dir))
 
     selection = file_dialog(
-        title=title, start_dir=start_dir, file_filter=file_filter, settings=settings_obj
+        title=title,
+        start_dir=start_dir,
+        file_filter=file_filter,
+        settings=settings_obj,
+        select_directories=select_directories,
     )
 
     if selection:
