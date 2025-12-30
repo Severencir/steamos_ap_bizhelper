@@ -226,6 +226,14 @@ def get_path_setting(settings: Dict[str, Any], key: str) -> Path:
     return Path(os.path.expanduser(str(value))) if value else Path()
 
 
+def get_steam_root_setting(settings: Dict[str, Any]) -> Path:
+    steam_root = get_path_setting(settings, STEAM_ROOT_PATH_KEY)
+    if not settings.get(STEAM_ROOT_PATH_KEY):
+        settings[STEAM_ROOT_PATH_KEY] = str(steam_root)
+        save_settings(settings)
+    return steam_root
+
+
 def save_apworld_cache(cache: Dict[str, Any]) -> None:
     """Persist the APWorld cache mapping."""
 

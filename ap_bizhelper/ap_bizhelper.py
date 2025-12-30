@@ -31,6 +31,7 @@ from .ap_bizhelper_bizhawk import (
     proton_available,
 )
 from .ap_bizhelper_config import (
+    get_steam_root_setting,
     get_path_setting,
     get_all_associations,
     get_association_mode,
@@ -104,7 +105,7 @@ def _steam_root_is_valid(path: Path) -> bool:
 
 
 def _ensure_steam_root(settings: dict) -> bool:
-    steam_root = get_path_setting(settings, STEAM_ROOT_PATH_KEY)
+    steam_root = get_steam_root_setting(settings)
     if _steam_root_is_valid(steam_root):
         return True
 

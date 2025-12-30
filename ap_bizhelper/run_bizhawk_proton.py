@@ -8,12 +8,12 @@ from pathlib import Path
 
 try:
     from ap_bizhelper.ap_bizhelper_config import (
-        get_path_setting as _get_path_setting,
+        get_steam_root_setting as _get_steam_root_setting,
         load_settings as _load_shared_settings,
     )
 except ImportError:  # pragma: no cover - fallback when executed outside the package
     from .ap_bizhelper_config import (
-        get_path_setting as _get_path_setting,
+        get_steam_root_setting as _get_steam_root_setting,
         load_settings as _load_shared_settings,
     )
 
@@ -23,7 +23,6 @@ from ap_bizhelper.constants import (
     LOG_PREFIX,
     PROTON_BIN_KEY,
     PROTON_PREFIX,
-    STEAM_ROOT_PATH_KEY,
 )
 from ap_bizhelper.dialogs import (
     enable_dialog_gamepad as _enable_dialog_gamepad,
@@ -108,7 +107,7 @@ def configure_proton_env():
     global _SETTINGS_CACHE
     if _SETTINGS_CACHE is None:
         _SETTINGS_CACHE = _load_settings()
-    steam_root = str(_get_path_setting(_SETTINGS_CACHE, STEAM_ROOT_PATH_KEY))
+    steam_root = str(_get_steam_root_setting(_SETTINGS_CACHE))
 
     os.environ[ENV_COMPAT_DATA_PATH] = proton_prefix
     os.environ[ENV_COMPAT_CLIENT_PATH] = steam_root
