@@ -28,6 +28,7 @@ from .ap_bizhelper_bizhawk import (
     connectors_need_download,
     auto_detect_bizhawk_exe,
     ensure_bizhawk_and_proton,
+    ensure_bizhawk_config,
     proton_available,
 )
 from .ap_bizhelper_config import (
@@ -1425,7 +1426,7 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
                 settings=settings,
             )
 
-        bizhawk_result: Optional[Tuple[Path, Path, bool]] = None
+        bizhawk_result: Optional[Tuple[Path, Path, Path, bool]] = None
         bizhawk_result = ensure_bizhawk_and_proton(
             download_selected=bizhawk,
             download_proton=proton,
@@ -1438,9 +1439,12 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
         if bizhawk:
             if bizhawk_result is None:
                 raise RuntimeError("BizHawk setup was cancelled or failed.")
-            runner, _, _ = bizhawk_result
+            runner, exe, proton_bin, _ = bizhawk_result
         elif bizhawk_result is not None:
-            runner, _, _ = bizhawk_result
+            runner, exe, proton_bin, _ = bizhawk_result
+
+        if bizhawk_result is not None:
+            ensure_bizhawk_config(settings, exe, proton_bin)
 
         if download_messages:
             message = "Completed downloads:\n- " + "\n- ".join(download_messages)

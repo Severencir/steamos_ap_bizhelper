@@ -841,13 +841,18 @@ def _generate_bizhawk_config(
 
     started = time.time()
     minimized = False
+    close_requested = False
     while time.time() - started < BIZHAWK_CONFIG_LAUNCH_TIMEOUT:
         if not minimized and time.time() - started >= BIZHAWK_MINIMIZE_DELAY:
             _try_minimize_bizhawk_window()
             minimized = True
+        if not close_requested and time.time() - started >= BIZHAWK_CONFIG_POLL_INTERVAL:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            close_requested = True
         if target_cfg.exists():
-            break
-        if proc.poll() is not None:
             break
         time.sleep(BIZHAWK_CONFIG_POLL_INTERVAL)
 
@@ -1434,12 +1439,12 @@ def ensure_bizhawk_and_proton(
     ap_connector_archive: Optional[Path] = None,
     sni_connector_archive: Optional[Path] = None,
     allow_manual_connector_selection: bool = False,
-) -> Optional[Tuple[Path, Path, bool]]:
+) -> Optional[Tuple[Path, Path, Path, bool]]:
     """
     Ensure BizHawk (Windows) and Proton are configured and runnable.
 
     On success, returns the Path to the BizHawk runner script, the EmuHawk.exe
-    path, and a flag indicating whether any downloads occurred.
+    path, the Proton binary, and a flag indicating whether any downloads occurred.
 
     When ``stage_connectors`` is False, connector downloads are skipped even if
     they appear missing or outdated.
@@ -1492,8 +1497,7 @@ def ensure_bizhawk_and_proton(
                     ensure_bizhawk_desktop_shortcut(
                         settings, runner, enabled=create_shortcut
                     )
-                ensure_bizhawk_config(settings, exe, proton_bin)
-                return runner, exe, downloaded
+                return runner, exe, proton_bin, downloaded
 
     # Need to (re)configure BizHawk
     exe = auto_detect_bizhawk_exe(settings)
@@ -1607,9 +1611,7 @@ def ensure_bizhawk_and_proton(
     if downloaded:
         ensure_bizhawk_desktop_shortcut(settings, runner, enabled=create_shortcut)
 
-    ensure_bizhawk_config(settings, exe, proton_bin)
-
-    return runner, exe, downloaded
+    return runner, exe, proton_bin, downloaded
 
 
 def main(argv: list[str]) -> int:
@@ -1621,7 +1623,8 @@ def main(argv: list[str]) -> int:
     if result is None:
         return 1
 
-    runner, _, _ = result
+    runner, exe, proton_bin, _ = result
+    ensure_bizhawk_config(_load_settings(), exe, proton_bin)
     print(str(runner))
     return 0
 
