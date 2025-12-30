@@ -1170,12 +1170,37 @@ def _install_file_pane_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
             self._view = view
 
         def eventFilter(self, obj: QtCore.QObject, ev: QtCore.QEvent) -> bool:  # noqa: N802
-            if ev.type() in (
-                QtCore.QEvent.MouseButtonPress,
-                QtCore.QEvent.MouseButtonRelease,
-                QtCore.QEvent.FocusIn,
-            ):
+            if ev.type() in (QtCore.QEvent.MouseButtonPress, QtCore.QEvent.MouseButtonRelease):
                 _set_active_file_pane(self._view)
+                return False
+            if ev.type() == QtCore.QEvent.FocusIn:
+                reason = None
+                try:
+                    reason = ev.reason()  # type: ignore[attr-defined]
+                except Exception:
+                    reason = None
+                if reason in (
+                    QtCore.Qt.FocusReason.MouseFocusReason,
+                    QtCore.Qt.FocusReason.TabFocusReason,
+                    QtCore.Qt.FocusReason.BacktabFocusReason,
+                    QtCore.Qt.FocusReason.ShortcutFocusReason,
+                ):
+                    _set_active_file_pane(self._view)
+                    return False
+                try:
+                    active = dialog.property("ap_bizhelper_active_pane")
+                except Exception:
+                    active = None
+                if active == "sidebar":
+                    sidebar = dialog.findChild(QtWidgets.QAbstractItemView, "sidebar")
+                    if sidebar is not None:
+                        _set_active_file_dialog_pane(
+                            dialog,
+                            "sidebar",
+                            focus_target=sidebar,
+                            extra_poke=sidebar,
+                        )
+                        return True
             return False
 
     views: list[QtWidgets.QAbstractItemView] = []
