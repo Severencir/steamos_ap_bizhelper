@@ -18,4 +18,4 @@ include-package-data = true
 packages = ["ap_bizhelper"]
 
 [tool.setuptools.package-data]
-ap_bizhelper = ["config.ini", "run_bizhawk_proton.py"]
+ap_bizhelper = ["run_bizhawk_proton.py"]
