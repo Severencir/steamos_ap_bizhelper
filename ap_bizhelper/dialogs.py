@@ -12,7 +12,7 @@ import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .ap_bizhelper_config import (
     get_path_setting,
@@ -1210,17 +1210,23 @@ def _install_sidebar_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
     def _set_active_file_pane() -> None:
         _set_file_dialog_active_pane(dialog, "file")
 
-    class _SidebarClickFilter(QtCore.QObject):
+    class _PaneClickFilter(QtCore.QObject):
+        def __init__(self, parent: QtCore.QObject, activate: Callable[[], None], allow_focus_in: bool) -> None:
+            super().__init__(parent)
+            self._activate = activate
+            self._allow_focus_in = allow_focus_in
+
         def eventFilter(self, obj: QtCore.QObject, ev: QtCore.QEvent) -> bool:  # noqa: N802
             if ev.type() in (
                 QtCore.QEvent.MouseButtonPress,
                 QtCore.QEvent.MouseButtonRelease,
-                QtCore.QEvent.FocusIn,
             ):
-                _set_active_sidebar()
+                self._activate()
+            elif ev.type() == QtCore.QEvent.FocusIn and self._allow_focus_in:
+                self._activate()
             return False
 
-    filter_obj = _SidebarClickFilter(sidebar)
+    filter_obj = _PaneClickFilter(sidebar, _set_active_sidebar, allow_focus_in=True)
     targets = [sidebar]
     try:
         vp = sidebar.viewport()
@@ -1235,17 +1241,14 @@ def _install_sidebar_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
             pass
     setattr(dialog, "_ap_sidebar_click_filter", filter_obj)
 
-    class _FilePaneClickFilter(QtCore.QObject):
+    class _FilePaneClickFilter(_PaneClickFilter):
         def eventFilter(self, obj: QtCore.QObject, ev: QtCore.QEvent) -> bool:  # noqa: N802
-            if ev.type() in (
-                QtCore.QEvent.MouseButtonPress,
-                QtCore.QEvent.MouseButtonRelease,
-                QtCore.QEvent.FocusIn,
-            ):
-                _set_active_file_pane()
-            return False
+            if ev.type() == QtCore.QEvent.FocusIn:
+                if QtWidgets.QApplication.mouseButtons() == QtCore.Qt.NoButton:
+                    return False
+            return super().eventFilter(obj, ev)
 
-    file_filter = _FilePaneClickFilter(dialog)
+    file_filter = _FilePaneClickFilter(dialog, _set_active_file_pane, allow_focus_in=True)
     file_targets: List[QtWidgets.QWidget] = []
     for view_name, view_type in (("treeView", QtWidgets.QTreeView), ("listView", QtWidgets.QListView)):
         view = dialog.findChild(view_type, view_name)
