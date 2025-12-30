@@ -319,8 +319,19 @@ def _copy_tree(src: Path, dest: Path) -> None:
     shutil.copytree(src, dest)
 
 
+def _has_drive_prefix(member_name: str) -> bool:
+    return (
+        len(member_name) >= 2
+        and member_name[1] == ":"
+        and member_name[0].isalpha()
+    )
+
+
 def _validated_member_path(member_name: str, dest_root: Path) -> Path:
-    candidate = Path(member_name)
+    normalized_member_name = member_name.replace("\\", "/")
+    if _has_drive_prefix(normalized_member_name):
+        raise RuntimeError(f"Archive entry uses drive prefix: {member_name}")
+    candidate = Path(normalized_member_name)
     if candidate.is_absolute():
         raise RuntimeError(f"Archive entry uses absolute path: {member_name}")
     if any(part in ("..", EMPTY_STRING) for part in candidate.parts):
