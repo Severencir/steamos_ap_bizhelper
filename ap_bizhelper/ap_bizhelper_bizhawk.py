@@ -38,6 +38,7 @@ from .constants import (
     FILE_FILTER_ZIP,
     PROTON_BIN_KEY,
     PROTON_PREFIX,
+    STEAM_ROOT_PATH_KEY,
     USER_AGENT,
     USER_AGENT_HEADER,
 )
@@ -809,10 +810,14 @@ def _try_minimize_bizhawk_window() -> None:
             pass
 
 
-def _launch_bizhawk_for_config(exe: Path, proton_bin: Path) -> Optional[subprocess.Popen]:
+def _launch_bizhawk_for_config(
+    exe: Path,
+    proton_bin: Path,
+    steam_root: Path,
+) -> Optional[subprocess.Popen]:
     env = os.environ.copy()
     env["STEAM_COMPAT_DATA_PATH"] = str(PROTON_PREFIX)
-    env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = str(STEAM_ROOT_DIR)
+    env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = str(steam_root)
     try:
         return subprocess.Popen(
             [str(proton_bin), PROTON_RUN_SUBCOMMAND, str(exe)],
@@ -824,8 +829,13 @@ def _launch_bizhawk_for_config(exe: Path, proton_bin: Path) -> Optional[subproce
         return None
 
 
-def _generate_bizhawk_config(exe: Path, proton_bin: Path, target_cfg: Path) -> bool:
-    proc = _launch_bizhawk_for_config(exe, proton_bin)
+def _generate_bizhawk_config(
+    exe: Path,
+    proton_bin: Path,
+    target_cfg: Path,
+    steam_root: Path,
+) -> bool:
+    proc = _launch_bizhawk_for_config(exe, proton_bin, steam_root)
     if proc is None:
         return False
 
@@ -869,7 +879,8 @@ def ensure_bizhawk_config(settings: Dict[str, Any], exe: Path, proton_bin: Path)
                 preserved_config.unlink()
         return _patch_bizhawk_config(target_cfg)
 
-    if not _generate_bizhawk_config(exe, proton_bin, target_cfg):
+    steam_root = get_path_setting(settings, STEAM_ROOT_PATH_KEY)
+    if not _generate_bizhawk_config(exe, proton_bin, target_cfg, steam_root):
         return False
     return _patch_bizhawk_config(target_cfg)
 
@@ -989,7 +1000,7 @@ def auto_detect_proton(settings: Dict[str, Any]) -> Optional[Path]:
 
 
 def _steam_root_dir(settings: Dict[str, Any]) -> Path:
-    return get_path_setting(settings, "STEAM_ROOT_PATH")
+    return get_path_setting(settings, STEAM_ROOT_PATH_KEY)
 
 
 def _default_steam_common_dir(settings: Dict[str, Any]) -> Path:

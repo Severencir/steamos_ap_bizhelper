@@ -1535,6 +1535,7 @@ def file_dialog(
     title: str,
     start_dir: Path,
     file_filter: Optional[str] = None,
+    select_directories: bool = False,
     settings: Optional[Dict[str, object]] = None,
 ) -> Optional[Path]:
     from PySide6 import QtCore, QtGui, QtWidgets
@@ -1548,10 +1549,15 @@ def file_dialog(
     dialog = QtWidgets.QFileDialog()
     dialog.setWindowTitle(title)
     dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptOpen)
-    dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+    if select_directories:
+        dialog.setFileMode(QtWidgets.QFileDialog.Directory)
+        dialog.setOption(QtWidgets.QFileDialog.ShowDirsOnly, True)
+        dialog.setNameFilter("Directories (*)")
+    else:
+        dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        dialog.setNameFilter(filter_text)
     # Note: we intentionally do not call setDirectory(start_dir) synchronously here.
     # Instead, we seed start_dir as the first sidebar entry and enter it on the next event-loop tick.
-    dialog.setNameFilter(filter_text)
     dialog.setViewMode(QtWidgets.QFileDialog.Detail)
     dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
     dialog.setOption(QtWidgets.QFileDialog.ReadOnly, False)
@@ -1704,6 +1710,7 @@ def select_file_dialog(
     dialog_key: str,
     initial: Optional[Path] = None,
     file_filter: Optional[str] = None,
+    select_directories: bool = False,
     settings: Optional[Dict[str, object]] = None,
     save_settings: bool = True,
 ) -> Optional[Path]:
@@ -1734,7 +1741,11 @@ def select_file_dialog(
     _fdlogd(fd_logger, 'select_file_dialog start_dir chosen', dialog_key=dialog_key, start_dir=str(start_dir))
 
     selection = file_dialog(
-        title=title, start_dir=start_dir, file_filter=file_filter, settings=settings_obj
+        title=title,
+        start_dir=start_dir,
+        file_filter=file_filter,
+        select_directories=select_directories,
+        settings=settings_obj,
     )
 
     if selection:

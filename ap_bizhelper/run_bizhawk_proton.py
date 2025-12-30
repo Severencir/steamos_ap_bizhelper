@@ -7,9 +7,15 @@ import sys
 from pathlib import Path
 
 try:
-    from ap_bizhelper.ap_bizhelper_config import load_settings as _load_shared_settings
+    from ap_bizhelper.ap_bizhelper_config import (
+        get_path_setting as _get_path_setting,
+        load_settings as _load_shared_settings,
+    )
 except ImportError:  # pragma: no cover - fallback when executed outside the package
-    from .ap_bizhelper_config import load_settings as _load_shared_settings
+    from .ap_bizhelper_config import (
+        get_path_setting as _get_path_setting,
+        load_settings as _load_shared_settings,
+    )
 
 from ap_bizhelper.logging_utils import RUNNER_LOG_ENV, create_component_logger
 from ap_bizhelper.constants import (
@@ -17,7 +23,7 @@ from ap_bizhelper.constants import (
     LOG_PREFIX,
     PROTON_BIN_KEY,
     PROTON_PREFIX,
-    STEAM_ROOT_DIR,
+    STEAM_ROOT_PATH_KEY,
 )
 from ap_bizhelper.dialogs import (
     enable_dialog_gamepad as _enable_dialog_gamepad,
@@ -45,7 +51,6 @@ PROTON_PREFIX_KEY = "PROTON_PREFIX"
 RUNNER_ERROR_TITLE = "BizHawk runner error"
 RUNNER_MAIN_CONTEXT = "runner-main"
 SNI_DIRNAME = "sni"
-STEAM_ROOT_KEY = "STEAM_ROOT"
 XDG_OPEN_CMD = "xdg-open"
 
 
@@ -100,9 +105,10 @@ def ensure_bizhawk_exe() -> Path:
 def configure_proton_env():
     proton_bin = get_env_or_config(PROTON_BIN_KEY) or "proton"
     proton_prefix = get_env_or_config(PROTON_PREFIX_KEY) or str(PROTON_PREFIX)
-    steam_root = get_env_or_config(STEAM_ROOT_KEY) or str(
-        STEAM_ROOT_DIR
-    )
+    global _SETTINGS_CACHE
+    if _SETTINGS_CACHE is None:
+        _SETTINGS_CACHE = _load_settings()
+    steam_root = str(_get_path_setting(_SETTINGS_CACHE, STEAM_ROOT_PATH_KEY))
 
     os.environ[ENV_COMPAT_DATA_PATH] = proton_prefix
     os.environ[ENV_COMPAT_CLIENT_PATH] = steam_root
