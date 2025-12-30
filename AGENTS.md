@@ -4,6 +4,7 @@ Simplicity of code > readability of code > all else.
 All dynamic/configurable values should be initialized to settings from a default value if they are not present, and read from settings when used. this supercedes the constants preference. This includes things like window/font size, paths, or anything that is likely to need some flexibility, but should also persist across runs
 settings should be partitioned by category with one file being dedicated to values a typical user may wish to change themselves, and several to various categories of persistent storage. Any value for which changing could break behavior should be separated into one of these partitions.
 Prefer using shared constants to literals where reasonable which should be consolidated to constants.py where possible.
+prefer extending existing systems to support new behavior where possible. prefer consolidating aimilar behaviors into fewer systems/helpers
 Prefer reductive changes that solve a problem where reasonable without affecting the default behavior.
 Ask clarifying questions before beginning if instructions are unclear, conflicting, or seem to disagree with the goal.
 Ask about any cleanup that might be possible for touched areas of code rather than just piling more code on top of it.
