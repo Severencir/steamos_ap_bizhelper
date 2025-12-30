@@ -1129,60 +1129,8 @@ def _install_sidebar_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
     if sidebar is None:
         return
 
-    def _repolish(w: Optional[QtWidgets.QWidget]) -> None:
-        if w is None:
-            return
-        try:
-            st = w.style()
-            st.unpolish(w)
-            st.polish(w)
-            w.update()
-        except Exception:
-            try:
-                w.update()
-            except Exception:
-                pass
-
-    def _poke_view(v: Optional[QtWidgets.QAbstractItemView]) -> None:
-        if v is None:
-            return
-        _repolish(v)
-        try:
-            vp = v.viewport()
-            if vp is not None:
-                vp.update()
-                vp.repaint()
-        except Exception:
-            pass
-        try:
-            v.update()
-            v.repaint()
-        except Exception:
-            pass
-
     def _set_active_sidebar() -> None:
-        try:
-            dialog.setProperty("ap_bizhelper_active_pane", "sidebar")
-        except Exception:
-            return
-        try:
-            sidebar.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
-        except Exception:
-            pass
-        layer = getattr(dialog, "_ap_gamepad_layer", None)
-        if layer is not None:
-            try:
-                layer._set_file_dialog_active_pane("sidebar")
-            except Exception:
-                pass
-        _repolish(dialog)
-        _poke_view(sidebar)
-        _poke_view(dialog.findChild(QtWidgets.QAbstractItemView, "treeView"))
-        _poke_view(dialog.findChild(QtWidgets.QAbstractItemView, "listView"))
-        try:
-            QtCore.QTimer.singleShot(0, lambda: _poke_view(sidebar))
-        except Exception:
-            pass
+        _set_active_file_dialog_pane(dialog, "sidebar", focus_target=sidebar, extra_poke=sidebar)
 
     class _SidebarClickFilter(QtCore.QObject):
         def eventFilter(self, obj: QtCore.QObject, ev: QtCore.QEvent) -> bool:  # noqa: N802
@@ -1208,6 +1156,121 @@ def _install_sidebar_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
         except Exception:
             pass
     setattr(dialog, "_ap_sidebar_click_filter", filter_obj)
+
+
+def _install_file_pane_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
+    from PySide6 import QtCore, QtWidgets
+
+    def _set_active_file_pane(target: Optional[QtWidgets.QAbstractItemView]) -> None:
+        _set_active_file_dialog_pane(dialog, "file", focus_target=target, extra_poke=target)
+
+    class _FilePaneClickFilter(QtCore.QObject):
+        def __init__(self, view: QtWidgets.QAbstractItemView) -> None:
+            super().__init__(view)
+            self._view = view
+
+        def eventFilter(self, obj: QtCore.QObject, ev: QtCore.QEvent) -> bool:  # noqa: N802
+            if ev.type() in (
+                QtCore.QEvent.MouseButtonPress,
+                QtCore.QEvent.MouseButtonRelease,
+                QtCore.QEvent.FocusIn,
+            ):
+                _set_active_file_pane(self._view)
+            return False
+
+    views: list[QtWidgets.QAbstractItemView] = []
+    tree_view = dialog.findChild(QtWidgets.QAbstractItemView, "treeView")
+    if tree_view is not None:
+        views.append(tree_view)
+    list_view = dialog.findChild(QtWidgets.QAbstractItemView, "listView")
+    if list_view is not None:
+        views.append(list_view)
+    if not views:
+        return
+    for view in views:
+        filter_obj = _FilePaneClickFilter(view)
+        targets: list[QtWidgets.QObject] = [view]
+        try:
+            vp = view.viewport()
+            if vp is not None:
+                targets.append(vp)
+        except Exception:
+            pass
+        for target in targets:
+            try:
+                target.installEventFilter(filter_obj)
+            except Exception:
+                pass
+        setattr(view, "_ap_file_pane_click_filter", filter_obj)
+
+
+def _repolish_widget(widget: Optional["QtWidgets.QWidget"]) -> None:
+    if widget is None:
+        return
+    try:
+        st = widget.style()
+        st.unpolish(widget)
+        st.polish(widget)
+        widget.update()
+    except Exception:
+        try:
+            widget.update()
+        except Exception:
+            pass
+
+
+def _poke_item_view(view: Optional["QtWidgets.QAbstractItemView"]) -> None:
+    if view is None:
+        return
+    _repolish_widget(view)
+    try:
+        vp = view.viewport()
+        if vp is not None:
+            vp.update()
+            vp.repaint()
+    except Exception:
+        pass
+    try:
+        view.update()
+        view.repaint()
+    except Exception:
+        pass
+
+
+def _set_active_file_dialog_pane(
+    dialog: "QtWidgets.QFileDialog",
+    pane: str,
+    *,
+    focus_target: Optional["QtWidgets.QAbstractItemView"] = None,
+    extra_poke: Optional["QtWidgets.QAbstractItemView"] = None,
+) -> None:
+    from PySide6 import QtCore, QtWidgets
+
+    normalized = "sidebar" if str(pane).strip().lower().startswith("side") else "file"
+    try:
+        dialog.setProperty("ap_bizhelper_active_pane", normalized)
+    except Exception:
+        return
+    if focus_target is not None:
+        try:
+            focus_target.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
+        except Exception:
+            pass
+    layer = getattr(dialog, "_ap_gamepad_layer", None)
+    if layer is not None:
+        try:
+            layer._set_file_dialog_active_pane(normalized)
+        except Exception:
+            pass
+    _repolish_widget(dialog)
+    _poke_item_view(dialog.findChild(QtWidgets.QAbstractItemView, "sidebar"))
+    _poke_item_view(dialog.findChild(QtWidgets.QAbstractItemView, "treeView"))
+    _poke_item_view(dialog.findChild(QtWidgets.QAbstractItemView, "listView"))
+    if extra_poke is not None:
+        try:
+            QtCore.QTimer.singleShot(0, lambda v=extra_poke: _poke_item_view(v))
+        except Exception:
+            pass
 
 
 def _widen_file_dialog_sidebar(dialog: "QtWidgets.QFileDialog", settings: Dict[str, object]) -> None:
@@ -1667,6 +1730,7 @@ def file_dialog(
         pass
     _apply_file_dialog_inactive_selection_style(dialog)
     _install_sidebar_click_focus(dialog)
+    _install_file_pane_click_focus(dialog)
     if _coerce_bool_setting(
         settings_obj, "QT_FILE_DIALOG_MAXIMIZE", bool(DIALOG_DEFAULTS["QT_FILE_DIALOG_MAXIMIZE"])
     ):
