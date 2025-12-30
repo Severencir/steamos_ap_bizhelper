@@ -57,6 +57,7 @@ from .constants import (
     PENDING_RELAUNCH_ARGS_KEY,
     PROTON_BIN_KEY,
     STEAM_APPID_KEY,
+    STEAM_ROOT_PATH_KEY,
     USE_CACHED_RELAUNCH_ARGS_KEY,
 )
 from .logging_utils import RUNNER_LOG_ENV, get_app_logger
@@ -68,6 +69,8 @@ APP_LOGGER = get_app_logger()
 _SHUTDOWN_SIGNAL_ACTIVE = False
 _SIGNAL_HANDLERS_INSTALLED = False
 _SHUTDOWN_DEBUG_ENV = "AP_BIZHELPER_DEBUG_SHUTDOWN"
+STEAM_ROOT_DIALOG_KEY = "steam-root-dir"
+STEAMAPPS_DIRNAME = "steamapps"
 
 
 def _shutdown_debug_enabled() -> bool:
@@ -94,6 +97,49 @@ def _shutdown_debug_log(
         )
     except Exception:
         pass
+
+
+def _steam_root_is_valid(path: Path) -> bool:
+    return path.is_dir() and (path / STEAMAPPS_DIRNAME).is_dir()
+
+
+def _ensure_steam_root(settings: dict) -> bool:
+    steam_root = get_path_setting(settings, STEAM_ROOT_PATH_KEY)
+    if _steam_root_is_valid(steam_root):
+        return True
+
+    message = (
+        "Steam was not found at the expected location:\n"
+        f"{steam_root}\n\n"
+        "Steam is required to manage Proton and BizHawk downloads. "
+        "Select your Steam installation folder (the one containing steamapps) to continue."
+    )
+    while True:
+        choice = _qt_question_dialog(
+            title="Steam installation required",
+            text=message,
+            ok_label="Select Steam folder",
+            cancel_label="Close",
+        )
+        if choice != "ok":
+            return False
+        selected = _select_file_dialog(
+            title="Select Steam installation folder",
+            dialog_key=STEAM_ROOT_DIALOG_KEY,
+            initial=steam_root,
+            settings=settings,
+            select_directories=True,
+        )
+        if not selected:
+            return False
+        if _steam_root_is_valid(selected):
+            settings[STEAM_ROOT_PATH_KEY] = str(selected)
+            save_settings(settings)
+            return True
+        error_dialog(
+            "That folder does not look like a Steam installation. "
+            "Please select the folder that contains steamapps."
+        )
 
 
 def _tracked_bizhawk_pids(baseline_bizhawk_pids: Set[int]) -> Set[int]:
@@ -1341,6 +1387,9 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids
 
 def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path], Optional[Path]]:
     with APP_LOGGER.context("_run_prereqs"):
+        if not _ensure_steam_root(settings):
+            raise RuntimeError("Steam installation is required to continue.")
+
         need_arch = _needs_archipelago_download(settings)
         need_bizhawk = _needs_bizhawk_download(settings)
         need_proton = _needs_proton_download(settings)
