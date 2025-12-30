@@ -1160,19 +1160,15 @@ def _install_sidebar_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
         except Exception:
             pass
 
-    def _set_active_sidebar() -> None:
+    def _set_active_file_pane() -> None:
         try:
-            dialog.setProperty("ap_bizhelper_active_pane", "sidebar")
+            dialog.setProperty("ap_bizhelper_active_pane", "file")
         except Exception:
             return
-        try:
-            sidebar.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
-        except Exception:
-            pass
         layer = getattr(dialog, "_ap_gamepad_layer", None)
         if layer is not None:
             try:
-                layer._set_file_dialog_active_pane("sidebar")
+                layer._set_file_dialog_active_pane("file")
             except Exception:
                 pass
         _repolish(dialog)
@@ -1183,6 +1179,10 @@ def _install_sidebar_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
             QtCore.QTimer.singleShot(0, lambda: _poke_view(sidebar))
         except Exception:
             pass
+        try:
+            QtCore.QTimer.singleShot(0, lambda: _focus_file_view(dialog))
+        except Exception:
+            pass
 
     class _SidebarClickFilter(QtCore.QObject):
         def eventFilter(self, obj: QtCore.QObject, ev: QtCore.QEvent) -> bool:  # noqa: N802
@@ -1191,7 +1191,7 @@ def _install_sidebar_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
                 QtCore.QEvent.MouseButtonRelease,
                 QtCore.QEvent.FocusIn,
             ):
-                _set_active_sidebar()
+                _set_active_file_pane()
             return False
 
     filter_obj = _SidebarClickFilter(sidebar)
