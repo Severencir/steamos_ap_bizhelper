@@ -38,7 +38,6 @@ from .constants import (
     FILE_FILTER_ZIP,
     PROTON_BIN_KEY,
     PROTON_PREFIX,
-    STEAM_ROOT_PATH_KEY,
     USER_AGENT,
     USER_AGENT_HEADER,
 )
@@ -50,7 +49,7 @@ from .dialogs import (
 )
 from .ap_bizhelper_config import (
     CONFIG_DIR,
-    get_path_setting,
+    get_steam_root_setting,
     load_settings as _load_shared_settings,
     save_settings as _save_shared_settings,
 )
@@ -813,8 +812,9 @@ def _try_minimize_bizhawk_window() -> None:
 def _launch_bizhawk_for_config(
     exe: Path,
     proton_bin: Path,
-    steam_root: Path,
+    settings: Dict[str, Any],
 ) -> Optional[subprocess.Popen]:
+    steam_root = get_steam_root_setting(settings)
     env = os.environ.copy()
     env["STEAM_COMPAT_DATA_PATH"] = str(PROTON_PREFIX)
     env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = str(steam_root)
@@ -833,9 +833,9 @@ def _generate_bizhawk_config(
     exe: Path,
     proton_bin: Path,
     target_cfg: Path,
-    steam_root: Path,
+    settings: Dict[str, Any],
 ) -> bool:
-    proc = _launch_bizhawk_for_config(exe, proton_bin, steam_root)
+    proc = _launch_bizhawk_for_config(exe, proton_bin, settings)
     if proc is None:
         return False
 
@@ -879,8 +879,7 @@ def ensure_bizhawk_config(settings: Dict[str, Any], exe: Path, proton_bin: Path)
                 preserved_config.unlink()
         return _patch_bizhawk_config(target_cfg)
 
-    steam_root = get_path_setting(settings, STEAM_ROOT_PATH_KEY)
-    if not _generate_bizhawk_config(exe, proton_bin, target_cfg, steam_root):
+    if not _generate_bizhawk_config(exe, proton_bin, target_cfg, settings):
         return False
     return _patch_bizhawk_config(target_cfg)
 
@@ -1000,7 +999,7 @@ def auto_detect_proton(settings: Dict[str, Any]) -> Optional[Path]:
 
 
 def _steam_root_dir(settings: Dict[str, Any]) -> Path:
-    return get_path_setting(settings, STEAM_ROOT_PATH_KEY)
+    return get_steam_root_setting(settings)
 
 
 def _default_steam_common_dir(settings: Dict[str, Any]) -> Path:
