@@ -1171,6 +1171,12 @@ def _install_sidebar_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
                 layer._set_file_dialog_active_pane("file")
             except Exception:
                 pass
+            try:
+                layer.sync_file_dialog_sidebar_entry()
+                QtCore.QTimer.singleShot(0, layer.sync_file_dialog_sidebar_entry)
+                QtCore.QTimer.singleShot(50, layer.sync_file_dialog_sidebar_entry)
+            except Exception:
+                pass
         _repolish(dialog)
         _poke_view(sidebar)
         _poke_view(dialog.findChild(QtWidgets.QAbstractItemView, "treeView"))

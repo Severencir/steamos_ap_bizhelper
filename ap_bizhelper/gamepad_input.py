@@ -1095,6 +1095,32 @@ if QT_AVAILABLE:
             except Exception:
                 return
 
+        def sync_file_dialog_sidebar_entry(self) -> None:
+            """Sync the dynamic sidebar entry to the dialog's current directory."""
+            if not self._is_file_dialog():
+                return
+            try:
+                # QFileDialog.directory() returns a QDir
+                qdir = self._dialog.directory()  # type: ignore[union-attr]
+                cur = qdir.absolutePath()
+            except Exception:
+                try:
+                    cur = self._dialog.directory().path()  # type: ignore[union-attr]
+                except Exception:
+                    cur = ""
+            if not cur:
+                return
+            try:
+                norm = os.path.normpath(cur)
+            except Exception:
+                norm = cur
+            if self._fd_sidebar_frozen:
+                self._fd_sidebar_pending = norm
+                return
+            self._fd_sidebar_pending = None
+            self._set_sidebar_current_dir_entry(norm)
+            self._schedule_passive_sidebar_current_dir_highlight()
+
         def _record_file_dialog_history(self, path: str) -> None:
             if not path:
                 return
