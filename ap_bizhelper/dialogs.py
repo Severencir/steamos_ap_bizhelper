@@ -1238,7 +1238,20 @@ def _install_sidebar_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
             pass
 
     class _SidebarClickFilter(QtCore.QObject):
+        def __init__(self, sidebar_view: QtWidgets.QListView) -> None:
+            super().__init__()
+            self._sidebar = sidebar_view
+
         def eventFilter(self, obj: QtCore.QObject, ev: QtCore.QEvent) -> bool:  # noqa: N802
+            sidebar_view = self._sidebar
+            try:
+                sidebar_viewport = sidebar_view.viewport()
+            except Exception:
+                sidebar_viewport = None
+            if obj not in (sidebar_view, sidebar_viewport):
+                return False
+            if ev.type() == QtCore.QEvent.MouseButtonDblClick and obj is not sidebar_view:
+                return False
             if ev.type() in (
                 QtCore.QEvent.MouseButtonRelease,
                 QtCore.QEvent.MouseButtonDblClick,
