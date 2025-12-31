@@ -1160,21 +1160,74 @@ def _install_sidebar_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
         except Exception:
             pass
 
-    def _set_active_sidebar() -> None:
-        try:
-            dialog.setProperty("ap_bizhelper_active_pane", "sidebar")
-        except Exception:
-            return
-        try:
-            sidebar.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
-        except Exception:
-            pass
+    def _activate_sidebar_and_focus_file_pane() -> None:
         layer = getattr(dialog, "_ap_gamepad_layer", None)
-        if layer is not None:
+        if layer is not None and hasattr(layer, "_sidebar_activate_and_focus_file_pane"):
             try:
-                layer._set_file_dialog_active_pane("sidebar")
+                layer._sidebar_activate_and_focus_file_pane(sidebar)
             except Exception:
                 pass
+        else:
+            model = sidebar.model()
+            sm = sidebar.selectionModel()
+            if model is not None and sm is not None:
+                root = sidebar.rootIndex()
+                try:
+                    idx = sm.currentIndex()
+                except Exception:
+                    idx = QtCore.QModelIndex()
+                if not getattr(idx, "isValid", lambda: False)():
+                    try:
+                        selected = sm.selectedIndexes()
+                    except Exception:
+                        selected = []
+                    if selected:
+                        idx = selected[0]
+                if not getattr(idx, "isValid", lambda: False)():
+                    try:
+                        if model.rowCount(root) > 0:
+                            idx = model.index(0, 0, root)
+                    except Exception:
+                        idx = QtCore.QModelIndex()
+
+                chosen_path: Optional[str] = None
+                if getattr(idx, "isValid", lambda: False)():
+                    try:
+                        data = model.data(idx, QtCore.Qt.UserRole)
+                        if hasattr(data, "toLocalFile"):
+                            candidate = data.toLocalFile()
+                        else:
+                            candidate = str(data) if data is not None else ""
+                        if candidate and os.path.isabs(candidate):
+                            chosen_path = candidate
+                    except Exception:
+                        chosen_path = None
+
+                if not chosen_path and getattr(idx, "isValid", lambda: False)():
+                    try:
+                        urls = list(dialog.sidebarUrls())
+                        if 0 <= idx.row() < len(urls):
+                            candidate = urls[idx.row()].toLocalFile()
+                            if candidate and os.path.isabs(candidate):
+                                chosen_path = candidate
+                    except Exception:
+                        chosen_path = None
+
+                if chosen_path and os.path.isdir(chosen_path):
+                    try:
+                        dialog.setDirectory(chosen_path)
+                    except Exception:
+                        pass
+
+            try:
+                QtCore.QTimer.singleShot(0, lambda: _focus_file_view(dialog))
+            except Exception:
+                pass
+
+        try:
+            dialog.setProperty("ap_bizhelper_active_pane", "file")
+        except Exception:
+            pass
         _repolish(dialog)
         _poke_view(sidebar)
         _poke_view(dialog.findChild(QtWidgets.QAbstractItemView, "treeView"))
@@ -1187,11 +1240,10 @@ def _install_sidebar_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
     class _SidebarClickFilter(QtCore.QObject):
         def eventFilter(self, obj: QtCore.QObject, ev: QtCore.QEvent) -> bool:  # noqa: N802
             if ev.type() in (
-                QtCore.QEvent.MouseButtonPress,
                 QtCore.QEvent.MouseButtonRelease,
-                QtCore.QEvent.FocusIn,
+                QtCore.QEvent.MouseButtonDblClick,
             ):
-                _set_active_sidebar()
+                _activate_sidebar_and_focus_file_pane()
             return False
 
     filter_obj = _SidebarClickFilter(sidebar)
