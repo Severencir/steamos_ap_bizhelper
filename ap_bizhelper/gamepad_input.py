@@ -1485,11 +1485,31 @@ if QT_AVAILABLE:
                 return False
             if sidebar is None:
                 return False
+            chosen_path = self._sidebar_selected_path(sidebar)
+            if chosen_path:
+                try:
+                    self._dialog.setDirectory(chosen_path)  # type: ignore[union-attr]
+                except Exception:
+                    pass
 
+            # Switch to file pane on the next tick so the directory change can propagate.
+            try:
+                QtCore.QTimer.singleShot(0, lambda: self._toggle_file_dialog_pane(go_right=True))
+            except Exception:
+                try:
+                    self._toggle_file_dialog_pane(go_right=True)
+                except Exception:
+                    pass
+
+            return True
+
+        def _sidebar_selected_path(self, sidebar: QtWidgets.QAbstractItemView) -> Optional[str]:
+            if not self._is_file_dialog() or sidebar is None:
+                return None
             model = sidebar.model()
             sm = sidebar.selectionModel()
             if model is None or sm is None:
-                return False
+                return None
 
             root = sidebar.rootIndex()
             try:
@@ -1513,9 +1533,7 @@ if QT_AVAILABLE:
                     pass
 
             if not getattr(idx, "isValid", lambda: False)():
-                return False
-
-            chosen_path: Optional[str] = None
+                return None
 
             # Fast path: row index corresponds to QFileDialog.sidebarUrls() ordering.
             try:
@@ -1523,41 +1541,42 @@ if QT_AVAILABLE:
                 if 0 <= idx.row() < len(urls):
                     p = urls[idx.row()].toLocalFile()
                     if p:
-                        chosen_path = p
+                        return p
             except Exception:
-                chosen_path = None
+                pass
 
             # Slow path: try to extract a local file path from the model.
+            for role in (QtCore.Qt.UserRole, QtCore.Qt.DisplayRole):
+                try:
+                    data = model.data(idx, role)
+                    if hasattr(data, "toLocalFile"):
+                        p = data.toLocalFile()
+                    else:
+                        p = str(data) if data is not None else ""
+                    if p and os.path.isabs(p):
+                        return p
+                except Exception:
+                    continue
+
+            return None
+
+        def sync_file_dialog_sidebar_entry_from_sidebar(
+            self, sidebar: Optional[QtWidgets.QAbstractItemView]
+        ) -> None:
+            if not self._is_file_dialog() or sidebar is None:
+                return
+            chosen_path = self._sidebar_selected_path(sidebar)
             if not chosen_path:
-                for role in (QtCore.Qt.UserRole, QtCore.Qt.DisplayRole):
-                    try:
-                        data = model.data(idx, role)
-                        if hasattr(data, "toLocalFile"):
-                            p = data.toLocalFile()
-                        else:
-                            p = str(data) if data is not None else ""
-                        if p and os.path.isabs(p):
-                            chosen_path = p
-                            break
-                    except Exception:
-                        continue
-
-            if chosen_path:
-                try:
-                    self._dialog.setDirectory(chosen_path)  # type: ignore[union-attr]
-                except Exception:
-                    pass
-
-            # Switch to file pane on the next tick so the directory change can propagate.
+                return
             try:
-                QtCore.QTimer.singleShot(0, lambda: self._toggle_file_dialog_pane(go_right=True))
+                norm = os.path.normpath(chosen_path)
             except Exception:
-                try:
-                    self._toggle_file_dialog_pane(go_right=True)
-                except Exception:
-                    pass
-
-            return True
+                norm = chosen_path
+            self._fd_sidebar_pending = None
+            if self._fd_sidebar_frozen:
+                self._fd_sidebar_anchor = norm
+            self._set_sidebar_current_dir_entry(norm)
+            self._schedule_passive_sidebar_current_dir_highlight()
 
         def _file_dialog_back(self) -> bool:
             if not self._is_file_dialog():

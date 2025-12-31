@@ -1198,6 +1198,15 @@ def _install_sidebar_click_focus(dialog: "QtWidgets.QFileDialog") -> None:
                 QtCore.QEvent.FocusIn,
             ):
                 _set_active_file_pane()
+                if ev.type() == QtCore.QEvent.MouseButtonRelease:
+                    layer = getattr(dialog, "_ap_gamepad_layer", None)
+                    if layer is not None:
+                        try:
+                            QtCore.QTimer.singleShot(
+                                0, lambda s=sidebar: layer.sync_file_dialog_sidebar_entry_from_sidebar(s)
+                            )
+                        except Exception:
+                            pass
             return False
 
     filter_obj = _SidebarClickFilter(sidebar)
