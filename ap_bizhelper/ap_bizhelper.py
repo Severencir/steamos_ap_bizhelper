@@ -23,6 +23,7 @@ from .dialogs import (
     dialogs_active as _dialogs_active,
     error_dialog,
     info_dialog,
+    transient_info_dialog,
 )
 from .ap_bizhelper_bizhawk import (
     connectors_need_download,
@@ -60,6 +61,7 @@ from .constants import (
     STEAM_APPID_KEY,
     STEAM_ROOT_PATH_KEY,
     USE_CACHED_RELAUNCH_ARGS_KEY,
+    ENABLE_GAMEPAD_KILL_SWITCH_KEY,
 )
 from .logging_utils import RUNNER_LOG_ENV, get_app_logger
 from .ap_bizhelper_worlds import ensure_apworld_for_patch
@@ -70,6 +72,8 @@ APP_LOGGER = get_app_logger()
 _SHUTDOWN_SIGNAL_ACTIVE = False
 _SIGNAL_HANDLERS_INSTALLED = False
 _SHUTDOWN_DEBUG_ENV = "AP_BIZHELPER_DEBUG_SHUTDOWN"
+_GAMEPAD_KILL_SWITCH_ACTIVE = False
+_GAMEPAD_KILL_SWITCH_LISTENER = None
 
 
 def _shutdown_debug_enabled() -> bool:
@@ -262,6 +266,93 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
 
     signal.signal(signal.SIGTERM, _handle_shutdown_signal)
     signal.signal(signal.SIGINT, _handle_shutdown_signal)
+
+
+def _gamepad_kill_switch_enabled(settings: dict) -> bool:
+    return _coerce_bool(settings.get(ENABLE_GAMEPAD_KILL_SWITCH_KEY), True)
+
+
+def _run_graceful_shutdown(settings: dict, baseline_bizhawk_pids: Set[int]) -> None:
+    term_timeout = _get_shutdown_timeout(
+        settings,
+        setting_key="BIZHAWK_TERM_TIMEOUT",
+        env_key="AP_BIZHELPER_BIZHAWK_TERM_TIMEOUT",
+        default=10.0,
+    )
+    kill_timeout = _get_shutdown_timeout(
+        settings,
+        setting_key="BIZHAWK_KILL_TIMEOUT",
+        env_key="AP_BIZHELPER_BIZHAWK_KILL_TIMEOUT",
+        default=4.0,
+    )
+    allow_sigkill = _get_shutdown_flag(
+        settings,
+        setting_key="BIZHAWK_ALLOW_SIGKILL",
+        env_key="AP_BIZHELPER_BIZHAWK_ALLOW_SIGKILL",
+        default=True,
+    )
+    wait_timeout = _get_shutdown_timeout(
+        settings,
+        setting_key="BIZHAWK_SHUTDOWN_WAIT_TIMEOUT",
+        env_key="AP_BIZHELPER_BIZHAWK_SHUTDOWN_WAIT_TIMEOUT",
+        default=6.0,
+    )
+
+    still_running = _terminate_bizhawk_processes(
+        baseline_bizhawk_pids,
+        term_timeout=term_timeout,
+        kill_timeout=kill_timeout,
+        allow_sigkill=allow_sigkill,
+    )
+    if still_running and wait_timeout > 0:
+        print(f"{LOG_PREFIX} Waiting for BizHawk to exit before syncing SaveRAM.")
+        _wait_for_bizhawk_exit(baseline_bizhawk_pids, timeout=wait_timeout)
+
+    if not _tracked_bizhawk_pids(baseline_bizhawk_pids):
+        sync_bizhawk_saveram(settings)
+    else:
+        print(f"{LOG_PREFIX} BizHawk still running; skipping SaveRAM sync.")
+
+
+def _install_gamepad_kill_switch(settings: dict, baseline_bizhawk_pids: Set[int]) -> None:
+    global _GAMEPAD_KILL_SWITCH_ACTIVE, _GAMEPAD_KILL_SWITCH_LISTENER
+    if not _gamepad_kill_switch_enabled(settings):
+        return
+
+    try:
+        from PySide6 import QtCore, QtWidgets  # type: ignore
+
+        from .gamepad_input import install_gamepad_kill_switch
+    except Exception:
+        return
+
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return
+
+    def _on_kill_switch() -> None:
+        global _GAMEPAD_KILL_SWITCH_ACTIVE
+        if _GAMEPAD_KILL_SWITCH_ACTIVE:
+            return
+        _GAMEPAD_KILL_SWITCH_ACTIVE = True
+        _shutdown_debug_log(
+            "Gamepad kill switch activated",
+            location="gamepad-kill-switch",
+        )
+        try:
+            transient_info_dialog("Gamepad kill switch activated. Shutting down.")
+        except Exception:
+            pass
+        _run_graceful_shutdown(settings, baseline_bizhawk_pids)
+        try:
+            QtCore.QCoreApplication.quit()
+        except Exception:
+            pass
+        raise SystemExit(0)
+
+    listener = install_gamepad_kill_switch(app, callback=_on_kill_switch)
+    if listener is not None:
+        _GAMEPAD_KILL_SWITCH_LISTENER = listener
     _SIGNAL_HANDLERS_INSTALLED = True
 
 
@@ -1433,6 +1524,7 @@ def _run_full_flow(
     patch_arg: Optional[str] = None,
     *,
     allow_steam: bool = True,
+    baseline_bizhawk_pids: Optional[Set[int]] = None,
 ) -> int:
     with APP_LOGGER.context("_run_full_flow"):
         try:
@@ -1448,7 +1540,7 @@ def _run_full_flow(
             error_dialog("Archipelago was not selected for download and is required to continue.")
             return 1
 
-        baseline_pids = _list_bizhawk_pids()
+        baseline_pids = baseline_bizhawk_pids if baseline_bizhawk_pids is not None else _list_bizhawk_pids()
         _install_shutdown_signal_handlers(settings, baseline_pids)
 
         _apply_association_files(_registered_association_exts())
@@ -1528,6 +1620,9 @@ def main(argv: list[str]) -> int:
                 stream="stderr",
             )
             return 1
+
+        baseline_pids = _list_bizhawk_pids()
+        _install_gamepad_kill_switch(settings, baseline_pids)
 
         settings_dirty = False
 
@@ -1621,7 +1716,12 @@ def main(argv: list[str]) -> int:
                 stream="stderr",
             )
 
-        return _run_full_flow(settings, patch_arg, allow_steam=not no_steam)
+        return _run_full_flow(
+            settings,
+            patch_arg,
+            allow_steam=not no_steam,
+            baseline_bizhawk_pids=baseline_pids,
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover
