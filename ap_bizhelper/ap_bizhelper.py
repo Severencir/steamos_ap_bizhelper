@@ -51,6 +51,7 @@ from .constants import (
     ARCHIPELAGO_WORLDS_DIR,
     BIZHELPER_APPIMAGE_KEY,
     BIZHAWK_EXE_KEY,
+    BIZHAWK_SHUTDOWN_FLAG,
     BIZHAWK_RUNNER_KEY,
     FILE_FILTER_APWORLD,
     LOG_PREFIX,
@@ -70,6 +71,7 @@ APP_LOGGER = get_app_logger()
 _SHUTDOWN_SIGNAL_ACTIVE = False
 _SIGNAL_HANDLERS_INSTALLED = False
 _SHUTDOWN_DEBUG_ENV = "AP_BIZHELPER_DEBUG_SHUTDOWN"
+_BIZHAWK_SHUTDOWN_FLAG = BIZHAWK_SHUTDOWN_FLAG
 
 
 def _shutdown_debug_enabled() -> bool:
@@ -205,6 +207,23 @@ def _terminate_bizhawk_processes(
     return bool(_tracked_bizhawk_pids(baseline_bizhawk_pids))
 
 
+def _write_bizhawk_shutdown_flag(settings: dict) -> bool:
+    bizhawk_root = _resolve_bizhawk_root(settings)
+    if bizhawk_root is None:
+        print(f"{LOG_PREFIX} BizHawk root directory not found; cannot write shutdown flag.")
+        return False
+
+    flag_path = bizhawk_root / _BIZHAWK_SHUTDOWN_FLAG
+    try:
+        flag_path.write_text("shutdown\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"{LOG_PREFIX} Failed to write shutdown flag at {flag_path}: {exc}")
+        return False
+
+    print(f"{LOG_PREFIX} Wrote BizHawk shutdown flag at {flag_path}.")
+    return True
+
+
 def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set[int]) -> None:
     global _SIGNAL_HANDLERS_INSTALLED
     if _SIGNAL_HANDLERS_INSTALLED:
@@ -218,6 +237,9 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
 
         try:
             print(f"{LOG_PREFIX} Received signal {signum}; attempting BizHawk shutdown.")
+            flag_written = _write_bizhawk_shutdown_flag(settings)
+            if not flag_written:
+                print(f"{LOG_PREFIX} BizHawk shutdown flag could not be written.")
             term_timeout = _get_shutdown_timeout(
                 settings,
                 setting_key="BIZHAWK_TERM_TIMEOUT",
@@ -230,33 +252,50 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
                 env_key="AP_BIZHELPER_BIZHAWK_KILL_TIMEOUT",
                 default=4.0,
             )
-            allow_sigkill = _get_shutdown_flag(
-                settings,
-                setting_key="BIZHAWK_ALLOW_SIGKILL",
-                env_key="AP_BIZHELPER_BIZHAWK_ALLOW_SIGKILL",
-                default=True,
-            )
             wait_timeout = _get_shutdown_timeout(
                 settings,
                 setting_key="BIZHAWK_SHUTDOWN_WAIT_TIMEOUT",
                 env_key="AP_BIZHELPER_BIZHAWK_SHUTDOWN_WAIT_TIMEOUT",
                 default=6.0,
             )
-
-            still_running = _terminate_bizhawk_processes(
-                baseline_bizhawk_pids,
-                term_timeout=term_timeout,
-                kill_timeout=kill_timeout,
-                allow_sigkill=allow_sigkill,
+            allow_sigkill = _get_shutdown_flag(
+                settings,
+                setting_key="BIZHAWK_ALLOW_SIGKILL",
+                env_key="AP_BIZHELPER_BIZHAWK_ALLOW_SIGKILL",
+                default=True,
             )
-            if still_running and wait_timeout > 0:
-                print(f"{LOG_PREFIX} Waiting for BizHawk to exit before syncing SaveRAM.")
-                _wait_for_bizhawk_exit(baseline_bizhawk_pids, timeout=wait_timeout)
 
-            if not _tracked_bizhawk_pids(baseline_bizhawk_pids):
-                sync_bizhawk_saveram(settings)
+            exited_naturally = False
+            if wait_timeout > 0:
+                print(
+                    f"{LOG_PREFIX} Waiting up to {wait_timeout:.1f}s for BizHawk to exit naturally."
+                )
+                exited_naturally = _wait_for_bizhawk_exit(
+                    baseline_bizhawk_pids, timeout=wait_timeout
+                )
             else:
-                print(f"{LOG_PREFIX} BizHawk still running; skipping SaveRAM sync.")
+                print(f"{LOG_PREFIX} Grace wait disabled; proceeding to forced shutdown.")
+
+            if exited_naturally:
+                print(f"{LOG_PREFIX} BizHawk exited during grace window; no forced shutdown needed.")
+                still_running = False
+            else:
+                if _tracked_bizhawk_pids(baseline_bizhawk_pids):
+                    print(f"{LOG_PREFIX} BizHawk still running; beginning forced termination.")
+                    still_running = _terminate_bizhawk_processes(
+                        baseline_bizhawk_pids,
+                        term_timeout=term_timeout,
+                        kill_timeout=kill_timeout,
+                        allow_sigkill=allow_sigkill,
+                    )
+                else:
+                    still_running = False
+
+            if still_running:
+                print(f"{LOG_PREFIX} BizHawk still running after forced termination attempt.")
+            else:
+                print(f"{LOG_PREFIX} BizHawk has exited; syncing SaveRAM.")
+                sync_bizhawk_saveram(settings)
         finally:
             raise SystemExit(0)
 

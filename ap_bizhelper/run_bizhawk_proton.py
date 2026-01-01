@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -14,6 +15,7 @@ except ImportError:  # pragma: no cover - fallback when executed outside the pac
 from ap_bizhelper.logging_utils import RUNNER_LOG_ENV, create_component_logger
 from ap_bizhelper.constants import (
     BIZHAWK_EXE_KEY,
+    BIZHAWK_SHUTDOWN_FLAG,
     LOG_PREFIX,
     PROTON_BIN_KEY,
     PROTON_PREFIX,
@@ -47,6 +49,130 @@ RUNNER_ERROR_TITLE = "BizHawk runner error"
 RUNNER_MAIN_CONTEXT = "runner-main"
 SNI_DIRNAME = "sni"
 XDG_OPEN_CMD = "xdg-open"
+LUA_WATCHDOG = "ap_bizhelper_shutdown_watchdog.lua"
+LUA_LOG = "ap_bizhelper_lua_shutdown_log.txt"
+
+# TEST BUILD: aggressive SaveRAM flush investigation; connectors disabled.
+# Manual acceptance test:
+# 1) Launch via Steam, start a ROM, and create a SaveRAM battery save.
+# 2) Stop the Steam game.
+# 3) Confirm wrapper logs show shutdown flag write + grace wait.
+# 4) Confirm ap_bizhelper_lua_shutdown_log.txt has saveram/exit entries.
+
+LUA_WATCHDOG_CONTENT = r"""-- ap-bizhelper aggressive shutdown watchdog (test build)
+local shutdown_flag = "ap_bizhelper_shutdown.flag"
+local log_path = "ap_bizhelper_lua_shutdown_log.txt"
+local burst_count = 12
+local post_exit_burst = 4
+local shutdown_seen = false
+
+local function safe_framecount()
+    if emu and emu.framecount then
+        local ok, value = pcall(emu.framecount)
+        if ok then
+            return value
+        end
+    end
+    return nil
+end
+
+local function log_line(message)
+    local ts = (os.date and os.date("%Y-%m-%d %H:%M:%S")) or "no-date"
+    local frame = safe_framecount()
+    local suffix = frame and (" frame=" .. tostring(frame)) or ""
+    local file = io.open(log_path, "a")
+    if not file then
+        return
+    end
+    file:write(ts .. suffix .. " " .. message .. "\n")
+    file:close()
+end
+
+local function safe_yield()
+    if emu and emu.yield then
+        local ok = pcall(emu.yield)
+        if ok then
+            return true
+        end
+    end
+    if emu and emu.frameadvance then
+        pcall(emu.frameadvance)
+        return true
+    end
+    return false
+end
+
+local function has_shutdown_flag()
+    local file = io.open(shutdown_flag, "r")
+    if file then
+        file:close()
+        return true
+    end
+    return false
+end
+
+local function safe_saveram()
+    if client and client.saveram then
+        pcall(client.saveram)
+    end
+end
+
+local function safe_exit()
+    if client and client.exit then
+        pcall(client.exit)
+    end
+end
+
+local function saveram_burst(count)
+    for i = 1, count do
+        safe_saveram()
+        safe_yield()
+    end
+end
+
+local function handle_shutdown(source)
+    if shutdown_seen then
+        return
+    end
+    shutdown_seen = true
+    log_line("shutdown flag detected (" .. source .. ")")
+    saveram_burst(burst_count)
+    log_line("requesting client.exit")
+    safe_exit()
+    saveram_burst(post_exit_burst)
+    log_line("shutdown sequence complete")
+end
+
+if event and event.onconsoleclose then
+    event.onconsoleclose(function()
+        log_line("console close: saveram attempt")
+        safe_saveram()
+    end, "ap_bizhelper_shutdown_consoleclose")
+end
+
+if event and event.onframeend then
+    event.onframeend(function()
+        if has_shutdown_flag() then
+            handle_shutdown("frameend")
+        end
+    end, "ap_bizhelper_shutdown_frameend")
+end
+
+if event and event.oninputpoll then
+    event.oninputpoll(function()
+        if has_shutdown_flag() then
+            handle_shutdown("inputpoll")
+        end
+    end, "ap_bizhelper_shutdown_inputpoll")
+end
+
+while true do
+    if has_shutdown_flag() then
+        handle_shutdown("yield-loop")
+    end
+    safe_yield()
+end
+"""
 
 
 def _load_settings():
@@ -221,6 +347,37 @@ def _missing_connector(connectors_dir: Path, connector_name: str) -> None:
     sys.exit(1)
 
 
+def _prepare_shutdown_watchdog(bizhawk_dir: Path) -> Path:
+    lua_path = bizhawk_dir / LUA_WATCHDOG
+    try:
+        lua_path.write_text(LUA_WATCHDOG_CONTENT, encoding="utf-8")
+    except OSError as exc:
+        error_dialog(f"{LOG_PREFIX} Failed to write shutdown watchdog Lua: {exc}")
+        sys.exit(1)
+
+    flag_path = bizhawk_dir / BIZHAWK_SHUTDOWN_FLAG
+    try:
+        flag_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+    log_path = bizhawk_dir / LUA_LOG
+    try:
+        with log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(f"--- ap-bizhelper shutdown watchdog run {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+    except OSError:
+        pass
+
+    RUNNER_LOGGER.log(
+        f"Prepared shutdown watchdog at {lua_path} (flag={flag_path}, log={log_path})",
+        include_context=True,
+        location=LUA_LOCATION,
+    )
+    return lua_path
+
+
 def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> str:
     """Decide the final --lua=... argument or raise on failure.
 
@@ -272,14 +429,18 @@ def build_bizhawk_command(argv):
     bizhawk_exe = ensure_bizhawk_exe()
     bizhawk_dir = bizhawk_exe.parent
     proton_bin, _, _ = configure_proton_env()
+    lua_watchdog = _prepare_shutdown_watchdog(bizhawk_dir)
 
     rom_path, ap_lua_arg, emu_args = parse_args(argv)
+    lua_arg = f"{LUA_ARG_PREFIX}{LUA_WATCHDOG}"
 
     if rom_path is None:
-        final_args = emu_args
+        final_args = [lua_arg] + emu_args
         print(f"{LOG_PREFIX} No ROM detected; launching BizHawk without AP connector.")
     else:
-        lua_arg = decide_lua_arg(bizhawk_dir, rom_path, ap_lua_arg)
+        # TEST BUILD: aggressive SaveRAM flush investigation; connectors disabled.
+        if ap_lua_arg:
+            print(f"{LOG_PREFIX} TEST BUILD: Ignoring AP-supplied --lua connector arg.")
         final_args = [rom_path, lua_arg] + emu_args
 
         print(f"{LOG_PREFIX} Running BizHawk via Proton:")
@@ -291,9 +452,14 @@ def build_bizhawk_command(argv):
 
     command = [proton_bin, "run", bizhawk_exe_rel, *final_args]
     RUNNER_LOGGER.log(
-        f"Built BizHawk command: {command} (cwd={bizhawk_dir})",
+        f"Built BizHawk command: {command} (cwd={bizhawk_dir}, watchdog={lua_watchdog})",
         include_context=True,
         location=COMMAND_LOCATION,
+    )
+    RUNNER_LOGGER.log(
+        f"BizHawk dir={bizhawk_dir} watchdog={lua_watchdog} log={bizhawk_dir / LUA_LOG}",
+        include_context=True,
+        location=LUA_LOCATION,
     )
     return proton_bin, bizhawk_dir, command
 
