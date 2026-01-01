@@ -70,6 +70,7 @@ APP_LOGGER = get_app_logger()
 _SHUTDOWN_SIGNAL_ACTIVE = False
 _SIGNAL_HANDLERS_INSTALLED = False
 _SHUTDOWN_DEBUG_ENV = "AP_BIZHELPER_DEBUG_SHUTDOWN"
+_BIZHAWK_SHUTDOWN_FLAG = "ap_bizhelper_shutdown.flag"
 
 
 def _shutdown_debug_enabled() -> bool:
@@ -243,12 +244,19 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
                 default=6.0,
             )
 
-            still_running = _terminate_bizhawk_processes(
-                baseline_bizhawk_pids,
-                term_timeout=term_timeout,
-                kill_timeout=kill_timeout,
-                allow_sigkill=allow_sigkill,
-            )
+            requested = _request_bizhawk_flush_and_exit(settings)
+            if requested and wait_timeout > 0:
+                print(f"{LOG_PREFIX} Requested BizHawk SaveRAM flush; waiting for exit.")
+                _wait_for_bizhawk_exit(baseline_bizhawk_pids, timeout=wait_timeout)
+
+            still_running = False
+            if _tracked_bizhawk_pids(baseline_bizhawk_pids):
+                still_running = _terminate_bizhawk_processes(
+                    baseline_bizhawk_pids,
+                    term_timeout=term_timeout,
+                    kill_timeout=kill_timeout,
+                    allow_sigkill=allow_sigkill,
+                )
             if still_running and wait_timeout > 0:
                 print(f"{LOG_PREFIX} Waiting for BizHawk to exit before syncing SaveRAM.")
                 _wait_for_bizhawk_exit(baseline_bizhawk_pids, timeout=wait_timeout)
@@ -1105,6 +1113,35 @@ def _resolve_bizhawk_root(settings: dict) -> Optional[Path]:
         return exe_path.parent
 
     return None
+
+
+def _request_bizhawk_flush_and_exit(settings: dict) -> bool:
+    bizhawk_root = _resolve_bizhawk_root(settings)
+    if bizhawk_root is None or not bizhawk_root.is_dir():
+        _shutdown_debug_log(
+            "BizHawk root directory not found; skipping shutdown hook request.",
+            location="shutdown-request",
+            data={"bizhawk_root": None if bizhawk_root is None else str(bizhawk_root)},
+        )
+        return False
+
+    flag_path = bizhawk_root / _BIZHAWK_SHUTDOWN_FLAG
+    try:
+        flag_path.write_text("", encoding="utf-8")
+    except OSError as exc:
+        _shutdown_debug_log(
+            "Failed to write BizHawk shutdown flag.",
+            location="shutdown-request",
+            data={"flag_path": str(flag_path), "error": str(exc)},
+        )
+        return False
+
+    _shutdown_debug_log(
+        "Wrote BizHawk shutdown flag.",
+        location="shutdown-request",
+        data={"flag_path": str(flag_path)},
+    )
+    return True
 
 
 def sync_bizhawk_saveram(settings: dict) -> None:

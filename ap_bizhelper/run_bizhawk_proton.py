@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-import json
+import importlib.resources as resources
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 try:
@@ -36,6 +37,8 @@ ENV_COMPAT_CLIENT_PATH = "STEAM_COMPAT_CLIENT_INSTALL_PATH"
 ENV_COMPAT_DATA_PATH = "STEAM_COMPAT_DATA_PATH"
 ENV_CONFIG_LOCATION = "env-config"
 EXEC_LOCATION = "exec"
+HOOK_LUA_NAME = "ap_bizhelper_shutdown_hook.lua"
+HOOK_SUBDIR = "ap_bizhelper"
 LOG_LEVEL_ERROR = "ERROR"
 LUA_ARG_PREFIX = "--lua="
 LUA_EXTENSION = ".lua"
@@ -43,8 +46,10 @@ GLOB_WILDCARD = "*"
 LUA_LOCATION = "lua"
 OPTION_PREFIX = "-"
 PROTON_PREFIX_KEY = "PROTON_PREFIX"
+ACTIVE_CONNECTOR_NAME = "active_connector.lua"
 RUNNER_ERROR_TITLE = "BizHawk runner error"
 RUNNER_MAIN_CONTEXT = "runner-main"
+SHUTDOWN_FLAG_FILENAME = "ap_bizhelper_shutdown.flag"
 SNI_DIRNAME = "sni"
 XDG_OPEN_CMD = "xdg-open"
 
@@ -188,11 +193,11 @@ def _open_dolphin(target: Path) -> None:
             pass
 
 
-def _connector_windows_path(bizhawk_dir: Path, connector_path: Path) -> str:
+def windows_relative_path_from_bizhawk_dir(bizhawk_dir: Path, path: Path) -> str:
     try:
-        relative = connector_path.relative_to(bizhawk_dir)
+        relative = path.relative_to(bizhawk_dir)
     except ValueError:
-        relative = connector_path
+        relative = path
     return str(relative).replace("/", "\\")
 
 
@@ -221,8 +226,48 @@ def _missing_connector(connectors_dir: Path, connector_name: str) -> None:
     sys.exit(1)
 
 
-def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> str:
-    """Decide the final --lua=... argument or raise on failure.
+def _write_atomic_bytes(destination: Path, data: bytes) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("wb", delete=False, dir=destination.parent) as temp_file:
+        temp_file.write(data)
+        temp_name = temp_file.name
+    os.replace(temp_name, destination)
+
+
+def _write_atomic_from_file(destination: Path, source: Path) -> None:
+    _write_atomic_bytes(destination, source.read_bytes())
+
+
+def ensure_hook_files(bizhawk_dir: Path, connector_path: Path) -> Path:
+    """Install the shutdown hook and active connector into the BizHawk directory."""
+    hook_dir = bizhawk_dir / HOOK_SUBDIR
+    hook_path = hook_dir / HOOK_LUA_NAME
+    active_connector_path = hook_dir / ACTIVE_CONNECTOR_NAME
+    shutdown_flag_path = bizhawk_dir / SHUTDOWN_FLAG_FILENAME
+
+    try:
+        hook_dir.mkdir(parents=True, exist_ok=True)
+        with resources.open_binary("ap_bizhelper", "bizhawk_shutdown_hook.lua") as handle:
+            _write_atomic_bytes(hook_path, handle.read())
+        _write_atomic_from_file(active_connector_path, connector_path)
+        if shutdown_flag_path.exists():
+            shutdown_flag_path.unlink()
+    except OSError as exc:
+        error_dialog(
+            f"{LOG_PREFIX} Unable to install BizHawk shutdown hook files in:\n{hook_dir}\n\n{exc}"
+        )
+        sys.exit(1)
+
+    RUNNER_LOGGER.log(
+        f"Installed BizHawk hook files: hook={hook_path}, connector={active_connector_path}",
+        include_context=True,
+        location=LUA_LOCATION,
+    )
+    return hook_path
+
+
+def decide_connector_path(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> Path:
+    """Decide the connector path or raise on failure.
 
     - For .sfc (SNES): always use the bundled SNI connector from bizhawk_dir/sni.
     - For other ROMs: use the connector requested by --lua if present, otherwise
@@ -242,28 +287,28 @@ def decide_lua_arg(bizhawk_dir: Path, rom_path: str, ap_lua_arg: str | None) -> 
             print(
                 f"{LOG_PREFIX} Ignoring AP-supplied --lua for SNES ROM; using local SNI connector."
             )
-        lua_ap_path = _connector_windows_path(bizhawk_dir, connector_path)
-        print(f"{LOG_PREFIX} Using SNI Lua connector for SNES ROM: {lua_ap_path}")
+        connector_rel = windows_relative_path_from_bizhawk_dir(bizhawk_dir, connector_path)
+        print(f"{LOG_PREFIX} Using SNI Lua connector for SNES ROM: {connector_rel}")
         RUNNER_LOGGER.log(
-            f"Selected SNI connector for SNES ROM at {lua_ap_path}",
+            f"Selected SNI connector for SNES ROM at {connector_rel}",
             include_context=True,
             location=LUA_LOCATION,
         )
-        return f"{LUA_ARG_PREFIX}{lua_ap_path}"
+        return connector_path
 
     connector_name = _detect_connector_name(ap_lua_arg) or CONNECTOR_GENERIC
     connector_path = connectors_dir / connector_name
     if not connector_path.is_file():
         _missing_connector(connectors_dir, connector_name)
 
-    lua_ap_path = _connector_windows_path(bizhawk_dir, connector_path)
-    print(f"{LOG_PREFIX} Using BizHawk Lua connector: {lua_ap_path}")
+    connector_rel = windows_relative_path_from_bizhawk_dir(bizhawk_dir, connector_path)
+    print(f"{LOG_PREFIX} Using BizHawk Lua connector: {connector_rel}")
     RUNNER_LOGGER.log(
-        f"Using connector {connector_name} at {lua_ap_path}",
+        f"Using connector {connector_name} at {connector_rel}",
         include_context=True,
         location=LUA_LOCATION,
     )
-    return f"{LUA_ARG_PREFIX}{lua_ap_path}"
+    return connector_path
 
 
 def build_bizhawk_command(argv):
@@ -279,13 +324,21 @@ def build_bizhawk_command(argv):
         final_args = emu_args
         print(f"{LOG_PREFIX} No ROM detected; launching BizHawk without AP connector.")
     else:
-        lua_arg = decide_lua_arg(bizhawk_dir, rom_path, ap_lua_arg)
+        connector_path = decide_connector_path(bizhawk_dir, rom_path, ap_lua_arg)
+        hook_path = ensure_hook_files(bizhawk_dir, connector_path)
+        lua_path = windows_relative_path_from_bizhawk_dir(bizhawk_dir, hook_path)
+        lua_arg = f"{LUA_ARG_PREFIX}{lua_path}"
         final_args = [rom_path, lua_arg] + emu_args
 
         print(f"{LOG_PREFIX} Running BizHawk via Proton:")
         print(f"{LOG_PREFIX} BIZHAWK_EXE: {bizhawk_exe}")
         print(f"{LOG_PREFIX} ROM:         {rom_path}")
         print(f"{LOG_PREFIX} Lua:         {lua_arg}")
+        RUNNER_LOGGER.log(
+            f"Prepared hook and connector: connector={connector_path}, hook={hook_path}, lua={lua_arg}",
+            include_context=True,
+            location=LUA_LOCATION,
+        )
 
     bizhawk_exe_rel = bizhawk_exe.name
 
