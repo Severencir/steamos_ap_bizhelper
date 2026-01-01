@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shlex
 import shutil
@@ -75,6 +76,41 @@ _SIGNAL_HANDLERS_INSTALLED = False
 _SHUTDOWN_DEBUG_ENV = "AP_BIZHELPER_DEBUG_SHUTDOWN"
 _KILL_SWITCH_ACTIVE = False
 _KILL_SWITCH_DIALOG = None
+_QT_EVENT_PUMP_INTERVAL = 0.1
+
+
+def _qt_dialogs_active() -> bool:
+    return _dialogs_active() or _KILL_SWITCH_DIALOG is not None
+
+
+def _pump_qt_events() -> None:
+    if not _qt_dialogs_active():
+        return
+    if importlib.util.find_spec("PySide6") is None:
+        return
+    from PySide6 import QtWidgets  # type: ignore
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return
+    try:
+        app.processEvents()
+    except Exception:
+        pass
+
+
+def _sleep_with_event_pump(duration: float, *, interval: float = _QT_EVENT_PUMP_INTERVAL) -> None:
+    if duration <= 0:
+        return
+    if not _qt_dialogs_active() or interval <= 0:
+        time.sleep(duration)
+        return
+    deadline = time.monotonic() + duration
+    while True:
+        _pump_qt_events()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(interval, remaining))
 
 
 def _shutdown_debug_enabled() -> bool:
@@ -110,9 +146,10 @@ def _tracked_bizhawk_pids(baseline_bizhawk_pids: Set[int]) -> Set[int]:
 def _wait_for_bizhawk_exit(baseline_bizhawk_pids: Set[int], *, timeout: float = 4.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        _pump_qt_events()
         if not _tracked_bizhawk_pids(baseline_bizhawk_pids):
             return True
-        time.sleep(0.25)
+        _sleep_with_event_pump(0.25)
     return not _tracked_bizhawk_pids(baseline_bizhawk_pids)
 
 
@@ -1113,9 +1150,10 @@ def _is_appimage_mounted(appimage: Optional[Path]) -> bool:
 def _wait_for_archipelago_ready(appimage: Path, *, timeout: int = 30) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        _pump_qt_events()
         if _is_archipelago_running() or _is_appimage_mounted(appimage):
             return True
-        time.sleep(1)
+        _sleep_with_event_pump(1)
 
     print(
         f"{LOG_PREFIX} Archipelago did not appear to start within the timeout; "
@@ -1139,6 +1177,7 @@ def _wait_for_launched_apps_to_close(
     paused_total = 0.0
     pause_started: Optional[float] = None
     while True:
+        _pump_qt_events()
         archipelago_running = _is_archipelago_running()
         bizhawk_pids = _list_bizhawk_pids()
         tracked_bizhawk = {pid for pid in bizhawk_pids if pid not in baseline_bizhawk_pids}
@@ -1161,15 +1200,7 @@ def _wait_for_launched_apps_to_close(
 
         if timeout > 0:
             now = time.monotonic()
-            if _dialogs_active():
-                try:
-                    from PySide6 import QtWidgets  # type: ignore
-
-                    app = QtWidgets.QApplication.instance()
-                    if app is not None:
-                        app.processEvents()
-                except Exception:
-                    pass
+            if _qt_dialogs_active():
                 if pause_started is None:
                     pause_started = now
             elif pause_started is not None:
@@ -1182,7 +1213,7 @@ def _wait_for_launched_apps_to_close(
                 print(f"{LOG_PREFIX} Shutdown wait timeout reached; ending Steam session anyway.")
                 return
 
-        time.sleep(2)
+        _sleep_with_event_pump(2)
 
 
 def _resolve_bizhawk_root(settings: dict) -> Optional[Path]:
@@ -1356,11 +1387,12 @@ def _find_matching_rom(patch: Path) -> Optional[Path]:
 def _wait_for_rom(patch: Path, *, timeout: int = 60) -> Optional[Path]:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        _pump_qt_events()
         rom = _find_matching_rom(patch)
         if rom:
             print(f"{LOG_PREFIX} ROM detected: {rom}")
             return rom
-        time.sleep(1)
+        _sleep_with_event_pump(1)
     print(f"{LOG_PREFIX} Timed out waiting for ROM; not launching BizHawk.")
     return None
 
@@ -1383,10 +1415,11 @@ def _detect_new_bizhawk(baseline: Iterable[int], *, timeout: int = 10) -> bool:
     baseline_set = set(baseline)
     deadline = time.time() + timeout
     while time.time() < deadline:
+        _pump_qt_events()
         current = _list_bizhawk_pids()
         if current.difference(baseline_set):
             return True
-        time.sleep(1)
+        _sleep_with_event_pump(1)
     return False
 
 
