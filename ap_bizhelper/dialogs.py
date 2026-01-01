@@ -1549,6 +1549,31 @@ def info_dialog(message: str, *, title: str = "Information", logger: Optional[Ap
     )
 
 
+def transient_info_dialog(
+    message: str,
+    *,
+    title: str = "Information",
+    timeout_ms: int = 1500,
+    logger: Optional[AppLogger] = None,
+) -> None:
+    ensure_qt_available()
+    app_logger = logger or get_app_logger()
+    app_logger.log_dialog(title, message, backend="qt", location="transient-info")
+    try:
+        from PySide6 import QtCore, QtWidgets
+
+        box = QtWidgets.QMessageBox()
+        box.setWindowTitle(title)
+        box.setText(message)
+        box.setIcon(QtWidgets.QMessageBox.Information)
+        box.setStandardButtons(QtWidgets.QMessageBox.NoButton)
+        box.setWindowModality(QtCore.Qt.NonModal)
+        box.show()
+        QtCore.QTimer.singleShot(max(0, int(timeout_ms)), box.close)
+    except Exception:
+        return
+
+
 def error_dialog(message: str, *, title: str = "Error", logger: Optional[AppLogger] = None) -> None:
     ensure_qt_available()
     app_logger = logger or get_app_logger()

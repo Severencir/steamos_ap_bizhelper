@@ -160,16 +160,11 @@ if QT_AVAILABLE:
 
         AXIS_THRESHOLD = 16000
 
-        def __init__(
-            self, dialog: QtWidgets.QWidget, sdl_loader: Callable[[], Optional[_SDLWrapper]]
-        ):
+        def __init__(self, dialog: QtWidgets.QWidget):
             super().__init__(dialog)
             self._dialog = dialog
-            self._sdl_loader = sdl_loader
             self._debug = os.environ.get(AP_GAMEPAD_DEBUG, "").strip() == "1"
             self._debug_send_event = os.environ.get(AP_GAMEPAD_DEBUG_SEND, "").strip() == "1"
-            self._sdl: Optional[_SDLWrapper] = None
-            self._controller: Optional[int] = None
             self._axis_state: Dict[str, bool] = {
                 "left": False,
                 "right": False,
@@ -179,8 +174,10 @@ if QT_AVAILABLE:
                 "rtrigger": False,
             }
             self._button_state: Dict[int, bool] = {}
-            self._timer: Optional[QtCore.QTimer] = None
             self._active = False
+            self._poller: Optional["_GamepadPoller"] = None
+            self._kill_switch_callback: Optional[Callable[[], None]] = None
+            self._kill_switch_active = False
             self._last_target: Optional[QtWidgets.QWidget] = None
             self._focus_before_toggle: Optional[QtWidgets.QWidget] = None
             self._action_buttons: Dict[str, Optional[QtWidgets.QAbstractButton]] = {
@@ -224,7 +221,6 @@ if QT_AVAILABLE:
                     self._set_file_dialog_active_pane("file")
                 except Exception:
                     pass
-            self._init_sdl()
 
         # -----------------------------
         # Debug helpers
@@ -364,62 +360,13 @@ if QT_AVAILABLE:
         def active(self) -> bool:
             return self._active
 
-        def _init_sdl(self) -> None:
-            sdl = self._sdl_loader()
-            if sdl is None:
-                return
-
-            mask = SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC
-            if sdl.SDL_Init(mask) != 0:
-                APP_LOGGER.log(
-                    f"SDL init failed: {sdl.get_error()}", level="WARNING", location="gamepad"
-                )
-                return
-
-            if sdl.SDL_NumJoysticks() <= 0:
-                APP_LOGGER.log("No controllers detected", level="INFO", location="gamepad")
-                sdl.SDL_QuitSubSystem(mask)
-                return
-
-            controller = sdl.SDL_GameControllerOpen(0)
-            if not controller:
-                APP_LOGGER.log(
-                    f"Failed to open controller 0: {sdl.get_error()}",
-                    level="WARNING",
-                    location="gamepad",
-                )
-                sdl.SDL_QuitSubSystem(mask)
-                return
-
-            sdl.SDL_GameControllerEventState(1)
-            self._sdl = sdl
-            self._controller = controller
-            self._active = True
-
-            timer = QtCore.QTimer(self)
-            timer.timeout.connect(self._poll_controller)
-            timer.start(16)
-            self._timer = timer
+        def _set_active(self, active: bool) -> None:
+            self._active = active
 
         def shutdown(self) -> None:
-            if self._timer:
-                self._timer.stop()
-                self._timer = None
-
-            if self._sdl and self._controller:
-                try:
-                    self._sdl.SDL_GameControllerClose(self._controller)
-                except Exception:
-                    pass
-                try:
-                    self._sdl.SDL_QuitSubSystem(
-                        SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC
-                    )
-                except Exception:
-                    pass
-
-            self._controller = None
-            self._sdl = None
+            if self._poller is not None:
+                self._poller.unregister_listener(self)
+            self._poller = None
             self._active = False
 
         def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:  # noqa: N802
@@ -427,68 +374,43 @@ if QT_AVAILABLE:
                 self.shutdown()
             return False
 
-        def _poll_controller(self) -> None:
-            if not self._sdl or not self._controller:
-                return
+        def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:  # noqa: N802
+            if event.type() in {QtCore.QEvent.Close, QtCore.QEvent.Destroy}:
+                self.shutdown()
+            return False
+
+        def attach_poller(self, poller: "_GamepadPoller") -> None:
+            self._poller = poller
+            poller.register_listener(self)
+
+        def set_kill_switch_callback(self, callback: Optional[Callable[[], None]]) -> None:
+            self._kill_switch_callback = callback
+
+        def _should_process_events(self) -> bool:
             if not self._dialog.isEnabled():
-                return
+                return False
 
             active_modal = QtWidgets.QApplication.activeModalWidget()
             if active_modal is not None and active_modal is not self._dialog:
-                return
+                return False
 
             active_window = QtWidgets.QApplication.activeWindow()
             if active_window is not None and active_window is not self._dialog:
                 if not self._dialog.isAncestorOf(active_window):
-                    return
+                    return False
+            return True
 
-            event = SDL_Event()
-            while self._sdl.SDL_PollEvent(ctypes.byref(event)) != 0:
-                etype = event.type
-                if etype == SDL_CONTROLLERDEVICEADDED and not self._controller:
-                    self._controller = self._sdl.SDL_GameControllerOpen(0)
-                elif etype == SDL_CONTROLLERDEVICEREMOVED:
-                    self.shutdown()
-                    break
-                elif etype == SDL_CONTROLLERAXISMOTION:
-                    try:
-                        self._handle_axis(event.caxis)
-                    except Exception as e:
-                        try:
-                            APP_LOGGER.log(
-                                f"[poll] axis handler error: {e!r}",
-                                level="ERROR",
-                                location="gamepad",
-                                include_context=True,
-                            )
-                        except Exception:
-                            pass
-                elif etype == SDL_CONTROLLERBUTTONDOWN:
-                    try:
-                        self._handle_button(event.cbutton, pressed=True)
-                    except Exception as e:
-                        try:
-                            APP_LOGGER.log(
-                                f"[poll] button-down handler error: {e!r}",
-                                level="ERROR",
-                                location="gamepad",
-                                include_context=True,
-                            )
-                        except Exception:
-                            pass
-                elif etype == SDL_CONTROLLERBUTTONUP:
-                    try:
-                        self._handle_button(event.cbutton, pressed=False)
-                    except Exception as e:
-                        try:
-                            APP_LOGGER.log(
-                                f"[poll] button-up handler error: {e!r}",
-                                level="ERROR",
-                                location="gamepad",
-                                include_context=True,
-                            )
-                        except Exception:
-                            pass
+        def handle_axis_event(self, axis_event: SDL_ControllerAxisEvent) -> None:
+            if not self._should_process_events():
+                return
+            self._handle_axis(axis_event)
+
+        def handle_button_event(
+            self, button_event: SDL_ControllerButtonEvent, *, pressed: bool
+        ) -> None:
+            if not self._should_process_events():
+                return
+            self._handle_button(button_event, pressed=pressed)
 
         def _target_widget(self) -> Optional[QtWidgets.QWidget]:
             if self._dialog and self._dialog.isVisible():
@@ -1703,6 +1625,8 @@ if QT_AVAILABLE:
         def _handle_button(self, button_event: SDL_ControllerButtonEvent, *, pressed: bool) -> None:
             button = int(button_event.button)
             self._button_state[button] = pressed
+            if self._update_kill_switch_state():
+                return
             action_buttons = self._action_buttons
 
             focus_map: Dict[int, bool] = {
@@ -1791,6 +1715,23 @@ if QT_AVAILABLE:
             if button == SDL_CONTROLLER_BUTTON_X:
                 self._activate_button(action_buttons.get("affirmative"))
                 return
+
+        def _update_kill_switch_state(self) -> bool:
+            if not self._kill_switch_callback:
+                return False
+            left_pressed = self._button_state.get(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, False)
+            right_pressed = self._button_state.get(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, False)
+            if left_pressed and right_pressed:
+                if not self._kill_switch_active:
+                    self._kill_switch_active = True
+                    try:
+                        self._kill_switch_callback()
+                    except Exception:
+                        pass
+                return True
+            if self._kill_switch_active and (not left_pressed or not right_pressed):
+                self._kill_switch_active = False
+            return False
 
         def _activate_button(self, button: Optional[QtWidgets.QAbstractButton]) -> bool:
             if button is None:
@@ -1936,6 +1877,197 @@ if QT_AVAILABLE:
             except Exception:
                 return False
 
+    class GamepadKillSwitchListener(QtCore.QObject):
+        """Gamepad listener that triggers a kill switch callback on L1+R1."""
+
+        def __init__(self, parent: QtCore.QObject, *, callback: Callable[[], None]) -> None:
+            super().__init__(parent)
+            self._callback = callback
+            self._button_state: Dict[int, bool] = {}
+            self._active = False
+            self._poller: Optional["_GamepadPoller"] = None
+            self._combo_active = False
+
+        @property
+        def active(self) -> bool:
+            return self._active
+
+        def _set_active(self, active: bool) -> None:
+            self._active = active
+
+        def attach_poller(self, poller: "_GamepadPoller") -> None:
+            self._poller = poller
+            poller.register_listener(self)
+
+        def shutdown(self) -> None:
+            if self._poller is not None:
+                self._poller.unregister_listener(self)
+            self._poller = None
+            self._active = False
+
+        def handle_button_event(
+            self, button_event: SDL_ControllerButtonEvent, *, pressed: bool
+        ) -> None:
+            button = int(button_event.button)
+            self._button_state[button] = pressed
+            left_pressed = self._button_state.get(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, False)
+            right_pressed = self._button_state.get(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, False)
+            if left_pressed and right_pressed:
+                if not self._combo_active:
+                    self._combo_active = True
+                    try:
+                        self._callback()
+                    except Exception:
+                        pass
+                return
+            if self._combo_active and (not left_pressed or not right_pressed):
+                self._combo_active = False
+
+    class _GamepadPoller(QtCore.QObject):
+        def __init__(self, parent: Optional[QtCore.QObject]) -> None:
+            super().__init__(parent)
+            self._sdl: Optional[_SDLWrapper] = None
+            self._controller: Optional[int] = None
+            self._timer: Optional[QtCore.QTimer] = None
+            self._listeners: set[QtCore.QObject] = set()
+            self._active = False
+
+        def register_listener(self, listener: QtCore.QObject) -> bool:
+            self._listeners.add(listener)
+            active = self._ensure_active()
+            try:
+                listener._set_active(active)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            return active
+
+        def unregister_listener(self, listener: QtCore.QObject) -> None:
+            self._listeners.discard(listener)
+            if not self._listeners:
+                self.shutdown()
+            else:
+                try:
+                    listener._set_active(False)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+        def _ensure_active(self) -> bool:
+            if self._active:
+                return True
+            return self._init_sdl()
+
+        def _init_sdl(self) -> bool:
+            sdl = _load_sdl()
+            if sdl is None:
+                return False
+
+            mask = SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC
+            if sdl.SDL_Init(mask) != 0:
+                APP_LOGGER.log(
+                    f"SDL init failed: {sdl.get_error()}", level="WARNING", location="gamepad"
+                )
+                return False
+
+            if sdl.SDL_NumJoysticks() <= 0:
+                APP_LOGGER.log("No controllers detected", level="INFO", location="gamepad")
+                sdl.SDL_QuitSubSystem(mask)
+                return False
+
+            controller = sdl.SDL_GameControllerOpen(0)
+            if not controller:
+                APP_LOGGER.log(
+                    f"Failed to open controller 0: {sdl.get_error()}",
+                    level="WARNING",
+                    location="gamepad",
+                )
+                sdl.SDL_QuitSubSystem(mask)
+                return False
+
+            sdl.SDL_GameControllerEventState(1)
+            self._sdl = sdl
+            self._controller = controller
+            self._active = True
+
+            timer = QtCore.QTimer(self)
+            timer.timeout.connect(self._poll_controller)
+            timer.start(16)
+            self._timer = timer
+            return True
+
+        def shutdown(self) -> None:
+            if self._timer:
+                self._timer.stop()
+                self._timer = None
+
+            if self._sdl and self._controller:
+                try:
+                    self._sdl.SDL_GameControllerClose(self._controller)
+                except Exception:
+                    pass
+                try:
+                    self._sdl.SDL_QuitSubSystem(
+                        SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC
+                    )
+                except Exception:
+                    pass
+
+            self._controller = None
+            self._sdl = None
+            self._active = False
+            for listener in list(self._listeners):
+                try:
+                    listener._set_active(False)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+        def _poll_controller(self) -> None:
+            if not self._sdl or not self._controller:
+                return
+
+            event = SDL_Event()
+            while self._sdl.SDL_PollEvent(ctypes.byref(event)) != 0:
+                etype = event.type
+                if etype == SDL_CONTROLLERDEVICEADDED and not self._controller:
+                    self._controller = self._sdl.SDL_GameControllerOpen(0)
+                elif etype == SDL_CONTROLLERDEVICEREMOVED:
+                    self.shutdown()
+                    break
+                elif etype == SDL_CONTROLLERAXISMOTION:
+                    axis_event = SDL_ControllerAxisEvent.from_buffer_copy(event.caxis)
+                    for listener in list(self._listeners):
+                        try:
+                            if hasattr(listener, "handle_axis_event"):
+                                listener.handle_axis_event(axis_event)  # type: ignore[attr-defined]
+                        except Exception as exc:
+                            try:
+                                APP_LOGGER.log(
+                                    f"[poll] axis handler error: {exc!r}",
+                                    level="ERROR",
+                                    location="gamepad",
+                                    include_context=True,
+                                )
+                            except Exception:
+                                pass
+                elif etype in (SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLERBUTTONUP):
+                    button_event = SDL_ControllerButtonEvent.from_buffer_copy(event.cbutton)
+                    pressed = etype == SDL_CONTROLLERBUTTONDOWN
+                    for listener in list(self._listeners):
+                        try:
+                            if hasattr(listener, "handle_button_event"):
+                                listener.handle_button_event(
+                                    button_event, pressed=pressed
+                                )  # type: ignore[attr-defined]
+                        except Exception as exc:
+                            try:
+                                APP_LOGGER.log(
+                                    f"[poll] button handler error: {exc!r}",
+                                    level="ERROR",
+                                    location="gamepad",
+                                    include_context=True,
+                                )
+                            except Exception:
+                                pass
+
 else:  # pragma: no cover - PySide6 not available in environment
 
     class GamepadEventFilter:  # type: ignore[misc]
@@ -1948,6 +2080,29 @@ else:  # pragma: no cover - PySide6 not available in environment
 
         def shutdown(self) -> None:
             return
+
+    class GamepadKillSwitchListener:  # type: ignore[misc]
+        def __init__(self, *args, **kwargs):
+            self._active = False
+
+        @property
+        def active(self) -> bool:
+            return False
+
+        def shutdown(self) -> None:
+            return
+
+
+_GAMEPAD_POLLER: Optional[object] = None
+
+
+def _get_gamepad_poller() -> Optional["_GamepadPoller"]:
+    global _GAMEPAD_POLLER
+    if not QT_AVAILABLE or QtWidgets is None or QtCore is None:
+        return None
+    if _GAMEPAD_POLLER is None:
+        _GAMEPAD_POLLER = _GamepadPoller(QtWidgets.QApplication.instance())
+    return _GAMEPAD_POLLER  # type: ignore[return-value]
 
 
 def _candidate_lib_dirs() -> list[Path]:
@@ -2020,7 +2175,12 @@ def install_gamepad_navigation(
     if not (_in_steam_mode() or os.environ.get(AP_GAMEPAD_ENABLE, "").strip()):
         return None
 
-    layer = GamepadEventFilter(dialog, _load_sdl)
+    poller = _get_gamepad_poller()
+    if poller is None:
+        return None
+
+    layer = GamepadEventFilter(dialog)
+    layer.attach_poller(poller)
     if not layer.active:
         layer.shutdown()
         return None
@@ -2076,3 +2236,32 @@ def install_gamepad_navigation(
     setattr(dialog, "_ap_gamepad_layer", layer)
     APP_LOGGER.log("Gamepad navigation enabled", level="INFO", location="gamepad")
     return layer
+
+
+def install_gamepad_kill_switch(
+    app: QtWidgets.QApplication, *, callback: Callable[[], None]
+) -> Optional[GamepadKillSwitchListener]:
+    """Install a global gamepad kill switch listener when enabled."""
+
+    if QtWidgets is None or QtCore is None:
+        return None
+
+    if os.environ.get(AP_GAMEPAD_DISABLE, "").strip():
+        return None
+
+    if not (_in_steam_mode() or os.environ.get(AP_GAMEPAD_ENABLE, "").strip()):
+        return None
+
+    poller = _get_gamepad_poller()
+    if poller is None:
+        return None
+
+    listener = GamepadKillSwitchListener(app, callback=callback)
+    listener.attach_poller(poller)
+    if not listener.active:
+        listener.shutdown()
+        return None
+
+    app.installEventFilter(listener)
+    APP_LOGGER.log("Gamepad kill switch enabled", level="INFO", location="gamepad")
+    return listener

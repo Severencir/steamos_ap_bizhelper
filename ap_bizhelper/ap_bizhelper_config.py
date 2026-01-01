@@ -55,6 +55,7 @@ from .constants import (
     CONFIG_DIR,
     DESKTOP_DIR_KEY,
     DOWNLOADS_DIR_KEY,
+    ENABLE_GAMEPAD_KILL_SWITCH_KEY,
     LAST_FILE_DIALOG_DIR_KEY,
     LAST_FILE_DIALOG_DIRS_KEY,
     LAST_ROM_DIR_KEY,
@@ -85,6 +86,9 @@ PATH_SETTINGS_DEFAULTS = {
     LAST_FILE_DIALOG_DIRS_KEY: {},
     LAST_ROM_DIR_KEY: "",
     ROM_ROOTS_KEY: [],
+}
+SAFE_SETTINGS_DEFAULTS = {
+    ENABLE_GAMEPAD_KILL_SWITCH_KEY: True,
 }
 STATE_SETTINGS_DEFAULTS = {
     PENDING_RELAUNCH_ARGS_KEY: [],
@@ -133,6 +137,7 @@ SAFE_SETTINGS_KEYS = [
     "QT_FILE_DIALOG_SIDEBAR_ICON_SIZE",
     AP_DESKTOP_SHORTCUT_KEY,
     BIZHAWK_DESKTOP_SHORTCUT_KEY,
+    ENABLE_GAMEPAD_KILL_SWITCH_KEY,
 ]
 PATH_SETTINGS_KEYS = [
     DESKTOP_DIR_KEY,
@@ -177,8 +182,9 @@ def load_settings() -> Dict[str, Any]:
     """Return the persisted settings and install state as one mapping."""
 
     settings = _load_json(SETTINGS_FILE)
+    needs_save = _apply_defaults(settings, SAFE_SETTINGS_DEFAULTS)
     path_settings = _load_path_settings()
-    needs_save = _apply_defaults(path_settings, PATH_SETTINGS_DEFAULTS)
+    needs_save = _apply_defaults(path_settings, PATH_SETTINGS_DEFAULTS) or needs_save
     state_settings = _load_state_settings()
     needs_save = _apply_defaults(state_settings, STATE_SETTINGS_DEFAULTS) or needs_save
     install_state = _load_install_state()
