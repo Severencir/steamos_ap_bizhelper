@@ -1721,8 +1721,8 @@ if QT_AVAILABLE:
         def _update_kill_switch_state(self) -> bool:
             if not self._kill_switch_callback:
                 return False
-            left_pressed = self._button_state.get(SDL_CONTROLLER_BUTTON_LEFTSTICK, False)
-            right_pressed = self._button_state.get(SDL_CONTROLLER_BUTTON_RIGHTSTICK, False)
+            left_pressed = self._button_state.get(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, False)
+            right_pressed = self._button_state.get(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, False)
             if left_pressed and right_pressed:
                 if not self._kill_switch_active:
                     self._kill_switch_active = True
@@ -1880,7 +1880,7 @@ if QT_AVAILABLE:
                 return False
 
     class GamepadKillSwitchListener(QtCore.QObject):
-        """Gamepad listener that triggers a kill switch callback on L3+R3."""
+        """Gamepad listener that triggers a kill switch callback on L1+R1."""
 
         def __init__(self, parent: QtCore.QObject, *, callback: Callable[[], None]) -> None:
             super().__init__(parent)
@@ -1912,8 +1912,8 @@ if QT_AVAILABLE:
         ) -> None:
             button = int(button_event.button)
             self._button_state[button] = pressed
-            left_pressed = self._button_state.get(SDL_CONTROLLER_BUTTON_LEFTSTICK, False)
-            right_pressed = self._button_state.get(SDL_CONTROLLER_BUTTON_RIGHTSTICK, False)
+            left_pressed = self._button_state.get(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, False)
+            right_pressed = self._button_state.get(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, False)
             if left_pressed and right_pressed:
                 if not self._combo_active:
                     self._combo_active = True
