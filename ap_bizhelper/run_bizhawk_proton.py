@@ -21,7 +21,6 @@ from ap_bizhelper.constants import (
 )
 from ap_bizhelper.ap_bizhelper_config import get_path_setting
 from ap_bizhelper.dialogs import (
-    enable_dialog_gamepad as _enable_dialog_gamepad,
     ensure_qt_app as _ensure_qt_app,
     ensure_qt_available as _ensure_qt_available,
     error_dialog as _shared_error_dialog,
