@@ -12,7 +12,7 @@ import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .ap_bizhelper_config import (
     get_path_setting,
@@ -322,25 +322,65 @@ def enable_dialog_gamepad(
     special: Optional["QtWidgets.QAbstractButton"] = None,
     default: Optional["QtWidgets.QAbstractButton"] = None,
 ) -> Optional["object"]:
-    """Attach controller navigation to ``dialog`` if available."""
+    """No-op placeholder (gamepad navigation removed)."""
 
+    _ = dialog, affirmative, negative, special, default
+    return None
+
+
+def open_kill_switch_dialog(
+    *,
+    on_close: Callable[[], None],
+    settings: Optional[Dict[str, object]] = None,
+    title: str = "Kill switch",
+    text: str = "Close this window to shut down Archipelago and BizHawk.",
+) -> Optional["QtWidgets.QDialog"]:
     try:
-        from . import gamepad_input
-
-        layer = gamepad_input.install_gamepad_navigation(
-            dialog,
-            actions={
-                "affirmative": affirmative,
-                "negative": negative,
-                "special": special,
-                "default": default,
-            },
-        )
-        if layer is not None:
-            dialog.finished.connect(layer.shutdown)  # type: ignore[attr-defined]
-        return layer
+        from PySide6 import QtCore, QtWidgets
     except Exception:  # pragma: no cover - optional dependency
         return None
+
+    ensure_qt_app(settings)
+
+    dialog = QtWidgets.QDialog()
+    dialog.setWindowTitle(title)
+    dialog.setModal(False)
+    dialog.setWindowFlag(QtCore.Qt.WindowType.WindowContextHelpButtonHint, False)
+
+    layout = QtWidgets.QVBoxLayout(dialog)
+    label = QtWidgets.QLabel(text)
+    label.setWordWrap(True)
+    layout.addWidget(label)
+
+    button_row = QtWidgets.QHBoxLayout()
+    button_row.addStretch()
+    close_button = QtWidgets.QPushButton("Close")
+    close_button.clicked.connect(dialog.close)
+    button_row.addWidget(close_button)
+    button_row.addStretch()
+    layout.addLayout(button_row)
+
+    handled = {"done": False}
+
+    def _handle_finished(_result: int = 0) -> None:
+        if handled["done"]:
+            return
+        handled["done"] = True
+        _mark_dialog_closed()
+        try:
+            on_close()
+        except Exception:
+            pass
+
+    dialog.finished.connect(_handle_finished)
+    _mark_dialog_open()
+    dialog.show()
+    try:
+        dialog.activateWindow()
+        dialog.raise_()
+    except Exception:
+        pass
+    return dialog
 
 
 def _icon_for_level(icon: Optional[str], QtWidgets) -> Optional["QtGui.QPixmap"]:

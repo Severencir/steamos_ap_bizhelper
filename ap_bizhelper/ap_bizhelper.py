@@ -18,6 +18,7 @@ from .dialogs import (
     enable_dialog_gamepad as _enable_dialog_gamepad,
     ensure_qt_app as _ensure_qt_app,
     ensure_qt_available as _ensure_qt_available,
+    open_kill_switch_dialog,
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
     dialogs_active as _dialogs_active,
@@ -72,8 +73,8 @@ APP_LOGGER = get_app_logger()
 _SHUTDOWN_SIGNAL_ACTIVE = False
 _SIGNAL_HANDLERS_INSTALLED = False
 _SHUTDOWN_DEBUG_ENV = "AP_BIZHELPER_DEBUG_SHUTDOWN"
-_GAMEPAD_KILL_SWITCH_ACTIVE = False
-_GAMEPAD_KILL_SWITCH_LISTENER = None
+_KILL_SWITCH_ACTIVE = False
+_KILL_SWITCH_DIALOG = None
 
 
 def _shutdown_debug_enabled() -> bool:
@@ -268,7 +269,7 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
     signal.signal(signal.SIGINT, _handle_shutdown_signal)
 
 
-def _gamepad_kill_switch_enabled(settings: dict) -> bool:
+def _kill_switch_dialog_enabled(settings: dict) -> bool:
     return _coerce_bool(settings.get(ENABLE_GAMEPAD_KILL_SWITCH_KEY), True)
 
 
@@ -314,15 +315,13 @@ def _run_graceful_shutdown(settings: dict, baseline_bizhawk_pids: Set[int]) -> N
         print(f"{LOG_PREFIX} BizHawk still running; skipping SaveRAM sync.")
 
 
-def _install_gamepad_kill_switch(settings: dict, baseline_bizhawk_pids: Set[int]) -> None:
-    global _GAMEPAD_KILL_SWITCH_ACTIVE, _GAMEPAD_KILL_SWITCH_LISTENER
-    if not _gamepad_kill_switch_enabled(settings):
+def _install_kill_switch_dialog(settings: dict, baseline_bizhawk_pids: Set[int]) -> None:
+    global _KILL_SWITCH_ACTIVE, _KILL_SWITCH_DIALOG
+    if not _kill_switch_dialog_enabled(settings):
         return
 
     try:
         from PySide6 import QtCore, QtWidgets  # type: ignore
-
-        from .gamepad_input import install_gamepad_kill_switch
     except Exception:
         return
 
@@ -330,17 +329,17 @@ def _install_gamepad_kill_switch(settings: dict, baseline_bizhawk_pids: Set[int]
     if app is None:
         return
 
-    def _on_kill_switch() -> None:
-        global _GAMEPAD_KILL_SWITCH_ACTIVE
-        if _GAMEPAD_KILL_SWITCH_ACTIVE:
+    def _on_kill_switch_close() -> None:
+        global _KILL_SWITCH_ACTIVE
+        if _KILL_SWITCH_ACTIVE:
             return
-        _GAMEPAD_KILL_SWITCH_ACTIVE = True
+        _KILL_SWITCH_ACTIVE = True
         _shutdown_debug_log(
-            "Gamepad kill switch activated",
-            location="gamepad-kill-switch",
+            "Kill switch dialog closed",
+            location="kill-switch-dialog",
         )
         try:
-            transient_info_dialog("Gamepad kill switch activated. Shutting down.")
+            transient_info_dialog("Kill switch closed. Shutting down.")
         except Exception:
             pass
         _run_graceful_shutdown(settings, baseline_bizhawk_pids)
@@ -350,9 +349,9 @@ def _install_gamepad_kill_switch(settings: dict, baseline_bizhawk_pids: Set[int]
             pass
         raise SystemExit(0)
 
-    listener = install_gamepad_kill_switch(app, callback=_on_kill_switch)
-    if listener is not None:
-        _GAMEPAD_KILL_SWITCH_LISTENER = listener
+    dialog = open_kill_switch_dialog(on_close=_on_kill_switch_close, settings=settings)
+    if dialog is not None:
+        _KILL_SWITCH_DIALOG = dialog
     _SIGNAL_HANDLERS_INSTALLED = True
 
 
@@ -1163,6 +1162,14 @@ def _wait_for_launched_apps_to_close(
         if timeout > 0:
             now = time.monotonic()
             if _dialogs_active():
+                try:
+                    from PySide6 import QtWidgets  # type: ignore
+
+                    app = QtWidgets.QApplication.instance()
+                    if app is not None:
+                        app.processEvents()
+                except Exception:
+                    pass
                 if pause_started is None:
                     pause_started = now
             elif pause_started is not None:
@@ -1622,7 +1629,7 @@ def main(argv: list[str]) -> int:
             return 1
 
         baseline_pids = _list_bizhawk_pids()
-        _install_gamepad_kill_switch(settings, baseline_pids)
+        _install_kill_switch_dialog(settings, baseline_pids)
 
         settings_dirty = False
 
