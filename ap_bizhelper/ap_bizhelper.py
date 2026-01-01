@@ -60,6 +60,7 @@ from .constants import (
     PROTON_BIN_KEY,
     STEAM_APPID_KEY,
     STEAM_ROOT_PATH_KEY,
+    TEST_GRACE_WAIT_SECONDS,
     USE_CACHED_RELAUNCH_ARGS_KEY,
 )
 from .logging_utils import RUNNER_LOG_ENV, get_app_logger
@@ -72,6 +73,8 @@ _SHUTDOWN_SIGNAL_ACTIVE = False
 _SIGNAL_HANDLERS_INSTALLED = False
 _SHUTDOWN_DEBUG_ENV = "AP_BIZHELPER_DEBUG_SHUTDOWN"
 _BIZHAWK_SHUTDOWN_FLAG = BIZHAWK_SHUTDOWN_FLAG
+
+# TEST BUILD: aggressive shutdown flush investigation; connectors disabled; extra logging enabled.
 
 
 def _shutdown_debug_enabled() -> bool:
@@ -207,21 +210,42 @@ def _terminate_bizhawk_processes(
     return bool(_tracked_bizhawk_pids(baseline_bizhawk_pids))
 
 
-def _write_bizhawk_shutdown_flag(settings: dict) -> bool:
+def _resolve_bizhawk_exe_dir(settings: dict) -> Optional[Path]:
+    exe_str = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
+    if not exe_str:
+        return None
+    exe_path = Path(exe_str)
+    return exe_path.parent if exe_path.is_file() else None
+
+
+def _write_shutdown_flags_multi(settings: dict) -> list[Path]:
+    """Write shutdown flags to multiple likely BizHawk locations."""
+
+    candidates: list[Path] = []
     bizhawk_root = _resolve_bizhawk_root(settings)
-    if bizhawk_root is None:
-        print(f"{LOG_PREFIX} BizHawk root directory not found; cannot write shutdown flag.")
-        return False
+    if bizhawk_root is not None:
+        candidates.append(bizhawk_root / _BIZHAWK_SHUTDOWN_FLAG)
 
-    flag_path = bizhawk_root / _BIZHAWK_SHUTDOWN_FLAG
-    try:
-        flag_path.write_text("shutdown\n", encoding="utf-8")
-    except OSError as exc:
-        print(f"{LOG_PREFIX} Failed to write shutdown flag at {flag_path}: {exc}")
-        return False
+    candidates.append(Path.cwd() / _BIZHAWK_SHUTDOWN_FLAG)
 
-    print(f"{LOG_PREFIX} Wrote BizHawk shutdown flag at {flag_path}.")
-    return True
+    exe_dir = _resolve_bizhawk_exe_dir(settings)
+    if exe_dir is not None:
+        candidates.append(exe_dir / _BIZHAWK_SHUTDOWN_FLAG)
+
+    written: list[Path] = []
+    seen: set[Path] = set()
+    for flag_path in candidates:
+        resolved = flag_path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        try:
+            flag_path.write_text("shutdown\n", encoding="utf-8")
+        except OSError as exc:
+            print(f"{LOG_PREFIX} Failed to write shutdown flag at {flag_path}: {exc}")
+            continue
+        written.append(flag_path)
+    return written
 
 
 def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set[int]) -> None:
@@ -236,10 +260,19 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
         _SHUTDOWN_SIGNAL_ACTIVE = True
 
         try:
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            print(f"{LOG_PREFIX} SIGTERM received at {timestamp}.")
             print(f"{LOG_PREFIX} Received signal {signum}; attempting BizHawk shutdown.")
-            flag_written = _write_bizhawk_shutdown_flag(settings)
-            if not flag_written:
-                print(f"{LOG_PREFIX} BizHawk shutdown flag could not be written.")
+            written_flags = _write_shutdown_flags_multi(settings)
+            if written_flags:
+                print(
+                    f"{LOG_PREFIX} Wrote shutdown flags to: "
+                    f"{', '.join(str(path.resolve()) for path in written_flags)}"
+                )
+                for flag_path in written_flags:
+                    print(f"{LOG_PREFIX} Shutdown flag path: {flag_path.resolve()}")
+            else:
+                print(f"{LOG_PREFIX} Wrote shutdown flags to: none")
             term_timeout = _get_shutdown_timeout(
                 settings,
                 setting_key="BIZHAWK_TERM_TIMEOUT",
@@ -258,6 +291,7 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
                 env_key="AP_BIZHELPER_BIZHAWK_SHUTDOWN_WAIT_TIMEOUT",
                 default=6.0,
             )
+            wait_timeout = max(wait_timeout, TEST_GRACE_WAIT_SECONDS)
             allow_sigkill = _get_shutdown_flag(
                 settings,
                 setting_key="BIZHAWK_ALLOW_SIGKILL",
@@ -267,9 +301,7 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
 
             exited_naturally = False
             if wait_timeout > 0:
-                print(
-                    f"{LOG_PREFIX} Waiting up to {wait_timeout:.1f}s for BizHawk to exit naturally."
-                )
+                print(f"{LOG_PREFIX} Waiting {wait_timeout:.1f}s for BizHawk to exit naturally.")
                 exited_naturally = _wait_for_bizhawk_exit(
                     baseline_bizhawk_pids, timeout=wait_timeout
                 )
@@ -277,11 +309,11 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
                 print(f"{LOG_PREFIX} Grace wait disabled; proceeding to forced shutdown.")
 
             if exited_naturally:
-                print(f"{LOG_PREFIX} BizHawk exited during grace window; no forced shutdown needed.")
+                print(f"{LOG_PREFIX} BizHawk exited naturally.")
                 still_running = False
             else:
                 if _tracked_bizhawk_pids(baseline_bizhawk_pids):
-                    print(f"{LOG_PREFIX} BizHawk still running; beginning forced termination.")
+                    print(f"{LOG_PREFIX} BizHawk still running; forcing termination.")
                     still_running = _terminate_bizhawk_processes(
                         baseline_bizhawk_pids,
                         term_timeout=term_timeout,
