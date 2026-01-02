@@ -28,6 +28,7 @@ from .constants import (
     BIZHAWK_EXE_KEY,
     BIZHAWK_LATEST_SEEN_KEY,
     BIZHAWK_RUNNER_KEY,
+    BIZHAWK_SHUTDOWN_WATCHDOG_FILENAME,
     BIZHAWK_SKIP_VERSION_KEY,
     BIZHAWK_SNI_VERSION_KEY,
     BIZHAWK_VERSION_KEY,
@@ -103,6 +104,8 @@ PAREN_OPEN = "("
 QUERY_BIZHAWK_FAILED_PREFIX = "Failed to query latest BizHawk release: "
 RUNNER_MISSING_TEMPLATE = "BizHawk runner helper ({runner}) is missing."
 RUNNER_STAGE_FAILED_TEMPLATE = "Failed to stage BizHawk runner helper ({runner})."
+WATCHDOG_MISSING_TEMPLATE = "BizHawk shutdown watchdog ({watchdog}) is missing."
+WATCHDOG_STAGE_FAILED_TEMPLATE = "Failed to stage BizHawk shutdown watchdog ({watchdog})."
 SELECT_EMUHAWK_TITLE = "Select EmuHawk.exe"
 STEAMAPPS_DIRNAME = "steamapps"
 UNSUPPORTED_CONNECTORS_ARCHIVE_MSG = "Unsupported archive format for connectors."
@@ -116,6 +119,8 @@ NO_VALUE = "no"
 BIZHAWK_UPDATED_PREFIX = "BizHawk updated to "
 BIZHAWK_UPDATE_FAILED_PREFIX = "BizHawk update failed: "
 RUNNER_FILENAME = "run_bizhawk_proton.py"
+CONNECTOR_GENERIC_NAME = "connector_bizhawk_generic.lua"
+SNI_CONNECTOR_NAME = "connector.lua"
 TAR_TYPE_HINT = "tar"
 TAG_NAME_KEY = "tag_name"
 WIN_X64_SUFFIX = "win-x64.zip"
@@ -558,7 +563,7 @@ def _stage_sni_connectors(bizhawk_dir: Path, download_messages: Optional[list[st
 
 
 def _has_archipelago_connector(connectors_dir: Path) -> bool:
-    connector_path = connectors_dir / "connector_bizhawk_generic.lua"
+    connector_path = connectors_dir / CONNECTOR_GENERIC_NAME
     return connector_path.is_file()
 
 
@@ -575,6 +580,74 @@ def _apply_sni_connector_archive(archive: Path, bizhawk_dir: Path) -> None:
         if lua_dir is None:
             raise RuntimeError("SNI archive did not contain a lua directory")
         _copy_tree(lua_dir, bizhawk_dir / SNI_DIRNAME)
+
+
+def _inject_shutdown_watchdog_hook(lua_path: Path) -> bool:
+    if not lua_path.is_file():
+        return False
+
+    hook_line = f"pcall(dofile, \"{BIZHAWK_SHUTDOWN_WATCHDOG_FILENAME}\")"
+    try:
+        content = lua_path.read_text(encoding=ENCODING_UTF8)
+    except Exception:
+        return False
+
+    if hook_line in content:
+        return False
+
+    try:
+        lua_path.write_text(f"{hook_line}\n{content}", encoding=ENCODING_UTF8)
+        return True
+    except Exception:
+        return False
+
+
+def _select_sni_entrypoint(sni_dir: Path) -> Optional[Path]:
+    if not sni_dir.is_dir():
+        return None
+    candidates = [p for p in sni_dir.glob(f"*{LUA_EXTENSION}") if p.is_file()]
+    for cand in candidates:
+        if cand.name.lower() == SNI_CONNECTOR_NAME:
+            return cand
+    return candidates[0] if candidates else None
+
+
+def _ensure_shutdown_watchdog_hook(bizhawk_dir: Path) -> None:
+    connectors_dir = bizhawk_dir / CONNECTORS_DIRNAME
+    connector_path = connectors_dir / CONNECTOR_GENERIC_NAME
+    _inject_shutdown_watchdog_hook(connector_path)
+
+    sni_entry = _select_sni_entrypoint(bizhawk_dir / SNI_DIRNAME)
+    if sni_entry is not None:
+        _inject_shutdown_watchdog_hook(sni_entry)
+
+
+def _stage_shutdown_watchdog(bizhawk_dir: Path) -> bool:
+    try:
+        watchdog_resource = resources.files(__package__).joinpath(
+            BIZHAWK_SHUTDOWN_WATCHDOG_FILENAME
+        )
+    except (ModuleNotFoundError, AttributeError):
+        watchdog_resource = None
+
+    target = bizhawk_dir / BIZHAWK_SHUTDOWN_WATCHDOG_FILENAME
+
+    if watchdog_resource is None:
+        error_dialog(WATCHDOG_MISSING_TEMPLATE.format(watchdog=BIZHAWK_SHUTDOWN_WATCHDOG_FILENAME))
+        return False
+
+    with resources.as_file(watchdog_resource) as source_watchdog:
+        if not source_watchdog.is_file():
+            error_dialog(WATCHDOG_MISSING_TEMPLATE.format(watchdog=BIZHAWK_SHUTDOWN_WATCHDOG_FILENAME))
+            return False
+        try:
+            target.write_bytes(source_watchdog.read_bytes())
+            return True
+        except Exception:
+            error_dialog(
+                WATCHDOG_STAGE_FAILED_TEMPLATE.format(watchdog=BIZHAWK_SHUTDOWN_WATCHDOG_FILENAME)
+            )
+            return False
 
 
 def connectors_need_download(
@@ -741,6 +814,9 @@ def ensure_connectors(
                     raise
             settings[SNI_CONNECTOR_VERSION_KEY] = sni_version
             updated = True
+
+    _stage_shutdown_watchdog(bizhawk_dir)
+    _ensure_shutdown_watchdog_hook(bizhawk_dir)
 
     if updated:
         _save_settings(settings)
@@ -1192,6 +1268,8 @@ def build_runner(settings: Dict[str, Any], bizhawk_exe: Path, proton_bin: Path) 
         error_dialog(RUNNER_STAGE_FAILED_TEMPLATE.format(runner=RUNNER_FILENAME))
 
     runner = bizhawk_runner
+    _stage_shutdown_watchdog(bizhawk_exe.parent)
+    _ensure_shutdown_watchdog_hook(bizhawk_exe.parent)
 
     # Persist the runner path for other helpers to consume.
     settings[BIZHAWK_RUNNER_KEY] = str(runner)
