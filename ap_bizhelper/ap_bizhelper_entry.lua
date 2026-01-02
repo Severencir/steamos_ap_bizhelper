@@ -20,4 +20,8 @@ if not connector_path or connector_path == "" then
 end
 
 connector_path = connector_path:gsub("\\", "/")
+local connector_dir = connector_path:match("^(.*)/[^/]+$")
+if connector_dir and connector_dir ~= "" then
+    package.cpath = connector_dir .. "/?.dll;" .. package.cpath
+end
 dofile(connector_path)
