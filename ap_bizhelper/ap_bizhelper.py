@@ -1347,7 +1347,21 @@ def _launch_bizhawk(runner: Path, rom: Path) -> None:
             subdir="runner",
             env_var=RUNNER_LOG_ENV,
         )
-        subprocess.Popen([str(runner), str(rom)], env=env)
+        try:
+            proc = subprocess.Popen(
+                [str(runner), str(rom)],
+                env=env,
+                start_new_session=True,
+            )
+        except TypeError:
+            if os.name != "posix":
+                raise
+            proc = subprocess.Popen(
+                [str(runner), str(rom)],
+                env=env,
+                preexec_fn=os.setsid,
+            )
+        print(f"{LOG_PREFIX} launched BizHawk in new session (detached), pid={proc.pid}")
     except Exception as exc:  # pragma: no cover - safety net for runtime environments
         error_dialog(f"Failed to launch BizHawk runner: {exc}")
 
