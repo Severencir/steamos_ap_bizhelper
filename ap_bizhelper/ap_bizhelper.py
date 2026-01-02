@@ -165,6 +165,7 @@ def _install_shutdown_signal_handlers(bizhawk_dir: Optional[Path]) -> None:
         try:
             print(f"{LOG_PREFIX} Received signal {signum}; requesting BizHawk shutdown.")
             _write_bizhawk_shutdown_flag(bizhawk_dir)
+            _wait_for_bizhawk_exit()
         finally:
             raise SystemExit(0)
 
@@ -889,6 +890,19 @@ def _list_bizhawk_pids() -> Set[int]:
         except ValueError:
             continue
     return pids
+
+
+def _wait_for_bizhawk_exit(timeout: int = 4) -> None:
+    if not _list_bizhawk_pids():
+        return
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _list_bizhawk_pids():
+            return
+        time.sleep(0.25)
+
+    print(f"{LOG_PREFIX} BizHawk still running after shutdown flag; continuing shutdown.")
 
 
 def _is_archipelago_running() -> bool:
