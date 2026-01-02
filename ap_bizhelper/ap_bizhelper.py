@@ -52,6 +52,7 @@ from .constants import (
     BIZHELPER_APPIMAGE_KEY,
     BIZHAWK_EXE_KEY,
     BIZHAWK_RUNNER_KEY,
+    BIZHAWK_SHUTDOWN_FLAG_FILENAME,
     FILE_FILTER_APWORLD,
     LOG_PREFIX,
     MIME_PACKAGES_DIR,
@@ -98,19 +99,6 @@ def _shutdown_debug_log(
         pass
 
 
-def _tracked_bizhawk_pids(baseline_bizhawk_pids: Set[int]) -> Set[int]:
-    return {pid for pid in _list_bizhawk_pids() if pid not in baseline_bizhawk_pids}
-
-
-def _wait_for_bizhawk_exit(baseline_bizhawk_pids: Set[int], *, timeout: float = 4.0) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if not _tracked_bizhawk_pids(baseline_bizhawk_pids):
-            return True
-        time.sleep(0.25)
-    return not _tracked_bizhawk_pids(baseline_bizhawk_pids)
-
-
 def _coerce_timeout_value(value: object, default: float) -> float:
     if value is None:
         return default
@@ -149,63 +137,21 @@ def _coerce_bool(value: object, default: bool) -> bool:
     return default
 
 
-def _get_shutdown_flag(
-    settings: dict,
-    *,
-    setting_key: str,
-    env_key: str,
-    default: bool,
-) -> bool:
-    env_value = os.environ.get(env_key)
-    if env_value is not None:
-        return _coerce_bool(env_value, default)
-    return _coerce_bool(settings.get(setting_key), default)
+def _write_bizhawk_shutdown_flag(bizhawk_dir: Optional[Path]) -> None:
+    if bizhawk_dir is None:
+        print(f"{LOG_PREFIX} No BizHawk directory available; skipping shutdown flag.")
+        return
+
+    flag_path = (bizhawk_dir / BIZHAWK_SHUTDOWN_FLAG_FILENAME).resolve()
+    try:
+        flag_path.parent.mkdir(parents=True, exist_ok=True)
+        flag_path.write_text("shutdown\n", encoding="utf-8")
+        print(f"{LOG_PREFIX} Wrote BizHawk shutdown flag: {flag_path}")
+    except Exception as exc:
+        print(f"{LOG_PREFIX} Failed to write BizHawk shutdown flag {flag_path}: {exc}")
 
 
-def _terminate_bizhawk_processes(
-    baseline_bizhawk_pids: Set[int],
-    *,
-    term_timeout: float = 10.0,
-    kill_timeout: float = 4.0,
-    allow_sigkill: bool = True,
-) -> bool:
-    tracked_pids = _tracked_bizhawk_pids(baseline_bizhawk_pids)
-    if not tracked_pids:
-        return False
-
-    print(f"{LOG_PREFIX} Sending SIGTERM to BizHawk (pids: {sorted(tracked_pids)}).")
-    for pid in tracked_pids:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            continue
-        except PermissionError:
-            continue
-
-    _wait_for_bizhawk_exit(baseline_bizhawk_pids, timeout=term_timeout)
-
-    remaining = _tracked_bizhawk_pids(baseline_bizhawk_pids)
-    if not remaining:
-        return False
-
-    if not allow_sigkill or kill_timeout <= 0:
-        print(f"{LOG_PREFIX} BizHawk still running; skipping SIGKILL.")
-        return True
-
-    print(f"{LOG_PREFIX} BizHawk still running; sending SIGKILL to {sorted(remaining)}.")
-    for pid in remaining:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            continue
-        except PermissionError:
-            continue
-
-    _wait_for_bizhawk_exit(baseline_bizhawk_pids, timeout=kill_timeout)
-    return bool(_tracked_bizhawk_pids(baseline_bizhawk_pids))
-
-
-def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set[int]) -> None:
+def _install_shutdown_signal_handlers(bizhawk_dir: Optional[Path]) -> None:
     global _SIGNAL_HANDLERS_INSTALLED
     if _SIGNAL_HANDLERS_INSTALLED:
         return
@@ -217,46 +163,8 @@ def _install_shutdown_signal_handlers(settings: dict, baseline_bizhawk_pids: Set
         _SHUTDOWN_SIGNAL_ACTIVE = True
 
         try:
-            print(f"{LOG_PREFIX} Received signal {signum}; attempting BizHawk shutdown.")
-            term_timeout = _get_shutdown_timeout(
-                settings,
-                setting_key="BIZHAWK_TERM_TIMEOUT",
-                env_key="AP_BIZHELPER_BIZHAWK_TERM_TIMEOUT",
-                default=10.0,
-            )
-            kill_timeout = _get_shutdown_timeout(
-                settings,
-                setting_key="BIZHAWK_KILL_TIMEOUT",
-                env_key="AP_BIZHELPER_BIZHAWK_KILL_TIMEOUT",
-                default=4.0,
-            )
-            allow_sigkill = _get_shutdown_flag(
-                settings,
-                setting_key="BIZHAWK_ALLOW_SIGKILL",
-                env_key="AP_BIZHELPER_BIZHAWK_ALLOW_SIGKILL",
-                default=True,
-            )
-            wait_timeout = _get_shutdown_timeout(
-                settings,
-                setting_key="BIZHAWK_SHUTDOWN_WAIT_TIMEOUT",
-                env_key="AP_BIZHELPER_BIZHAWK_SHUTDOWN_WAIT_TIMEOUT",
-                default=6.0,
-            )
-
-            still_running = _terminate_bizhawk_processes(
-                baseline_bizhawk_pids,
-                term_timeout=term_timeout,
-                kill_timeout=kill_timeout,
-                allow_sigkill=allow_sigkill,
-            )
-            if still_running and wait_timeout > 0:
-                print(f"{LOG_PREFIX} Waiting for BizHawk to exit before syncing SaveRAM.")
-                _wait_for_bizhawk_exit(baseline_bizhawk_pids, timeout=wait_timeout)
-
-            if not _tracked_bizhawk_pids(baseline_bizhawk_pids):
-                sync_bizhawk_saveram(settings)
-            else:
-                print(f"{LOG_PREFIX} BizHawk still running; skipping SaveRAM sync.")
+            print(f"{LOG_PREFIX} Received signal {signum}; requesting BizHawk shutdown.")
+            _write_bizhawk_shutdown_flag(bizhawk_dir)
         finally:
             raise SystemExit(0)
 
@@ -1270,13 +1178,45 @@ def _wait_for_rom(patch: Path, *, timeout: int = 60) -> Optional[Path]:
 def _launch_bizhawk(runner: Path, rom: Path) -> None:
     print(f"{LOG_PREFIX} Launching BizHawk runner: {runner} {rom}")
     try:
+        systemd_run = shutil.which("systemd-run")
+        if not systemd_run:
+            error_dialog("systemd-run is not available; cannot launch BizHawk.")
+            return
+
         env = APP_LOGGER.component_environ(
             env=os.environ.copy(),
             category="bizhawk-runner",
             subdir="runner",
             env_var=RUNNER_LOG_ENV,
         )
-        subprocess.Popen([str(runner), str(rom)], env=env)
+        unit = f"ap-bizhawk-{os.getpid()}-{int(time.time())}"
+        bizhawk_dir = runner.parent
+        cmd = [
+            systemd_run,
+            "--user",
+            "--unit",
+            unit,
+            "--collect",
+            "--no-block",
+            "--working-directory",
+            str(bizhawk_dir),
+        ]
+        for key, value in env.items():
+            cmd.append(f"--setenv={key}={value}")
+        cmd.append("--")
+        cmd.extend([str(runner), str(rom)])
+
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        output = f"{result.stdout or ''}\n{result.stderr or ''}".strip()
+        snippet = " ".join(output.split()) or "<no output>"
+        if len(snippet) > 200:
+            snippet = f"{snippet[:200]}..."
+        print(f"{LOG_PREFIX} systemd-run unit {unit} rc={result.returncode} output={snippet}")
+        if result.returncode != 0:
+            error_dialog(
+                "Failed to launch BizHawk via systemd-run "
+                f"(unit={unit}, rc={result.returncode}). Output: {snippet}"
+            )
     except Exception as exc:  # pragma: no cover - safety net for runtime environments
         error_dialog(f"Failed to launch BizHawk runner: {exc}")
 
@@ -1449,7 +1389,8 @@ def _run_full_flow(
             return 1
 
         baseline_pids = _list_bizhawk_pids()
-        _install_shutdown_signal_handlers(settings, baseline_pids)
+        bizhawk_dir = runner.parent if runner else None
+        _install_shutdown_signal_handlers(bizhawk_dir)
 
         _apply_association_files(_registered_association_exts())
 
