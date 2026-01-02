@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 from importlib import resources
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 try:
     from ap_bizhelper.ap_bizhelper_config import load_settings as _load_shared_settings
@@ -200,6 +200,35 @@ def _connector_windows_path(bizhawk_dir: Path, connector_path: Path) -> str:
     return str(relative).replace("/", "\\")
 
 
+def _connector_dir_path(bizhawk_dir: Path, connector_path: str) -> Path | None:
+    if not connector_path:
+        return None
+    if PureWindowsPath(connector_path).is_absolute():
+        RUNNER_LOGGER.log(
+            f"Skipping connector DLL path prepend for absolute connector path: {connector_path}",
+            include_context=True,
+            location=LUA_LOCATION,
+        )
+        return None
+    connector_dir = Path(connector_path.replace("\\", "/")).parent
+    return (bizhawk_dir / connector_dir).resolve()
+
+
+def _prepend_connector_dll_path(bizhawk_dir: Path, connector_path: str) -> None:
+    connector_dir = _connector_dir_path(bizhawk_dir, connector_path)
+    if connector_dir is None:
+        return
+    current_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = (
+        f"{connector_dir}{os.pathsep}{current_path}" if current_path else str(connector_dir)
+    )
+    RUNNER_LOGGER.log(
+        f"Prepended connector DLL path: {connector_dir}",
+        include_context=True,
+        location=LUA_LOCATION,
+    )
+
+
 def _stage_lua_resource(bizhawk_dir: Path, filename: str) -> None:
     try:
         resource = resources.files("ap_bizhelper").joinpath(filename)
@@ -313,6 +342,7 @@ def build_bizhawk_command(argv):
         lua_arg = f"{LUA_ARG_PREFIX}{BIZHAWK_ENTRY_LUA_FILENAME}"
         final_args = [rom_path, lua_arg] + emu_args
         os.environ[AP_BIZHELPER_CONNECTOR_PATH_ENV] = connector_path
+        _prepend_connector_dll_path(bizhawk_dir, connector_path)
 
         print(f"{LOG_PREFIX} Running BizHawk via Proton:")
         print(f"{LOG_PREFIX} BIZHAWK_EXE: {bizhawk_exe}")
