@@ -1339,31 +1339,49 @@ def _wait_for_rom(patch: Path, *, timeout: int = 60) -> Optional[Path]:
 
 
 def _launch_bizhawk(runner: Path, rom: Path) -> None:
-    print(f"{LOG_PREFIX} Launching BizHawk runner: {runner} {rom}")
-    try:
-        env = APP_LOGGER.component_environ(
-            env=os.environ.copy(),
-            category="bizhawk-runner",
-            subdir="runner",
-            env_var=RUNNER_LOG_ENV,
+    # TEST BUILD: launch BizHawk ONLY via systemd-run; no fallback. Fail fast.
+    print(f"{LOG_PREFIX} Launching BizHawk runner via systemd-run: {runner} {rom}")
+    env = APP_LOGGER.component_environ(
+        env=os.environ.copy(),
+        category="bizhawk-runner",
+        subdir="runner",
+        env_var=RUNNER_LOG_ENV,
+    )
+    unit = f"ap-bizhawk-{os.getpid()}-{int(time.time())}"
+    systemd_run = shutil.which("systemd-run")
+    if not systemd_run:
+        print(f"{LOG_PREFIX} ERROR: systemd-run not found; cannot launch BizHawk.")
+        error_dialog("systemd-run not found; cannot launch BizHawk.")
+        raise SystemExit(1)
+    working_dir = runner.parent
+    cmd = [
+        systemd_run,
+        "--user",
+        "--unit",
+        unit,
+        "--collect",
+        "--no-block",
+        "--working-directory",
+        str(working_dir),
+    ]
+    for key, value in env.items():
+        if value is None:
+            continue
+        cmd.append(f"--setenv={key}={value}")
+    cmd.extend(["--", str(runner), str(rom)])
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    output = (proc.stdout or "").strip()
+    truncated_output = output[:500]
+    print(
+        f"{LOG_PREFIX} systemd-run rc={proc.returncode} unit={unit} output={truncated_output}"
+    )
+    if proc.returncode != 0:
+        print(f"{LOG_PREFIX} ERROR: systemd-run failed for unit={unit}")
+        error_dialog(
+            f"systemd-run failed for unit={unit} (rc={proc.returncode}). Output:\n{truncated_output}"
         )
-        try:
-            proc = subprocess.Popen(
-                [str(runner), str(rom)],
-                env=env,
-                start_new_session=True,
-            )
-        except TypeError:
-            if os.name != "posix":
-                raise
-            proc = subprocess.Popen(
-                [str(runner), str(rom)],
-                env=env,
-                preexec_fn=os.setsid,
-            )
-        print(f"{LOG_PREFIX} launched BizHawk in new session (detached), pid={proc.pid}")
-    except Exception as exc:  # pragma: no cover - safety net for runtime environments
-        error_dialog(f"Failed to launch BizHawk runner: {exc}")
+        raise SystemExit(1)
+    print(f"{LOG_PREFIX} BizHawk launch delegated to systemd unit={unit}")
 
 
 def _detect_new_bizhawk(baseline: Iterable[int], *, timeout: int = 10) -> bool:
