@@ -39,6 +39,9 @@ DOLPHIN_CMD = "dolphin"
 ENV_COMPAT_CLIENT_PATH = "STEAM_COMPAT_CLIENT_INSTALL_PATH"
 ENV_COMPAT_DATA_PATH = "STEAM_COMPAT_DATA_PATH"
 ENV_CONFIG_LOCATION = "env-config"
+ENV_LUA_CPATH = "LUA_CPATH"
+ENV_LUA_PATH = "LUA_PATH"
+ENV_PATH = "PATH"
 EXEC_LOCATION = "exec"
 LOG_LEVEL_ERROR = "ERROR"
 LUA_ARG_PREFIX = "--lua="
@@ -200,6 +203,55 @@ def _connector_windows_path(bizhawk_dir: Path, connector_path: Path) -> str:
     return str(relative).replace("/", "\\")
 
 
+def _normalize_connector_dir(connector_path: str) -> str:
+    normalized = connector_path.replace("\\", "/")
+    if "/" in normalized:
+        connector_dir = normalized.rsplit("/", 1)[0]
+    else:
+        connector_dir = "."
+    return connector_dir or "."
+
+
+def _prepend_env_value(env_var: str, prefix: str, separator: str) -> str:
+    current = os.environ.get(env_var)
+    if current:
+        updated = f"{prefix}{separator}{current}"
+    else:
+        updated = prefix
+    os.environ[env_var] = updated
+    return updated
+
+
+def _detect_path_separator(current: str | None) -> str:
+    if current and ";" in current:
+        return ";"
+    return os.pathsep
+
+
+def _update_connector_env(connector_path: str) -> str:
+    connector_dir = _normalize_connector_dir(connector_path)
+    path_separator = _detect_path_separator(os.environ.get(ENV_PATH))
+    updated_path = _prepend_env_value(ENV_PATH, connector_dir, path_separator)
+    updated_lua_path = _prepend_env_value(
+        ENV_LUA_PATH,
+        f"{connector_dir}/?.lua;{connector_dir}/?/init.lua",
+        ";",
+    )
+    updated_lua_cpath = _prepend_env_value(
+        ENV_LUA_CPATH,
+        f"{connector_dir}/?.dll;{connector_dir}/?.so",
+        ";",
+    )
+    RUNNER_LOGGER.log(
+        "Updated connector env paths: "
+        f"connector_dir={connector_dir}, {ENV_PATH}={updated_path}, "
+        f"{ENV_LUA_PATH}={updated_lua_path}, {ENV_LUA_CPATH}={updated_lua_cpath}",
+        include_context=True,
+        location=ENV_CONFIG_LOCATION,
+    )
+    return connector_dir
+
+
 def _stage_lua_resource(bizhawk_dir: Path, filename: str) -> None:
     try:
         resource = resources.files("ap_bizhelper").joinpath(filename)
@@ -313,15 +365,18 @@ def build_bizhawk_command(argv):
         lua_arg = f"{LUA_ARG_PREFIX}{BIZHAWK_ENTRY_LUA_FILENAME}"
         final_args = [rom_path, lua_arg] + emu_args
         os.environ[AP_BIZHELPER_CONNECTOR_PATH_ENV] = connector_path
+        connector_dir = _update_connector_env(connector_path)
 
         print(f"{LOG_PREFIX} Running BizHawk via Proton:")
         print(f"{LOG_PREFIX} BIZHAWK_EXE: {bizhawk_exe}")
         print(f"{LOG_PREFIX} ROM:         {rom_path}")
         print(f"{LOG_PREFIX} Connector:   {connector_path}")
+        print(f"{LOG_PREFIX} Connector dir: {connector_dir}")
         print(f"{LOG_PREFIX} Lua:         {lua_arg}")
         print(f"{LOG_PREFIX} BizHawk CWD: {bizhawk_dir}")
         RUNNER_LOGGER.log(
-            f"Selected connector={connector_path}, lua={lua_arg}, bizhawk_dir={bizhawk_dir}",
+            "Selected connector="
+            f"{connector_path}, connector_dir={connector_dir}, lua={lua_arg}, bizhawk_dir={bizhawk_dir}",
             include_context=True,
             location=LUA_LOCATION,
         )
