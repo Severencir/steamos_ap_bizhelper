@@ -8,7 +8,7 @@ import shlex
 from pathlib import Path
 import shutil
 import subprocess
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
 from .ap_bizhelper_ap import AP_APPIMAGE_DEFAULT, force_update_appimage, manual_select_appimage
 from .ap_bizhelper_bizhawk import (
@@ -407,6 +407,31 @@ LOCAL_ACTION_SCRIPTS = {
     "ap-bizhelper-uninstall.sh": ("uninstall",),
 }
 
+UNINSTALL_OPTION_MANAGED_DIRS = "Uninstall managed directories"
+UNINSTALL_OPTION_APPIMAGE = "Uninstall AppImage"
+UNINSTALL_OPTION_BACKUPS = "Uninstall backups"
+UNINSTALL_OPTION_SAVES = "Uninstall game saves"
+UNINSTALL_OPTIONS = (
+    (True, UNINSTALL_OPTION_MANAGED_DIRS),
+    (True, UNINSTALL_OPTION_APPIMAGE),
+    (False, UNINSTALL_OPTION_BACKUPS),
+    (False, UNINSTALL_OPTION_SAVES),
+)
+UNINSTALL_DEFAULT_SELECTIONS = frozenset(
+    {
+        UNINSTALL_OPTION_MANAGED_DIRS,
+        UNINSTALL_OPTION_APPIMAGE,
+    }
+)
+UNINSTALL_ALL_SELECTIONS = frozenset(
+    {
+        UNINSTALL_OPTION_MANAGED_DIRS,
+        UNINSTALL_OPTION_APPIMAGE,
+        UNINSTALL_OPTION_BACKUPS,
+        UNINSTALL_OPTION_SAVES,
+    }
+)
+
 _RESET_PRESERVE_KEYS = (STEAM_APPID_KEY,)
 _IMPORT_PRESERVE_KEYS = (
     AP_APPIMAGE_KEY,
@@ -517,34 +542,36 @@ def _relocate_appimage(
         return None
 
 
+def _stored_appimage_path(settings: dict) -> Optional[Path]:
+    stored_appimage = str(settings.get(BIZHELPER_APPIMAGE_KEY) or "")
+    return Path(stored_appimage) if stored_appimage else None
+
+
 def _uninstall_app(
+    *,
     stored_appimage_path: Optional[Path] = None,
+    selected: Optional[Iterable[str]] = None,
 ) -> None:
     settings = load_settings()
-    selected = checklist_dialog(
-        "Uninstall ap-bizhelper",
-        "Select what to remove. Desktop shortcuts are removed with managed directories.",
-        [
-            (True, "Uninstall managed directories"),
-            (True, "Uninstall AppImage"),
-            (False, "Uninstall backups"),
-            (False, "Uninstall game saves"),
-        ],
-        ok_label="Uninstall",
-        cancel_label="Cancel",
-        height=500,
-    )
     if selected is None:
-        return
+        selected = checklist_dialog(
+            "Uninstall ap-bizhelper",
+            "Select what to remove. Desktop shortcuts are removed with managed directories.",
+            list(UNINSTALL_OPTIONS),
+            ok_label="Uninstall",
+            cancel_label="Cancel",
+            height=500,
+        )
+        if selected is None:
+            return
 
-    remove_managed_dirs = "Uninstall managed directories" in selected
-    remove_backups = "Uninstall backups" in selected
-    remove_saves = "Uninstall game saves" in selected
-    remove_appimage = "Uninstall AppImage" in selected
+    selected_set = set(selected)
+    remove_managed_dirs = UNINSTALL_OPTION_MANAGED_DIRS in selected_set
+    remove_backups = UNINSTALL_OPTION_BACKUPS in selected_set
+    remove_saves = UNINSTALL_OPTION_SAVES in selected_set
+    remove_appimage = UNINSTALL_OPTION_APPIMAGE in selected_set
     if stored_appimage_path is None:
-        settings_appimage = str(settings.get(BIZHELPER_APPIMAGE_KEY) or "")
-        if settings_appimage:
-            stored_appimage_path = Path(settings_appimage)
+        stored_appimage_path = _stored_appimage_path(settings)
     appimage_path = stored_appimage_path
 
     deleted: list[str] = []
@@ -903,9 +930,23 @@ def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
 
 def show_uninstall_dialog() -> None:
     settings = load_settings()
-    stored_appimage = str(settings.get(BIZHELPER_APPIMAGE_KEY) or "")
-    stored_appimage_path = Path(stored_appimage) if stored_appimage else None
-    _uninstall_app(stored_appimage_path=stored_appimage_path)
+    _uninstall_app(stored_appimage_path=_stored_appimage_path(settings))
+
+
+def uninstall_core() -> None:
+    settings = load_settings()
+    _uninstall_app(
+        stored_appimage_path=_stored_appimage_path(settings),
+        selected=UNINSTALL_DEFAULT_SELECTIONS,
+    )
+
+
+def uninstall_all() -> None:
+    settings = load_settings()
+    _uninstall_app(
+        stored_appimage_path=_stored_appimage_path(settings),
+        selected=UNINSTALL_ALL_SELECTIONS,
+    )
 
 
 def _resolve_bizhelper_appimage(settings: dict, *, action: str) -> Optional[Path]:

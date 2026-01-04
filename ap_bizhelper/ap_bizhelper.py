@@ -61,7 +61,13 @@ from .constants import (
 )
 from .logging_utils import RUNNER_LOG_ENV, get_app_logger
 from .ap_bizhelper_worlds import ensure_apworld_for_patch
-from .ui_utils import ensure_local_action_scripts, show_uninstall_dialog, show_utils_dialog
+from .ui_utils import (
+    ensure_local_action_scripts,
+    show_uninstall_dialog,
+    show_utils_dialog,
+    uninstall_all,
+    uninstall_core,
+)
 
 
 APP_LOGGER = get_app_logger()
@@ -1157,10 +1163,15 @@ def main(argv: list[str]) -> int:
 
         patch_arg: Optional[str] = user_args[0] if user_args else None
 
+        usage_message = (
+            "Usage: ap_bizhelper.py [--nosteam] "
+            "[ensure|utils|uninstall|uninstall-all|uninstall-core]"
+        )
+
         if patch_arg == "ensure":
             if len(user_args) > 1:
                 APP_LOGGER.log(
-                    "Usage: ap_bizhelper.py [--nosteam] [ensure|utils|uninstall]",
+                    usage_message,
                     level="ERROR",
                     include_context=True,
                     mirror_console=True,
@@ -1177,7 +1188,7 @@ def main(argv: list[str]) -> int:
         if patch_arg == "utils":
             if len(user_args) > 1:
                 APP_LOGGER.log(
-                    "Usage: ap_bizhelper.py [--nosteam] [ensure|utils|uninstall]",
+                    usage_message,
                     level="ERROR",
                     include_context=True,
                     mirror_console=True,
@@ -1188,10 +1199,10 @@ def main(argv: list[str]) -> int:
                 return 1
             show_utils_dialog()
             return 0
-        if patch_arg == "uninstall":
+        if patch_arg in {"uninstall", "uninstall-all", "uninstall-core"}:
             if len(user_args) > 1:
                 APP_LOGGER.log(
-                    "Usage: ap_bizhelper.py [--nosteam] [ensure|utils|uninstall]",
+                    usage_message,
                     level="ERROR",
                     include_context=True,
                     mirror_console=True,
@@ -1200,7 +1211,12 @@ def main(argv: list[str]) -> int:
                 return 1
             if not _require_bizhelper_appimage(settings, "run the uninstaller"):
                 return 1
-            show_uninstall_dialog()
+            if patch_arg == "uninstall-all":
+                uninstall_all()
+            elif patch_arg == "uninstall-core":
+                uninstall_core()
+            else:
+                show_uninstall_dialog()
             return 0
 
         if len(user_args) > 1:
