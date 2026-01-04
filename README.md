@@ -14,6 +14,17 @@ python -m ap_bizhelper
 
 ap-bizhelper is only supported on Steam Deck–like devices running SteamOS. Other platforms are untested and unsupported.
 
+## BizHawk runtime and connectors
+
+ap-bizhelper now launches the native Linux BizHawk build (no Proton). BizHawk dependencies are staged locally under the
+configured `runtime_root` and never installed system-wide. The default flow downloads and extracts Arch Linux packages
+for `mono`, `libgdiplus`, and `lua` into that runtime root, but users can disable downloads and point at an existing
+runtime folder.
+
+Connector Lua scripts and SNI are no longer downloaded separately. The BizHawk runner discovers the active Archipelago
+AppImage mount under `/tmp/.mount_*` and uses the connector/SNI resources shipped inside that mount to ensure version
+compatibility.
+
 ## Building a one-file release
 
 1. Ensure `build` is available (e.g., `python -m pip install build`).

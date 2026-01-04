@@ -42,24 +42,26 @@ from .constants import (
     AP_SKIP_VERSION_KEY,
     AP_VERSION_KEY,
     BIZHELPER_APPIMAGE_KEY,
-    BIZHAWK_AP_CONNECTOR_LATEST_SEEN_KEY,
-    BIZHAWK_AP_CONNECTOR_VERSION_KEY,
     BIZHAWK_DESKTOP_SHORTCUT_KEY,
     BIZHAWK_EXE_KEY,
+    BIZHAWK_INSTALL_DIR_KEY,
+    BIZHAWK_LAST_LAUNCH_ARGS_KEY,
+    BIZHAWK_LAST_PID_KEY,
     BIZHAWK_LATEST_SEEN_KEY,
     BIZHAWK_RUNNER_KEY,
     BIZHAWK_SKIP_VERSION_KEY,
-    BIZHAWK_SNI_VERSION_KEY,
     BIZHAWK_VERSION_KEY,
+    BIZHAWK_RUNTIME_ROOT_KEY,
+    BIZHAWK_RUNTIME_DOWNLOAD_KEY,
     BIZHAWK_SAVERAM_DIR_KEY,
     CONFIG_DIR,
+    DATA_DIR,
     DESKTOP_DIR_KEY,
     DOWNLOADS_DIR_KEY,
     LAST_FILE_DIALOG_DIR_KEY,
     LAST_FILE_DIALOG_DIRS_KEY,
     LAST_ROM_DIR_KEY,
     PENDING_RELAUNCH_ARGS_KEY,
-    PROTON_BIN_KEY,
     ROM_HASH_CACHE_KEY,
     ROM_ROOTS_KEY,
     SFC_LUA_PATH_KEY,
@@ -78,6 +80,8 @@ BIZHAWK_SAVERAM_DIR = Path(os.path.expanduser("~/Documents/bizhawk-saveram"))
 PATH_SETTINGS_DEFAULTS = {
     DESKTOP_DIR_KEY: str(Path.home() / "Desktop"),
     DOWNLOADS_DIR_KEY: str(Path.home() / "Downloads"),
+    BIZHAWK_INSTALL_DIR_KEY: str(DATA_DIR / "bizhawk_install"),
+    BIZHAWK_RUNTIME_ROOT_KEY: str(DATA_DIR / "runtime_root"),
     BIZHAWK_SAVERAM_DIR_KEY: str(BIZHAWK_SAVERAM_DIR),
     STEAM_ROOT_PATH_KEY: str(Path(os.path.expanduser("~/.steam/steam"))),
     SFC_LUA_PATH_KEY: "",
@@ -87,10 +91,15 @@ PATH_SETTINGS_DEFAULTS = {
     ROM_ROOTS_KEY: [],
 }
 STATE_SETTINGS_DEFAULTS = {
+    BIZHAWK_LAST_LAUNCH_ARGS_KEY: [],
+    BIZHAWK_LAST_PID_KEY: "",
     PENDING_RELAUNCH_ARGS_KEY: [],
     ROM_HASH_CACHE_KEY: {},
     STEAM_APPID_KEY: "",
     USE_CACHED_RELAUNCH_ARGS_KEY: False,
+}
+SAFE_SETTINGS_DEFAULTS = {
+    BIZHAWK_RUNTIME_DOWNLOAD_KEY: True,
 }
 DISABLED_MODE = "disabled"
 ENABLED_MODE = "enabled"
@@ -111,10 +120,6 @@ INSTALL_STATE_KEYS = {
     BIZHAWK_SKIP_VERSION_KEY,
     BIZHAWK_LATEST_SEEN_KEY,
     BIZHAWK_RUNNER_KEY,
-    PROTON_BIN_KEY,
-    BIZHAWK_AP_CONNECTOR_VERSION_KEY,
-    BIZHAWK_AP_CONNECTOR_LATEST_SEEN_KEY,
-    BIZHAWK_SNI_VERSION_KEY,
 }
 
 SAFE_SETTINGS_KEYS = [
@@ -133,10 +138,13 @@ SAFE_SETTINGS_KEYS = [
     "QT_FILE_DIALOG_SIDEBAR_ICON_SIZE",
     AP_DESKTOP_SHORTCUT_KEY,
     BIZHAWK_DESKTOP_SHORTCUT_KEY,
+    BIZHAWK_RUNTIME_DOWNLOAD_KEY,
 ]
 PATH_SETTINGS_KEYS = [
     DESKTOP_DIR_KEY,
     DOWNLOADS_DIR_KEY,
+    BIZHAWK_INSTALL_DIR_KEY,
+    BIZHAWK_RUNTIME_ROOT_KEY,
     BIZHAWK_SAVERAM_DIR_KEY,
     STEAM_ROOT_PATH_KEY,
     SFC_LUA_PATH_KEY,
@@ -146,6 +154,8 @@ PATH_SETTINGS_KEYS = [
     ROM_ROOTS_KEY,
 ]
 STATE_SETTINGS_KEYS = [
+    BIZHAWK_LAST_LAUNCH_ARGS_KEY,
+    BIZHAWK_LAST_PID_KEY,
     PENDING_RELAUNCH_ARGS_KEY,
     ROM_HASH_CACHE_KEY,
     STEAM_APPID_KEY,
@@ -177,8 +187,9 @@ def load_settings() -> Dict[str, Any]:
     """Return the persisted settings and install state as one mapping."""
 
     settings = _load_json(SETTINGS_FILE)
+    needs_save = _apply_defaults(settings, SAFE_SETTINGS_DEFAULTS)
     path_settings = _load_path_settings()
-    needs_save = _apply_defaults(path_settings, PATH_SETTINGS_DEFAULTS)
+    needs_save = _apply_defaults(path_settings, PATH_SETTINGS_DEFAULTS) or needs_save
     state_settings = _load_state_settings()
     needs_save = _apply_defaults(state_settings, STATE_SETTINGS_DEFAULTS) or needs_save
     install_state = _load_install_state()

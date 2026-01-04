@@ -1,0 +1,422 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+import shutil
+import signal
+import subprocess
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Iterable, Optional
+
+from ap_bizhelper.ap_bizhelper_config import get_path_setting, load_settings
+from ap_bizhelper.constants import (
+    BIZHAWK_EXE_KEY,
+    BIZHAWK_INSTALL_DIR_KEY,
+    BIZHAWK_LAST_LAUNCH_ARGS_KEY,
+    BIZHAWK_LAST_PID_KEY,
+    BIZHAWK_RUNNER_KEY,
+    BIZHAWK_SAVERAM_DIR_KEY,
+)
+from ap_bizhelper.dialogs import (
+    ensure_qt_app,
+    ensure_qt_available,
+    error_dialog,
+    question_dialog,
+)
+from ap_bizhelper.logging_utils import create_component_logger
+
+CONFLICTS_DIRNAME = ".conflicts"
+MIGRATION_LOG_SUBDIR = "saveram"
+MIGRATION_TIMEOUT_SECONDS = 15
+SIGTERM_GRACE_SECONDS = 3
+SAVE_RAM_DIRNAME = "SaveRAM"
+TIME_WINDOW_SECONDS = 300
+
+HELPER_LOGGER = create_component_logger("save-migration", subdir=MIGRATION_LOG_SUBDIR)
+
+
+def _bizhawk_root(settings: dict) -> Optional[Path]:
+    install_root = str(settings.get(BIZHAWK_INSTALL_DIR_KEY, "") or "")
+    if install_root:
+        candidate = Path(install_root)
+        if candidate.is_dir():
+            return candidate
+
+    exe_str = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
+    if exe_str:
+        exe_path = Path(exe_str)
+        if exe_path.is_file():
+            return exe_path.parent
+    return None
+
+
+def _save_root(settings: dict) -> Path:
+    return get_path_setting(settings, BIZHAWK_SAVERAM_DIR_KEY)
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _scan_bizhawk_pids(bizhawk_root: Path) -> set[int]:
+    pids: set[int] = set()
+    try:
+        output = subprocess.check_output(
+            ["pgrep", "-f", str(bizhawk_root / "EmuHawkMono.sh")],
+            text=True,
+        )
+    except Exception:
+        return pids
+    for line in output.splitlines():
+        try:
+            pids.add(int(line.strip()))
+        except ValueError:
+            continue
+    return pids
+
+
+def _wait_for_exit(pids: Iterable[int], timeout: int) -> set[int]:
+    deadline = time.monotonic() + timeout
+    pending = set(pid for pid in pids if _pid_alive(pid))
+    while pending and time.monotonic() < deadline:
+        time.sleep(0.5)
+        pending = set(pid for pid in pending if _pid_alive(pid))
+    return pending
+
+
+def _terminate_pids(pids: Iterable[int]) -> None:
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+
+
+def _kill_pids(pids: Iterable[int]) -> None:
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            continue
+
+
+def _ensure_bizhawk_closed(settings: dict, bizhawk_root: Path) -> None:
+    pids: set[int] = set()
+    last_pid = str(settings.get(BIZHAWK_LAST_PID_KEY, "") or "")
+    if last_pid.isdigit():
+        pid = int(last_pid)
+        if _pid_alive(pid):
+            pids.add(pid)
+
+    pids.update(_scan_bizhawk_pids(bizhawk_root))
+
+    if not pids:
+        return
+
+    HELPER_LOGGER.log(
+        f"Waiting for BizHawk to exit. PIDs={sorted(pids)}",
+        include_context=True,
+        location="bizhawk-close",
+    )
+
+    remaining = _wait_for_exit(pids, MIGRATION_TIMEOUT_SECONDS)
+    if not remaining:
+        return
+
+    HELPER_LOGGER.log(
+        f"BizHawk still running; sending SIGTERM to {sorted(remaining)}",
+        include_context=True,
+        location="bizhawk-close",
+    )
+    _terminate_pids(remaining)
+    remaining = _wait_for_exit(remaining, SIGTERM_GRACE_SECONDS)
+    if remaining:
+        HELPER_LOGGER.log(
+            f"BizHawk still running; sending SIGKILL to {sorted(remaining)}",
+            include_context=True,
+            location="bizhawk-close",
+        )
+        _kill_pids(remaining)
+        _wait_for_exit(remaining, SIGTERM_GRACE_SECONDS)
+
+
+def _conflict_root(base: Path, rel_path: Path) -> Path:
+    return base / rel_path.parent
+
+
+def _backup_conflict(conflict_root: Path, label: str, source: Path) -> None:
+    conflict_root.mkdir(parents=True, exist_ok=True)
+    target = conflict_root / f"{source.name}.{label}"
+    shutil.copy2(source, target)
+    HELPER_LOGGER.log(
+        f"Backed up {source} to {target}",
+        include_context=True,
+        location="conflict",
+    )
+
+
+def _choose_conflict(
+    *,
+    canonical_path: Path,
+    local_path: Path,
+    older_path: Path,
+    newer_path: Path,
+) -> Path:
+    older_mtime = older_path.stat().st_mtime
+    newer_mtime = newer_path.stat().st_mtime
+    if abs(newer_mtime - older_mtime) <= TIME_WINDOW_SECONDS:
+        HELPER_LOGGER.log(
+            f"5-minute rule applied; choosing older file {older_path}",
+            include_context=True,
+            location="conflict",
+        )
+        return older_path
+
+    ensure_qt_available()
+    ensure_qt_app()
+
+    prompt = (
+        "SaveRAM conflict detected.\n\n"
+        f"Canonical: {canonical_path}\n"
+        f"Local: {local_path}\n\n"
+        f"Older: {older_path}\n"
+        f"Newer: {newer_path}\n\n"
+        "Choose which file should become the canonical save.\n"
+        "The non-selected file will remain backed up."
+    )
+
+    choice = question_dialog(
+        title="SaveRAM conflict",
+        text=prompt,
+        ok_label="Use older",
+        cancel_label="Cancel",
+        extra_label="Use newer",
+    )
+
+    if choice == "ok":
+        HELPER_LOGGER.log(
+            f"User chose older file {older_path}",
+            include_context=True,
+            location="conflict",
+        )
+        return older_path
+    if choice == "extra":
+        HELPER_LOGGER.log(
+            f"User chose newer file {newer_path}",
+            include_context=True,
+            location="conflict",
+        )
+        return newer_path
+
+    raise RuntimeError("User cancelled SaveRAM conflict resolution.")
+
+
+def _merge_file(
+    *,
+    source: Path,
+    dest: Path,
+    conflict_root: Path,
+    canonical_path: Path,
+) -> None:
+    if dest.exists() and dest.is_dir():
+        raise RuntimeError(f"Conflict destination is a directory: {dest}")
+    if not dest.exists():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(dest))
+        HELPER_LOGGER.log(
+            f"Moved new file into canonical SaveRAM: {dest}",
+            include_context=True,
+            location="merge",
+        )
+        return
+
+    _backup_conflict(conflict_root, "canonical", dest)
+    _backup_conflict(conflict_root, "local", source)
+
+    src_mtime = source.stat().st_mtime
+    dest_mtime = dest.stat().st_mtime
+    older = source if src_mtime <= dest_mtime else dest
+    newer = dest if older is source else source
+
+    chosen = _choose_conflict(
+        canonical_path=canonical_path,
+        local_path=source,
+        older_path=older,
+        newer_path=newer,
+    )
+
+    if chosen is source:
+        shutil.copy2(source, dest)
+        HELPER_LOGGER.log(
+            f"Conflict resolved: chose local file for {dest}",
+            include_context=True,
+            location="merge",
+        )
+    else:
+        HELPER_LOGGER.log(
+            f"Conflict resolved: kept canonical file for {dest}",
+            include_context=True,
+            location="merge",
+        )
+
+
+def _migrate_saveram_dir(source_dir: Path, canonical_dir: Path) -> None:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    conflict_base = canonical_dir / CONFLICTS_DIRNAME / timestamp
+    for item in source_dir.rglob("*"):
+        if item.is_dir():
+            continue
+        rel = item.relative_to(source_dir)
+        dest = canonical_dir / rel
+        conflict_root = _conflict_root(conflict_base, rel)
+        _merge_file(
+            source=item,
+            dest=dest,
+            conflict_root=conflict_root,
+            canonical_path=dest,
+        )
+
+
+def _ensure_symlink(target: Path, link: Path) -> None:
+    if link.exists() or link.is_symlink():
+        try:
+            if link.is_dir() and not link.is_symlink():
+                shutil.rmtree(link)
+            else:
+                link.unlink()
+        except Exception as exc:
+            raise RuntimeError(f"Failed to remove existing SaveRAM path: {exc}")
+    os.symlink(target, link)
+
+
+def _migrate_system_dir(system_dir_name: str, *, settings: dict) -> None:
+    bizhawk_root = _bizhawk_root(settings)
+    if not bizhawk_root:
+        raise RuntimeError("BizHawk root directory not configured.")
+
+    save_root = _save_root(settings)
+    canonical_dir = save_root / system_dir_name
+    bizhawk_system_dir = bizhawk_root / system_dir_name
+    save_ram_path = bizhawk_system_dir / SAVE_RAM_DIRNAME
+
+    canonical_dir.mkdir(parents=True, exist_ok=True)
+    bizhawk_system_dir.mkdir(parents=True, exist_ok=True)
+
+    if save_ram_path.is_symlink():
+        try:
+            resolved = save_ram_path.resolve()
+        except FileNotFoundError:
+            resolved = None
+        if resolved and resolved == canonical_dir:
+            HELPER_LOGGER.log(
+                f"SaveRAM symlink already valid for {system_dir_name}.",
+                include_context=True,
+                location="migration",
+            )
+            return
+
+        HELPER_LOGGER.log(
+            f"Repairing SaveRAM symlink for {system_dir_name}.",
+            include_context=True,
+            location="migration",
+        )
+        _ensure_symlink(canonical_dir, save_ram_path)
+        return
+
+    if not save_ram_path.exists():
+        HELPER_LOGGER.log(
+            f"SaveRAM missing for {system_dir_name}; creating symlink.",
+            include_context=True,
+            location="migration",
+        )
+        _ensure_symlink(canonical_dir, save_ram_path)
+        return
+
+    if save_ram_path.is_dir():
+        HELPER_LOGGER.log(
+            f"Migrating local SaveRAM directory for {system_dir_name}.",
+            include_context=True,
+            location="migration",
+        )
+        _migrate_saveram_dir(save_ram_path, canonical_dir)
+        shutil.rmtree(save_ram_path)
+        _ensure_symlink(canonical_dir, save_ram_path)
+        return
+
+    raise RuntimeError(f"Unexpected SaveRAM path type: {save_ram_path}")
+
+
+def _derive_system_dirs(save_root: Path, bizhawk_root: Path) -> list[str]:
+    candidates = set()
+    if save_root.is_dir():
+        for entry in save_root.iterdir():
+            if entry.is_dir():
+                candidates.add(entry.name)
+    if bizhawk_root.is_dir():
+        for entry in bizhawk_root.iterdir():
+            if not entry.is_dir():
+                continue
+            save_ram = entry / SAVE_RAM_DIRNAME
+            if save_ram.exists() or save_ram.is_symlink():
+                candidates.add(entry.name)
+    return sorted(candidates)
+
+
+def _relaunch_bizhawk(settings: dict) -> None:
+    runner = Path(str(settings.get(BIZHAWK_RUNNER_KEY, "") or ""))
+    args = settings.get(BIZHAWK_LAST_LAUNCH_ARGS_KEY, [])
+    if not runner.is_file():
+        raise RuntimeError("BizHawk runner not configured; cannot relaunch.")
+    if not isinstance(args, list) or not args:
+        raise RuntimeError("No cached BizHawk launch args; cannot relaunch.")
+
+    HELPER_LOGGER.log(
+        f"Relaunching BizHawk via {runner} {args}",
+        include_context=True,
+        location="relaunch",
+    )
+    subprocess.Popen([str(runner), *[str(arg) for arg in args]])
+
+
+def main(argv: list[str]) -> int:
+    settings = load_settings()
+    system_dir = argv[1] if len(argv) > 1 else None
+
+    try:
+        if system_dir:
+            bizhawk_root = _bizhawk_root(settings)
+            if not bizhawk_root:
+                raise RuntimeError("BizHawk root directory not configured.")
+            _ensure_bizhawk_closed(settings, bizhawk_root)
+            _migrate_system_dir(system_dir, settings=settings)
+            _relaunch_bizhawk(settings)
+        else:
+            bizhawk_root = _bizhawk_root(settings)
+            if not bizhawk_root:
+                raise RuntimeError("BizHawk root directory not configured.")
+            save_root = _save_root(settings)
+            system_dirs = _derive_system_dirs(save_root, bizhawk_root)
+            if not system_dirs:
+                HELPER_LOGGER.log("No system directories found for SaveRAM repair.")
+                return 0
+            for name in system_dirs:
+                _migrate_system_dir(name, settings=settings)
+    except Exception as exc:
+        message = f"SaveRAM migration failed: {exc}"
+        HELPER_LOGGER.log(message, level="ERROR", include_context=True)
+        error_dialog(message)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main(sys.argv))

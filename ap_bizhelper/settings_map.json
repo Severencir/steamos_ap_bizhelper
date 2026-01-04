@@ -4,6 +4,7 @@
     "keys": [
       "AP_DESKTOP_SHORTCUT",
       "BIZHAWK_DESKTOP_SHORTCUT",
+      "BIZHAWK_RUNTIME_DOWNLOAD",
       "QT_FILE_DIALOG_DATE_WIDTH",
       "QT_FILE_DIALOG_HEIGHT",
       "QT_FILE_DIALOG_MAXIMIZE",
@@ -22,6 +23,8 @@
   "path_settings.json": {
     "description": "Paths and directories that may vary by system and should be configurable.",
     "keys": [
+      "BIZHAWK_INSTALL_DIR",
+      "BIZHAWK_RUNTIME_ROOT",
       "BIZHAWK_SAVERAM_DIR",
       "DESKTOP_DIR",
       "DOWNLOADS_DIR",
@@ -41,20 +44,18 @@
       "AP_SKIP_VERSION",
       "AP_VERSION",
       "BIZHELPER_APPIMAGE",
-      "BIZHAWK_AP_CONNECTOR_LATEST_SEEN_VERSION",
-      "BIZHAWK_AP_CONNECTOR_VERSION",
       "BIZHAWK_EXE",
       "BIZHAWK_LATEST_SEEN_VERSION",
       "BIZHAWK_RUNNER",
       "BIZHAWK_SKIP_VERSION",
-      "BIZHAWK_SNI_VERSION",
-      "BIZHAWK_VERSION",
-      "PROTON_BIN"
+      "BIZHAWK_VERSION"
     ]
   },
   "state_settings.json": {
     "description": "Ephemeral/internal state that should persist but is not user-facing.",
     "keys": [
+      "BIZHAWK_LAST_LAUNCH_ARGS",
+      "BIZHAWK_LAST_PID",
       "PENDING_RELAUNCH_ARGS",
       "ROM_HASH_CACHE",
       "STEAM_APPID",

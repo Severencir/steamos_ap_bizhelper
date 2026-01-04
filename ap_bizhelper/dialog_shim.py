@@ -498,11 +498,11 @@ def _locate_bizhawk_runner(logger: AppLogger) -> Optional[Path]:
         candidates.append(runner_path)
         candidate_sources.append((runner_path, BIZHAWK_RUNNER_KEY))
     if exe_str:
-        exe_candidate = Path(exe_str).parent / "run_bizhawk_proton.py"
+        exe_candidate = Path(exe_str).parent / "run_bizhawk.py"
         candidates.append(exe_candidate)
         candidate_sources.append((exe_candidate, BIZHAWK_EXE_KEY))
 
-    local_candidate = Path(__file__).resolve().parent / "run_bizhawk_proton.py"
+    local_candidate = Path(__file__).resolve().parent / "run_bizhawk.py"
     candidates.append(local_candidate)
     candidate_sources.append((local_candidate, "local fallback"))
 
