@@ -12,11 +12,9 @@ from typing import Callable, Optional
 
 from .ap_bizhelper_ap import AP_APPIMAGE_DEFAULT, force_update_appimage, manual_select_appimage
 from .ap_bizhelper_bizhawk import (
-    BIZHAWK_WIN_DIR,
+    ensure_runtime_root,
     force_update_bizhawk,
-    force_update_connectors,
     manual_select_bizhawk,
-    manual_select_connectors,
 )
 from .ap_bizhelper_config import (
     APWORLD_CACHE_FILE,
@@ -36,19 +34,18 @@ from .constants import (
     ARCHIPELAGO_DATA_DIR,
     BACKUPS_DIR,
     BIZHELPER_APPIMAGE_KEY,
-    BIZHAWK_AP_CONNECTOR_LATEST_SEEN_KEY,
-    BIZHAWK_AP_CONNECTOR_VERSION_KEY,
     BIZHAWK_EXE_KEY,
+    BIZHAWK_INSTALL_DIR_KEY,
     BIZHAWK_LATEST_SEEN_KEY,
     BIZHAWK_RUNNER_KEY,
     BIZHAWK_SKIP_VERSION_KEY,
-    BIZHAWK_SNI_VERSION_KEY,
     BIZHAWK_VERSION_KEY,
+    BIZHAWK_RUNTIME_ROOT_KEY,
+    BIZHAWK_RUNTIME_DOWNLOAD_KEY,
     DATA_DIR as LAUNCHER_DATA_DIR,
     DESKTOP_DIR_KEY,
     DOWNLOADS_DIR_KEY,
     GAME_SAVES_DIR,
-    PROTON_BIN_KEY,
     SFC_LUA_PATH_KEY,
     STEAM_APPID_KEY,
 )
@@ -145,20 +142,19 @@ def _build_component_rows() -> list[_ComponentRow]:
 
     bizhawk_path = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
     bizhawk_exe = Path(bizhawk_path) if bizhawk_path else None
+    bizhawk_install = get_path_setting(settings, BIZHAWK_INSTALL_DIR_KEY)
 
-    connectors_ap_version = str(settings.get(BIZHAWK_AP_CONNECTOR_VERSION_KEY, "") or "")
-    connectors_sni_version = str(settings.get(BIZHAWK_SNI_VERSION_KEY, "") or "")
-    connectors_latest_seen = str(
-        settings.get(BIZHAWK_AP_CONNECTOR_LATEST_SEEN_KEY, "") or ""
-    )
+    runtime_root = get_path_setting(settings, BIZHAWK_RUNTIME_ROOT_KEY)
+    runtime_status = "missing"
+    try:
+        from .ap_bizhelper_bizhawk import validate_runtime_root
 
-    ap_connectors_source = "unknown"
-    if connectors_ap_version:
-        ap_connectors_source = "manual" if connectors_ap_version == "manual" else "download"
+        validate_runtime_root(runtime_root)
+        runtime_status = "staged"
+    except Exception:
+        runtime_status = "missing"
 
-    sni_connectors_source = "unknown"
-    if connectors_sni_version:
-        sni_connectors_source = "manual" if connectors_sni_version == "manual" else "download"
+    runtime_source = "download" if settings.get(BIZHAWK_RUNTIME_DOWNLOAD_KEY, True) else "manual"
 
     return [
         _ComponentRow(
@@ -175,27 +171,22 @@ def _build_component_rows() -> list[_ComponentRow]:
             installed_version=_dash_if_empty(str(settings.get(BIZHAWK_VERSION_KEY, "") or "")),
             latest_seen=_dash_if_empty(str(settings.get(BIZHAWK_LATEST_SEEN_KEY, "") or "")),
             skip_version=_dash_if_empty(str(settings.get(BIZHAWK_SKIP_VERSION_KEY, "") or "")),
-            source=_source_from_path(bizhawk_exe, BIZHAWK_WIN_DIR),
+            source=_source_from_path(bizhawk_exe, bizhawk_install),
             force_update=lambda: force_update_bizhawk(settings),
             manual_select=lambda: bool(manual_select_bizhawk(settings)),
         ),
         _ComponentRow(
-            name="AP Connectors",
-            installed_version=_dash_if_empty(connectors_ap_version),
-            latest_seen=_dash_if_empty(connectors_latest_seen),
+            name="BizHawk runtime",
+            installed_version=runtime_status,
+            latest_seen="—",
             skip_version="—",
-            source=ap_connectors_source,
-            force_update=lambda: force_update_connectors(settings),
-            manual_select=lambda: manual_select_connectors(settings),
-        ),
-        _ComponentRow(
-            name="SNI Connectors",
-            installed_version=_dash_if_empty(connectors_sni_version),
-            latest_seen="pinned",
-            skip_version="—",
-            source=sni_connectors_source,
-            force_update=lambda: force_update_connectors(settings),
-            manual_select=lambda: manual_select_connectors(settings),
+            source=runtime_source,
+            force_update=lambda: bool(
+                ensure_runtime_root(settings, download_enabled=True, prompt_on_missing=True)
+            ),
+            manual_select=lambda: bool(
+                ensure_runtime_root(settings, download_enabled=False, prompt_on_missing=True)
+            ),
         ),
     ]
 
@@ -237,14 +228,16 @@ def _bizhawk_install_dirs(settings: dict) -> list[Path]:
         if resolved not in installs:
             installs.append(resolved)
 
-    _add(BIZHAWK_WIN_DIR)
-
     bizhawk_path = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
     if bizhawk_path:
         candidate = Path(bizhawk_path)
         if candidate.is_file():
             candidate = candidate.parent
         _add(candidate)
+
+    install_root = get_path_setting(settings, BIZHAWK_INSTALL_DIR_KEY)
+    if install_root:
+        _add(install_root)
 
     return installs
 
@@ -257,11 +250,13 @@ def _build_managed_dir_rows() -> list[_ManagedDirRow]:
         _ManagedDirRow("Launcher data", LAUNCHER_DATA_DIR),
         _ManagedDirRow("APWorlds", WORLD_DIR),
         _ManagedDirRow("BizHawk SaveRAM", _bizhawk_saveram_dir(settings)),
+        _ManagedDirRow(
+            "BizHawk runtime", get_path_setting(settings, BIZHAWK_RUNTIME_ROOT_KEY)
+        ),
     ]
 
     for install_dir in _bizhawk_install_dirs(settings):
         rows.append(_ManagedDirRow("BizHawk install", install_dir))
-        rows.append(_ManagedDirRow("Connectors", install_dir / "connectors"))
 
     return rows
 
@@ -298,8 +293,8 @@ def _format_status_text() -> str:
 
     _path_line("AP AppImage", str(settings.get(AP_APPIMAGE_KEY, "") or ""))
     _path_line("BizHawk EXE", str(settings.get(BIZHAWK_EXE_KEY, "") or ""))
-    _path_line("Proton bin", str(settings.get(PROTON_BIN_KEY, "") or ""))
     _path_line("BizHawk runner", str(settings.get(BIZHAWK_RUNNER_KEY, "") or ""))
+    _path_line("BizHawk runtime", str(settings.get(BIZHAWK_RUNTIME_ROOT_KEY, "") or ""))
     _path_line("SFC Lua path", str(settings.get(SFC_LUA_PATH_KEY, "") or ""))
     _path_line("APWorld cache", str(APWORLD_CACHE_FILE))
     _path_line("Cached APWorlds", str(len(cache.get("playable_worlds", {}))))
@@ -417,7 +412,7 @@ _IMPORT_PRESERVE_KEYS = (
     AP_APPIMAGE_KEY,
     BIZHAWK_EXE_KEY,
     BIZHAWK_RUNNER_KEY,
-    PROTON_BIN_KEY,
+    BIZHAWK_RUNTIME_ROOT_KEY,
 )
 
 
@@ -571,8 +566,11 @@ def _uninstall_app(
     if remove_managed_dirs:
         desktop_dir = _desktop_dir(settings)
         ap_desktop_shortcut = desktop_dir / "Archipelago.desktop"
-        bizhawk_shortcut = desktop_dir / "BizHawk-Proton.sh"
-        bizhawk_legacy_shortcut = desktop_dir / "BizHawk-Proton.desktop"
+        bizhawk_shortcut = desktop_dir / "BizHawk.sh"
+        bizhawk_legacy_shortcuts = [
+            desktop_dir / "BizHawk-Proton.sh",
+            desktop_dir / "BizHawk-Proton.desktop",
+        ]
         _safe_remove_path(AP_CONFIG_DIR, deleted, errors)
         _safe_remove_path(AP_DATA_DIR, deleted, errors)
         _safe_remove_path(LAUNCHER_CONFIG_DIR, deleted, errors)
@@ -585,7 +583,8 @@ def _uninstall_app(
                 _safe_remove_path(child, deleted, errors)
         _safe_remove_path(ap_desktop_shortcut, deleted, errors)
         _safe_remove_path(bizhawk_shortcut, deleted, errors)
-        _safe_remove_path(bizhawk_legacy_shortcut, deleted, errors)
+        for legacy_shortcut in bizhawk_legacy_shortcuts:
+            _safe_remove_path(legacy_shortcut, deleted, errors)
 
     if remove_backups:
         _safe_remove_path(BACKUPS_DIR, deleted, errors)

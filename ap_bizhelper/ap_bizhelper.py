@@ -5,13 +5,12 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
-import signal
 import subprocess
 import sys
 import time
 from urllib.parse import quote, unquote, urlparse
 from pathlib import Path
-from typing import Optional, Set, Tuple
+from typing import Optional, Tuple
 
 from .ap_bizhelper_ap import AP_APPIMAGE_DEFAULT, ensure_appimage
 from .dialogs import (
@@ -20,15 +19,13 @@ from .dialogs import (
     ensure_qt_available as _ensure_qt_available,
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
-    dialogs_active as _dialogs_active,
     error_dialog,
     info_dialog,
 )
 from .ap_bizhelper_bizhawk import (
-    connectors_need_download,
-    auto_detect_bizhawk_exe,
-    ensure_bizhawk_and_proton,
-    proton_available,
+    ensure_bizhawk_install,
+    ensure_runtime_root,
+    validate_runtime_root,
 )
 from .ap_bizhelper_config import (
     get_path_setting,
@@ -46,18 +43,18 @@ from .ap_bizhelper_config import (
 from .dialog_shim import prepare_dialog_shim_env
 from .constants import (
     AP_APPIMAGE_KEY,
-    AP_VERSION_KEY,
     APPLICATIONS_DIR,
     ARCHIPELAGO_WORLDS_DIR,
     BIZHELPER_APPIMAGE_KEY,
     BIZHAWK_EXE_KEY,
     BIZHAWK_RUNNER_KEY,
-    BIZHAWK_SHUTDOWN_FLAG_FILENAME,
+    BIZHAWK_RUNTIME_DOWNLOAD_KEY,
+    BIZHAWK_RUNTIME_ROOT_KEY,
     FILE_FILTER_APWORLD,
+    HELPER_PATH_FILE,
     LOG_PREFIX,
     MIME_PACKAGES_DIR,
     PENDING_RELAUNCH_ARGS_KEY,
-    PROTON_BIN_KEY,
     STEAM_APPID_KEY,
     STEAM_ROOT_PATH_KEY,
     USE_CACHED_RELAUNCH_ARGS_KEY,
@@ -68,111 +65,6 @@ from .ui_utils import ensure_local_action_scripts, show_uninstall_dialog, show_u
 
 
 APP_LOGGER = get_app_logger()
-_SHUTDOWN_SIGNAL_ACTIVE = False
-_SIGNAL_HANDLERS_INSTALLED = False
-_SHUTDOWN_DEBUG_ENV = "AP_BIZHELPER_DEBUG_SHUTDOWN"
-
-
-def _shutdown_debug_enabled() -> bool:
-    value = str(os.environ.get(_SHUTDOWN_DEBUG_ENV, "")).strip().lower()
-    return value not in ("", "0", "false", "no", "off")
-
-
-def _shutdown_debug_log(
-    message: str,
-    *,
-    location: str,
-    data: Optional[dict[str, object]] = None,
-) -> None:
-    if not _shutdown_debug_enabled():
-        return
-    if data:
-        extras = " ".join(f"{key}={data[key]!r}" for key in sorted(data))
-        message = f"{message} | {extras}"
-    try:
-        APP_LOGGER.log(
-            message,
-            include_context=True,
-            location=location,
-        )
-    except Exception:
-        pass
-
-
-def _coerce_timeout_value(value: object, default: float) -> float:
-    if value is None:
-        return default
-    try:
-        timeout = float(value)
-    except (TypeError, ValueError):
-        return default
-    if timeout < 0:
-        return default
-    return timeout
-
-
-def _get_shutdown_timeout(
-    settings: dict,
-    *,
-    setting_key: str,
-    env_key: str,
-    default: float,
-) -> float:
-    env_value = os.environ.get(env_key)
-    if env_value is not None:
-        return _coerce_timeout_value(env_value, default)
-    return _coerce_timeout_value(settings.get(setting_key), default)
-
-
-def _coerce_bool(value: object, default: bool) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    string_value = str(value).strip().lower()
-    if string_value in ("1", "true", "yes", "on", "y"):
-        return True
-    if string_value in ("0", "false", "no", "off", "n"):
-        return False
-    return default
-
-
-def _write_bizhawk_shutdown_flag(bizhawk_dir: Optional[Path]) -> None:
-    if bizhawk_dir is None:
-        print(f"{LOG_PREFIX} No BizHawk directory available; skipping shutdown flag.")
-        return
-
-    flag_path = (bizhawk_dir / BIZHAWK_SHUTDOWN_FLAG_FILENAME).resolve()
-    try:
-        flag_path.parent.mkdir(parents=True, exist_ok=True)
-        flag_path.write_text("shutdown\n", encoding="utf-8")
-        print(f"{LOG_PREFIX} Wrote BizHawk shutdown flag: {flag_path}")
-    except Exception as exc:
-        print(f"{LOG_PREFIX} Failed to write BizHawk shutdown flag {flag_path}: {exc}")
-
-
-def _install_shutdown_signal_handlers(bizhawk_dir: Optional[Path]) -> None:
-    global _SIGNAL_HANDLERS_INSTALLED
-    if _SIGNAL_HANDLERS_INSTALLED:
-        return
-
-    def _handle_shutdown_signal(signum: int, _frame: object) -> None:
-        global _SHUTDOWN_SIGNAL_ACTIVE
-        if _SHUTDOWN_SIGNAL_ACTIVE:
-            return
-        _SHUTDOWN_SIGNAL_ACTIVE = True
-
-        try:
-            print(f"{LOG_PREFIX} Received signal {signum}; requesting BizHawk shutdown.")
-            _write_bizhawk_shutdown_flag(bizhawk_dir)
-            _wait_for_bizhawk_exit()
-        finally:
-            raise SystemExit(0)
-
-    signal.signal(signal.SIGTERM, _handle_shutdown_signal)
-    signal.signal(signal.SIGINT, _handle_shutdown_signal)
-    _SIGNAL_HANDLERS_INSTALLED = True
-
 
 def _steam_game_id_from_env() -> Optional[str]:
     """Return the Steam game id from common environment keys, if available."""
@@ -466,25 +358,20 @@ def _needs_archipelago_download(settings: dict) -> bool:
 def _needs_bizhawk_download(settings: dict) -> bool:
     exe_str = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
     runner_str = str(settings.get(BIZHAWK_RUNNER_KEY, "") or "")
-    proton_str = str(settings.get(PROTON_BIN_KEY, "") or "")
 
     exe = Path(exe_str) if exe_str else None
     runner = Path(runner_str) if runner_str else None
-    proton_bin = Path(proton_str) if proton_str else None
 
-    return not (
-        exe and exe.is_file() and runner and runner.is_file() and proton_bin and proton_bin.is_file()
-    )
+    return not (exe and exe.is_file() and runner and runner.is_file())
 
 
-def _needs_proton_download(settings: dict) -> bool:
-    return not proton_available(settings)
-
-
-def _needs_connector_download(settings: dict, *, ap_version: str) -> bool:
-    exe_str = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
-    exe = Path(exe_str) if exe_str else None
-    return connectors_need_download(settings, exe, ap_version=ap_version)
+def _needs_runtime_setup(settings: dict) -> bool:
+    runtime_root = get_path_setting(settings, BIZHAWK_RUNTIME_ROOT_KEY)
+    try:
+        validate_runtime_root(runtime_root)
+        return False
+    except Exception:
+        return True
 
 
 def _prompt_setup_choices(
@@ -492,11 +379,10 @@ def _prompt_setup_choices(
     allow_archipelago_skip: bool,
     show_archipelago: bool,
     show_bizhawk: bool,
-    show_connectors: bool,
-    show_proton: bool,
-) -> Tuple[bool, bool, bool, bool, bool]:
-    if not any((show_archipelago, show_bizhawk, show_connectors, show_proton)):
-        return False, False, False, False, False
+    show_runtime: bool,
+) -> Tuple[bool, bool, bool, bool]:
+    if not any((show_archipelago, show_bizhawk, show_runtime)):
+        return False, False, False, False
 
     from PySide6 import QtCore, QtWidgets
 
@@ -516,24 +402,18 @@ def _prompt_setup_choices(
 
     bizhawk_box = None
     if show_bizhawk:
-        bizhawk_box = QtWidgets.QCheckBox("BizHawk (with Proton)")
+        bizhawk_box = QtWidgets.QCheckBox("BizHawk (Linux)")
         bizhawk_box.setChecked(True)
         layout.addWidget(bizhawk_box)
 
-    connectors_box = None
-    if show_connectors:
-        connectors_box = QtWidgets.QCheckBox("BizHawk connectors (download)")
-        connectors_box.setChecked(True)
-        layout.addWidget(connectors_box)
-
-    proton_box = None
-    if show_proton:
-        proton_box = QtWidgets.QCheckBox("Proton 10 (local copy)")
-        proton_box.setChecked(True)
-        layout.addWidget(proton_box)
+    runtime_box = None
+    if show_runtime:
+        runtime_box = QtWidgets.QCheckBox("BizHawk deps (mono/libgdiplus/lua)")
+        runtime_box.setChecked(True)
+        layout.addWidget(runtime_box)
 
     shortcut_box = None
-    if show_archipelago or show_bizhawk or show_connectors:
+    if show_archipelago or show_bizhawk or show_runtime:
         shortcut_box = QtWidgets.QCheckBox(
             "Create Desktop shortcuts (Archipelago & BizHawk)"
         )
@@ -562,11 +442,10 @@ def _prompt_setup_choices(
 
     arch = arch_box.isChecked() if arch_box is not None else False
     bizhawk = bizhawk_box.isChecked() if bizhawk_box is not None else False
-    connectors = connectors_box.isChecked() if connectors_box is not None else False
-    proton = proton_box.isChecked() if proton_box is not None else False
+    runtime = runtime_box.isChecked() if runtime_box is not None else False
     shortcuts = shortcut_box.isChecked() if shortcut_box is not None else False
 
-    return arch, bizhawk, connectors, shortcuts, proton
+    return arch, bizhawk, runtime, shortcuts
 
 
 def _ensure_apworld_for_extension(ext: str) -> None:
@@ -871,40 +750,6 @@ def _handle_extension_association(ext: str) -> None:
         _apply_association_files(registered_exts)
 
 
-def _list_bizhawk_pids() -> Set[int]:
-    try:
-        proc = subprocess.run(
-            ["pgrep", "-f", "EmuHawk.exe"],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-    except FileNotFoundError:
-        return set()
-
-    pids = set()
-    for line in proc.stdout.splitlines():
-        try:
-            pids.add(int(line.strip()))
-        except ValueError:
-            continue
-    return pids
-
-
-def _wait_for_bizhawk_exit(timeout: int = 4) -> None:
-    if not _list_bizhawk_pids():
-        return
-
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if not _list_bizhawk_pids():
-            return
-        time.sleep(0.25)
-
-    print(f"{LOG_PREFIX} BizHawk still running after shutdown flag; continuing shutdown.")
-
-
 def _is_archipelago_running() -> bool:
     try:
         proc = subprocess.run(
@@ -956,206 +801,6 @@ def _wait_for_archipelago_ready(appimage: Path, *, timeout: int = 30) -> bool:
     return False
 
 
-def _wait_for_launched_apps_to_close(
-    appimage: Path,
-    baseline_bizhawk_pids: Set[int],
-    *,
-    timeout: float = 0.0,
-) -> None:
-    """Block until Archipelago/AppImage and launched BizHawk exit."""
-
-    # Only wait when apps actually launched; the archipelago AppImage is always required
-    # for the main flow so appimage is expected to exist.
-    print(f"{LOG_PREFIX} Waiting for Archipelago/BizHawk to close before ending Steam session...")
-    timeout_start = time.monotonic()
-    paused_total = 0.0
-    pause_started: Optional[float] = None
-    while True:
-        archipelago_running = _is_archipelago_running()
-        bizhawk_pids = _list_bizhawk_pids()
-        tracked_bizhawk = {pid for pid in bizhawk_pids if pid not in baseline_bizhawk_pids}
-        bizhawk_running = bool(tracked_bizhawk)
-
-        _shutdown_debug_log(
-            "Shutdown wait status",
-            location="shutdown-wait",
-            data={
-                "archipelago_running": archipelago_running,
-                "appimage": str(appimage),
-                "bizhawk_pids": sorted(bizhawk_pids),
-                "tracked_bizhawk_pids": sorted(tracked_bizhawk),
-            },
-        )
-
-        if not archipelago_running and not bizhawk_running:
-            print(f"{LOG_PREFIX} Archipelago and BizHawk have closed; continuing shutdown.")
-            return
-
-        if timeout > 0:
-            now = time.monotonic()
-            if _dialogs_active():
-                if pause_started is None:
-                    pause_started = now
-            elif pause_started is not None:
-                paused_total += now - pause_started
-                pause_started = None
-            paused_duration = paused_total + (now - pause_started if pause_started is not None else 0.0)
-            elapsed = now - timeout_start - paused_duration
-            remaining = timeout - elapsed
-            if remaining <= 0:
-                print(f"{LOG_PREFIX} Shutdown wait timeout reached; ending Steam session anyway.")
-                return
-
-        time.sleep(2)
-
-
-def _resolve_bizhawk_root(settings: dict) -> Optional[Path]:
-    exe_str = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
-    if exe_str:
-        exe_path = Path(exe_str)
-        if exe_path.is_file():
-            return exe_path.parent
-
-    runner_str = str(settings.get(BIZHAWK_RUNNER_KEY, "") or "")
-    if runner_str:
-        runner_path = Path(runner_str)
-        if runner_path.is_file():
-            return runner_path.parent
-
-    exe_path = auto_detect_bizhawk_exe(settings)
-    if exe_path and exe_path.is_file():
-        return exe_path.parent
-
-    return None
-
-
-def sync_bizhawk_saveram(settings: dict) -> None:
-    with APP_LOGGER.context("sync_bizhawk_saveram"):
-        bizhawk_pids = _list_bizhawk_pids()
-        if bizhawk_pids:
-            _shutdown_debug_log(
-                "Skipping SaveRAM sync; BizHawk still running.",
-                location="saveram-sync",
-                data={"bizhawk_pids": sorted(bizhawk_pids)},
-            )
-            print(f"{LOG_PREFIX} BizHawk still running; skipping SaveRAM sync.")
-            return
-
-        bizhawk_root = _resolve_bizhawk_root(settings)
-        if bizhawk_root is None or not bizhawk_root.is_dir():
-            _shutdown_debug_log(
-                "BizHawk root directory not found; skipping SaveRAM sync.",
-                location="saveram-sync",
-                data={"bizhawk_root": None if bizhawk_root is None else str(bizhawk_root)},
-            )
-            print(f"{LOG_PREFIX} BizHawk root directory not found; skipping SaveRAM sync.")
-            return
-
-        central_root = get_path_setting(settings, "BIZHAWK_SAVERAM_DIR")
-        save_dirs = [path for path in bizhawk_root.rglob("SaveRAM") if path.is_dir()]
-        if not save_dirs:
-            _shutdown_debug_log(
-                "No SaveRAM directories found; skipping SaveRAM sync.",
-                location="saveram-sync",
-                data={"bizhawk_root": str(bizhawk_root)},
-            )
-            print(f"{LOG_PREFIX} No SaveRAM directories found under {bizhawk_root}.")
-            return
-
-        _shutdown_debug_log(
-            "Starting SaveRAM sync",
-            location="saveram-sync",
-            data={
-                "bizhawk_root": str(bizhawk_root),
-                "save_dirs": [str(path) for path in save_dirs],
-                "central_root": str(central_root),
-            },
-        )
-
-        for save_ram in save_dirs:
-            if save_ram.is_symlink():
-                if save_ram.exists():
-                    continue
-                print(f"{LOG_PREFIX} Removing broken SaveRAM symlink at {save_ram}.")
-                try:
-                    save_ram.unlink()
-                except OSError:
-                    continue
-
-            try:
-                instance_rel = save_ram.parent.relative_to(bizhawk_root)
-            except ValueError:
-                instance_rel = Path(save_ram.parent.name)
-
-            if instance_rel.parts:
-                console_label = instance_rel.parts[-1]
-            else:
-                console_label = "default"
-
-            console_label = console_label.strip() or "default"
-            if console_label == ".":
-                console_label = "default"
-            console_label = console_label.replace("_", "-")
-
-            dest_root = central_root / console_label
-            if dest_root.is_symlink():
-                continue
-            dest_root.mkdir(parents=True, exist_ok=True)
-
-            try:
-                if save_ram.exists():
-                    source_mode = save_ram.stat().st_mode
-                    dest_root.chmod(source_mode)
-            except (OSError, PermissionError):
-                pass
-
-            if save_ram.exists():
-                for item in save_ram.iterdir():
-                    dest_item = dest_root / item.name
-                    if item.is_dir():
-                        shutil.copytree(
-                            item,
-                            dest_item,
-                            copy_function=shutil.copy2,
-                            dirs_exist_ok=True,
-                        )
-                    else:
-                        dest_item.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(item, dest_item)
-
-            if save_ram.exists():
-                shutil.rmtree(save_ram)
-            os.symlink(dest_root, save_ram)
-            print(f"{LOG_PREFIX} Synced SaveRAM to {dest_root} and linked {save_ram}.")
-            _shutdown_debug_log(
-                "SaveRAM sync completed",
-                location="saveram-sync",
-                data={
-                    "save_ram": str(save_ram),
-                    "dest_root": str(dest_root),
-                },
-            )
-
-
-def _notify_steam_game_exit(appid: str) -> None:
-    """Ask Steam to clear the running state for this app id."""
-
-    steam_binary = shutil.which("steam") or shutil.which("/usr/bin/steam")
-    if not steam_binary:
-        return
-
-    try:
-        subprocess.Popen(
-            [steam_binary, f"steam://appquit/{appid}"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        print(f"{LOG_PREFIX} Requested Steam to end session for app id {appid}.")
-    except Exception:
-        # Nothing else to do if Steam is unavailable or refusing the command
-        pass
-
-
 def _find_matching_rom(patch: Path) -> Optional[Path]:
     if patch.suffix.lower() == ".sfc" and patch.is_file():
         return patch
@@ -1177,15 +822,12 @@ def _find_matching_rom(patch: Path) -> Optional[Path]:
     return candidates[0] if candidates else None
 
 
-def _wait_for_rom(patch: Path, *, timeout: int = 60) -> Optional[Path]:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        rom = _find_matching_rom(patch)
-        if rom:
-            print(f"{LOG_PREFIX} ROM detected: {rom}")
-            return rom
-        time.sleep(1)
-    print(f"{LOG_PREFIX} Timed out waiting for ROM; not launching BizHawk.")
+def _wait_for_rom(patch: Path) -> Optional[Path]:
+    rom = _find_matching_rom(patch)
+    if rom:
+        print(f"{LOG_PREFIX} ROM detected: {rom}")
+        return rom
+    print(f"{LOG_PREFIX} ROM not detected; not launching BizHawk.")
     return None
 
 
@@ -1235,15 +877,32 @@ def _launch_bizhawk(runner: Path, rom: Path) -> None:
         error_dialog(f"Failed to launch BizHawk runner: {exc}")
 
 
-def _detect_new_bizhawk(baseline: Iterable[int], *, timeout: int = 10) -> bool:
-    baseline_set = set(baseline)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        current = _list_bizhawk_pids()
-        if current.difference(baseline_set):
-            return True
-        time.sleep(1)
-    return False
+def _run_save_migration_helper(*, system_dir: Optional[str] = None) -> bool:
+    helper_path: Optional[Path] = None
+    try:
+        if HELPER_PATH_FILE.is_file():
+            helper_path = Path(HELPER_PATH_FILE.read_text(encoding="utf-8").strip())
+    except Exception:
+        helper_path = None
+
+    if not helper_path or not helper_path.is_file():
+        error_dialog("Save migration helper path is missing; cannot continue.")
+        return False
+
+    cmd = [str(helper_path)]
+    if system_dir:
+        cmd.append(system_dir)
+
+    try:
+        result = subprocess.run(cmd, check=False)
+    except Exception as exc:
+        error_dialog(f"Failed to run save migration helper: {exc}")
+        return False
+
+    if result.returncode != 0:
+        error_dialog("Save migration helper reported an error; BizHawk will not be launched.")
+        return False
+    return True
 
 
 def _ensure_steam_root(settings: dict) -> None:
@@ -1271,7 +930,7 @@ def _ensure_steam_root(settings: dict) -> None:
     )
 
 
-def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids: Iterable[int]) -> None:
+def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path]) -> None:
     if runner is None or not runner.is_file():
         print(f"{LOG_PREFIX} BizHawk runner not configured or not executable; skipping auto-launch.")
         return
@@ -1299,24 +958,18 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path], baseline_pids
         print(f"{LOG_PREFIX} Behavior 'auto': not launching BizHawk; assuming AP/user handles it.")
         return
     if behavior == "fallback":
-        print(f"{LOG_PREFIX} Behavior 'fallback': launching BizHawk via Proton.")
+        print(f"{LOG_PREFIX} Behavior 'fallback': launching BizHawk.")
+        if not _run_save_migration_helper():
+            return
         _launch_bizhawk(runner, rom)
         return
     if behavior not in (None, ""):
         print(f"{LOG_PREFIX} Unknown behavior '{behavior}' for .{ext}; doing nothing for safety.")
         return
-
-    print(f"{LOG_PREFIX} No behavior stored yet; waiting briefly to see if BizHawk appears on its own.")
-    if _detect_new_bizhawk(baseline_pids):
-        print(f"{LOG_PREFIX} Detected new BizHawk instance; recording .{ext} as 'auto'.")
-        set_ext_behavior(ext, "auto")
-        return
-
-    print(
-        f"{LOG_PREFIX} No BizHawk detected after fallback timeout; "
-        f"switching .{ext} to 'fallback' and launching runner."
-    )
+    print(f"{LOG_PREFIX} No behavior stored yet; defaulting .{ext} to 'fallback'.")
     set_ext_behavior(ext, "fallback")
+    if not _run_save_migration_helper():
+        return
     _launch_bizhawk(runner, rom)
 
 
@@ -1325,24 +978,20 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
         _ensure_steam_root(settings)
         need_arch = _needs_archipelago_download(settings)
         need_bizhawk = _needs_bizhawk_download(settings)
-        need_proton = _needs_proton_download(settings)
-        ap_version = str(settings.get(AP_VERSION_KEY, "") or "")
-        need_connectors = need_bizhawk or _needs_connector_download(settings, ap_version=ap_version)
+        need_runtime = _needs_runtime_setup(settings)
 
-        if any((need_arch, need_bizhawk, need_connectors, need_proton)):
-            arch, bizhawk, connectors, shortcuts, proton = _prompt_setup_choices(
+        if any((need_arch, need_bizhawk, need_runtime)):
+            arch, bizhawk, runtime, shortcuts = _prompt_setup_choices(
                 allow_archipelago_skip=allow_archipelago_skip,
                 show_archipelago=need_arch,
                 show_bizhawk=need_bizhawk,
-                show_connectors=need_connectors,
-                show_proton=need_proton,
+                show_runtime=need_runtime,
             )
         else:
             arch = False
             bizhawk = False
-            connectors = False
+            runtime = False
             shortcuts = False
-            proton = False
 
         download_messages: list[str] = []
 
@@ -1357,15 +1006,17 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
                 settings=settings,
             )
 
-        bizhawk_result: Optional[Tuple[Path, Path, bool]] = None
-        bizhawk_result = ensure_bizhawk_and_proton(
+        download_runtime = bool(settings.get(BIZHAWK_RUNTIME_DOWNLOAD_KEY, True))
+        if need_runtime:
+            download_runtime = runtime
+            settings[BIZHAWK_RUNTIME_DOWNLOAD_KEY] = download_runtime
+            save_settings(settings)
+
+        bizhawk_result = ensure_bizhawk_install(
             download_selected=bizhawk,
-            download_proton=proton,
             create_shortcut=shortcuts,
             download_messages=download_messages,
             settings=settings,
-            stage_connectors=connectors,
-            allow_manual_connector_selection=need_connectors,
         )
         if bizhawk:
             if bizhawk_result is None:
@@ -1373,6 +1024,15 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
             runner, _, _ = bizhawk_result
         elif bizhawk_result is not None:
             runner, _, _ = bizhawk_result
+
+        runtime_root = ensure_runtime_root(
+            settings,
+            download_enabled=download_runtime,
+            download_messages=download_messages,
+            prompt_on_missing=True,
+        )
+        if runtime_root is None:
+            raise RuntimeError("BizHawk runtime setup was cancelled or failed.")
 
         if download_messages:
             message = "Completed downloads:\n- " + "\n- ".join(download_messages)
@@ -1401,10 +1061,6 @@ def _run_full_flow(
         if appimage is None:
             error_dialog("Archipelago was not selected for download and is required to continue.")
             return 1
-
-        baseline_pids = _list_bizhawk_pids()
-        bizhawk_dir = runner.parent if runner else None
-        _install_shutdown_signal_handlers(bizhawk_dir)
 
         _apply_association_files(_registered_association_exts())
 
@@ -1436,27 +1092,7 @@ def _run_full_flow(
 
         archipelago_ready = _wait_for_archipelago_ready(appimage)
         if archipelago_ready:
-            _handle_bizhawk_for_patch(patch, runner, baseline_pids)
-
-        if allow_steam:
-            steam_appid = _get_known_steam_appid(settings)
-            if _is_running_under_steam():
-                shutdown_timeout = _get_shutdown_timeout(
-                    settings,
-                    setting_key="STEAM_SHUTDOWN_TIMEOUT",
-                    env_key="AP_BIZHELPER_STEAM_SHUTDOWN_TIMEOUT",
-                    default=0.0,
-                )
-                if not archipelago_ready:
-                    shutdown_timeout = 0.0
-                _wait_for_launched_apps_to_close(
-                    appimage,
-                    baseline_pids,
-                    timeout=shutdown_timeout,
-                )
-                sync_bizhawk_saveram(settings)
-            if steam_appid:
-                _notify_steam_game_exit(steam_appid)
+            _handle_bizhawk_for_patch(patch, runner)
 
         return 0
 

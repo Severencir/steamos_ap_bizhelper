@@ -65,12 +65,112 @@ local function set_cwd(p)
     return false
 end
 
-local entry_dir = entry_script_dir()
+local function _shell_ok(result)
+    if result == true or result == 0 then
+        return true
+    end
+    if type(result) == "number" then
+        return result == 0
+    end
+    return false
+end
 
--- Load watchdog relative to this entry script, not the process CWD.
-local watchdog_ok, watchdog_err = pcall(dofile, join(entry_dir, "ap_bizhelper_shutdown_watchdog.lua"))
-if not watchdog_ok then
-    log("watchdog load failed: " .. tostring(watchdog_err))
+local function _read_first_line(path)
+    local ok, file = pcall(io.open, path, "r")
+    if not ok or not file then
+        return nil
+    end
+    local line = file:read("*l")
+    file:close()
+    if not line or line == "" then
+        return nil
+    end
+    return line
+end
+
+local function _exists(path)
+    local cmd = string.format("test -e %q", path)
+    return _shell_ok(os.execute(cmd))
+end
+
+local function _is_symlink(path)
+    local cmd = string.format("test -L %q", path)
+    return _shell_ok(os.execute(cmd))
+end
+
+local function _readlink(path)
+    local cmd = string.format("readlink -f %q", path)
+    local pipe = io.popen(cmd, "r")
+    if not pipe then
+        return nil
+    end
+    local out = pipe:read("*l")
+    pipe:close()
+    if not out or out == "" then
+        return nil
+    end
+    return out
+end
+
+local function _system_dir_name()
+    if type(client) == "table" and type(client.getsystemid) == "function" then
+        local id = client.getsystemid()
+        if id and id ~= "" then
+            return tostring(id)
+        end
+    end
+    if type(gameinfo) == "table" and type(gameinfo.getsystemid) == "function" then
+        local id = gameinfo.getsystemid()
+        if id and id ~= "" then
+            return tostring(id)
+        end
+    end
+    if type(emu) == "table" and type(emu.getsystemid) == "function" then
+        local id = emu.getsystemid()
+        if id and id ~= "" then
+            return tostring(id)
+        end
+    end
+    return nil
+end
+
+local function _helper_path()
+    local home = os.getenv("HOME") or ""
+    if home == "" then
+        return nil
+    end
+    local config_dir = join(home, ".config/ap_bizhelper")
+    local helper_path = _read_first_line(join(config_dir, "helper_path.txt"))
+    return helper_path
+end
+
+local function _launch_helper(system_dir)
+    local helper = _helper_path()
+    if not helper then
+        error("Save migration helper path not configured")
+    end
+    local cmd = string.format("%q %q &", helper, system_dir)
+    log("launching save migration helper: " .. cmd)
+    os.execute(cmd)
+end
+
+local entry_dir = entry_script_dir()
+local system_dir = _system_dir_name()
+if not system_dir then
+    error("Could not determine BizHawk system dir name")
+end
+
+local save_ram = join(join(entry_dir, system_dir), "SaveRAM")
+local save_ram_is_symlink = _is_symlink(save_ram)
+local save_ram_target = save_ram_is_symlink and _readlink(save_ram) or nil
+
+if not save_ram_is_symlink or not save_ram_target or not _exists(save_ram_target) then
+    log("SaveRAM not linked or invalid; invoking migration helper for " .. system_dir)
+    _launch_helper(system_dir)
+    if type(client) == "table" and type(client.exit) == "function" then
+        pcall(client.exit)
+    end
+    return
 end
 
 local connector_path = os.getenv("AP_BIZHELPER_CONNECTOR_PATH")
