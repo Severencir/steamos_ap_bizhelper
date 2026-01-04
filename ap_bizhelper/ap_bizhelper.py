@@ -25,7 +25,6 @@ from .dialogs import (
     info_dialog,
 )
 from .ap_bizhelper_bizhawk import (
-    connectors_need_download,
     auto_detect_bizhawk_exe,
     ensure_bizhawk_and_proton,
     proton_available,
@@ -481,22 +480,15 @@ def _needs_proton_download(settings: dict) -> bool:
     return not proton_available(settings)
 
 
-def _needs_connector_download(settings: dict, *, ap_version: str) -> bool:
-    exe_str = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
-    exe = Path(exe_str) if exe_str else None
-    return connectors_need_download(settings, exe, ap_version=ap_version)
-
-
 def _prompt_setup_choices(
     *,
     allow_archipelago_skip: bool,
     show_archipelago: bool,
     show_bizhawk: bool,
-    show_connectors: bool,
-    show_proton: bool,
-) -> Tuple[bool, bool, bool, bool, bool]:
-    if not any((show_archipelago, show_bizhawk, show_connectors, show_proton)):
-        return False, False, False, False, False
+    show_bizhawk_deps: bool,
+) -> Tuple[bool, bool, bool, bool]:
+    if not any((show_archipelago, show_bizhawk, show_bizhawk_deps)):
+        return False, False, False, False
 
     from PySide6 import QtCore, QtWidgets
 
@@ -516,24 +508,18 @@ def _prompt_setup_choices(
 
     bizhawk_box = None
     if show_bizhawk:
-        bizhawk_box = QtWidgets.QCheckBox("BizHawk (with Proton)")
+        bizhawk_box = QtWidgets.QCheckBox("BizHawk")
         bizhawk_box.setChecked(True)
         layout.addWidget(bizhawk_box)
 
-    connectors_box = None
-    if show_connectors:
-        connectors_box = QtWidgets.QCheckBox("BizHawk connectors (download)")
-        connectors_box.setChecked(True)
-        layout.addWidget(connectors_box)
-
-    proton_box = None
-    if show_proton:
-        proton_box = QtWidgets.QCheckBox("Proton 10 (local copy)")
-        proton_box.setChecked(True)
-        layout.addWidget(proton_box)
+    deps_box = None
+    if show_bizhawk_deps:
+        deps_box = QtWidgets.QCheckBox("BizHawk dependencies (Proton 10)")
+        deps_box.setChecked(True)
+        layout.addWidget(deps_box)
 
     shortcut_box = None
-    if show_archipelago or show_bizhawk or show_connectors:
+    if show_archipelago or show_bizhawk:
         shortcut_box = QtWidgets.QCheckBox(
             "Create Desktop shortcuts (Archipelago & BizHawk)"
         )
@@ -562,11 +548,10 @@ def _prompt_setup_choices(
 
     arch = arch_box.isChecked() if arch_box is not None else False
     bizhawk = bizhawk_box.isChecked() if bizhawk_box is not None else False
-    connectors = connectors_box.isChecked() if connectors_box is not None else False
-    proton = proton_box.isChecked() if proton_box is not None else False
+    bizhawk_deps = deps_box.isChecked() if deps_box is not None else False
     shortcuts = shortcut_box.isChecked() if shortcut_box is not None else False
 
-    return arch, bizhawk, connectors, shortcuts, proton
+    return arch, bizhawk, bizhawk_deps, shortcuts
 
 
 def _ensure_apworld_for_extension(ext: str) -> None:
@@ -1325,24 +1310,20 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
         _ensure_steam_root(settings)
         need_arch = _needs_archipelago_download(settings)
         need_bizhawk = _needs_bizhawk_download(settings)
-        need_proton = _needs_proton_download(settings)
-        ap_version = str(settings.get(AP_VERSION_KEY, "") or "")
-        need_connectors = need_bizhawk or _needs_connector_download(settings, ap_version=ap_version)
+        need_bizhawk_deps = need_bizhawk or _needs_proton_download(settings)
 
-        if any((need_arch, need_bizhawk, need_connectors, need_proton)):
-            arch, bizhawk, connectors, shortcuts, proton = _prompt_setup_choices(
+        if any((need_arch, need_bizhawk, need_bizhawk_deps)):
+            arch, bizhawk, bizhawk_deps, shortcuts = _prompt_setup_choices(
                 allow_archipelago_skip=allow_archipelago_skip,
                 show_archipelago=need_arch,
                 show_bizhawk=need_bizhawk,
-                show_connectors=need_connectors,
-                show_proton=need_proton,
+                show_bizhawk_deps=need_bizhawk_deps,
             )
         else:
             arch = False
             bizhawk = False
-            connectors = False
             shortcuts = False
-            proton = False
+            bizhawk_deps = False
 
         download_messages: list[str] = []
 
@@ -1360,12 +1341,10 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
         bizhawk_result: Optional[Tuple[Path, Path, bool]] = None
         bizhawk_result = ensure_bizhawk_and_proton(
             download_selected=bizhawk,
-            download_proton=proton,
+            download_proton=bizhawk_deps,
             create_shortcut=shortcuts,
             download_messages=download_messages,
             settings=settings,
-            stage_connectors=connectors,
-            allow_manual_connector_selection=need_connectors,
         )
         if bizhawk:
             if bizhawk_result is None:

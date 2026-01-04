@@ -14,7 +14,6 @@ from .ap_bizhelper_ap import AP_APPIMAGE_DEFAULT, force_update_appimage, manual_
 from .ap_bizhelper_bizhawk import (
     BIZHAWK_WIN_DIR,
     force_update_bizhawk,
-    force_update_connectors,
     manual_select_bizhawk,
     manual_select_connectors,
 )
@@ -185,7 +184,7 @@ def _build_component_rows() -> list[_ComponentRow]:
             latest_seen=_dash_if_empty(connectors_latest_seen),
             skip_version="—",
             source=ap_connectors_source,
-            force_update=lambda: force_update_connectors(settings),
+            force_update=lambda: manual_select_connectors(settings),
             manual_select=lambda: manual_select_connectors(settings),
         ),
         _ComponentRow(
@@ -194,7 +193,7 @@ def _build_component_rows() -> list[_ComponentRow]:
             latest_seen="pinned",
             skip_version="—",
             source=sni_connectors_source,
-            force_update=lambda: force_update_connectors(settings),
+            force_update=lambda: manual_select_connectors(settings),
             manual_select=lambda: manual_select_connectors(settings),
         ),
     ]
