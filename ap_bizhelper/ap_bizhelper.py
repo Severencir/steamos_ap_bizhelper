@@ -71,6 +71,16 @@ from .ui_utils import (
 
 
 APP_LOGGER = get_app_logger()
+NO_STEAM_DEFAULT_COMMANDS = {"ensure", "uninstall-all", "uninstall-core"}
+
+
+def _split_launcher_args(argv: list[str]) -> tuple[list[str], bool, bool]:
+    user_args = [arg for arg in argv[1:] if not arg.startswith("--appimage")]
+    explicit_no_steam = "--nosteam" in user_args
+    explicit_steam = "--steam" in user_args
+    if explicit_no_steam or explicit_steam:
+        user_args = [arg for arg in user_args if arg not in {"--nosteam", "--steam"}]
+    return user_args, explicit_no_steam, explicit_steam
 
 def _steam_game_id_from_env() -> Optional[str]:
     """Return the Steam game id from common environment keys, if available."""
@@ -1139,10 +1149,21 @@ def main(argv: list[str]) -> int:
         if settings_dirty:
             save_settings(settings)
 
-        user_args = [arg for arg in argv[1:] if not arg.startswith("--appimage")]
-        no_steam = "--nosteam" in user_args
-        if no_steam:
-            user_args = [arg for arg in user_args if arg != "--nosteam"]
+        user_args, explicit_no_steam, explicit_steam = _split_launcher_args(argv)
+        if explicit_no_steam and explicit_steam:
+            APP_LOGGER.log(
+                "Cannot combine --steam and --nosteam.",
+                level="ERROR",
+                include_context=True,
+                mirror_console=True,
+                stream="stderr",
+            )
+            return 1
+
+        patch_arg: Optional[str] = user_args[0] if user_args else None
+        no_steam = explicit_no_steam or (
+            patch_arg in NO_STEAM_DEFAULT_COMMANDS and not explicit_steam
+        )
 
         if not no_steam:
             _capture_steam_appid_if_present(settings)
@@ -1161,10 +1182,8 @@ def main(argv: list[str]) -> int:
                 save_settings(settings)
                 _maybe_relaunch_via_steam(argv, settings)
 
-        patch_arg: Optional[str] = user_args[0] if user_args else None
-
         usage_message = (
-            "Usage: ap_bizhelper.py [--nosteam] "
+            "Usage: ap_bizhelper.py [--nosteam|--steam] "
             "[ensure|utils|uninstall|uninstall-all|uninstall-core]"
         )
 
