@@ -12,6 +12,7 @@ Do not worry about preserving legacy code or compatibility. always assume that w
 Offer unsolicited suggestions or alternatives where reasonable.
 If the repo could benefit from a change to the agents.md file, please make suggestions.
 Prefer modularity where it makes sense.
+When adding new helper scripts or subprocess entrypoints, emit a startup log entry that follows the existing timestamped/contextual logging format so empty logs are avoided on early failure.
 
 This repo is designed to facilitate the use of Archipelago with BizHawk on a Steam Deck–like device.
 The goal is to remove as many user actions as is reasonable, but keep it functional, flexible, and safe.

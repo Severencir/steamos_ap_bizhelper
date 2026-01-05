@@ -46,6 +46,7 @@ from .constants import (
     APPLICATIONS_DIR,
     ARCHIPELAGO_WORLDS_DIR,
     BIZHELPER_APPIMAGE_KEY,
+    BIZHAWK_CLEAR_LD_PRELOAD_KEY,
     BIZHAWK_EXE_KEY,
     BIZHAWK_RUNNER_KEY,
     BIZHAWK_RUNTIME_DOWNLOAD_KEY,
@@ -847,7 +848,78 @@ def _wait_for_rom(patch: Path) -> Optional[Path]:
     return None
 
 
-def _launch_bizhawk(runner: Path, rom: Path) -> None:
+def _systemd_show_unit(unit: str, properties: list[str]) -> Optional[dict[str, str]]:
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        APP_LOGGER.log(
+            "systemctl is not available; cannot query BizHawk runner unit status.",
+            include_context=True,
+        )
+        return None
+    cmd = [systemctl, "--user", "show", unit, f"--property={','.join(properties)}"]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        APP_LOGGER.log(
+            f"Failed to query unit status for {unit}: rc={result.returncode} "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}",
+            include_context=True,
+        )
+        return None
+    data: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        data[key.strip()] = value.strip()
+    return data
+
+
+def _journalctl_tail(unit: str, *, lines: int = 50) -> Optional[str]:
+    journalctl = shutil.which("journalctl")
+    if not journalctl:
+        APP_LOGGER.log(
+            "journalctl is not available; cannot fetch BizHawk runner logs.",
+            include_context=True,
+        )
+        return None
+    cmd = [journalctl, "--user", "-u", unit, "-n", str(lines), "--no-pager"]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        APP_LOGGER.log(
+            f"Failed to read journalctl for {unit}: rc={result.returncode} "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}",
+            include_context=True,
+        )
+        return None
+    return result.stdout.strip()
+
+
+def _check_bizhawk_unit(unit: str) -> Optional[str]:
+    properties = ["ExecMainStatus", "Result", "ExecMainCode"]
+    for _ in range(3):
+        data = _systemd_show_unit(unit, properties)
+        if data is None:
+            return None
+        result = data.get("Result", "")
+        status = data.get("ExecMainStatus", "")
+        if result or status:
+            break
+        time.sleep(0.2)
+    else:
+        return None
+
+    result = data.get("Result", "")
+    status = data.get("ExecMainStatus", "")
+    if result == "success" and (not status or status == "0"):
+        return None
+    if status and status != "0":
+        return f"ExecMainStatus={status} Result={result or '<unknown>'} ExecMainCode={data.get('ExecMainCode','')}"
+    if result and result != "success":
+        return f"Result={result} ExecMainStatus={status or '<unknown>'} ExecMainCode={data.get('ExecMainCode','')}"
+    return None
+
+
+def _launch_bizhawk(settings: dict, runner: Path, rom: Path) -> None:
     print(f"{LOG_PREFIX} Launching BizHawk runner: {runner} {rom}")
     try:
         systemd_run = shutil.which("systemd-run")
@@ -861,6 +933,13 @@ def _launch_bizhawk(runner: Path, rom: Path) -> None:
             subdir="runner",
             env_var=RUNNER_LOG_ENV,
         )
+        clear_preload = bool(settings.get(BIZHAWK_CLEAR_LD_PRELOAD_KEY, True))
+        if clear_preload and env.get("LD_PRELOAD"):
+            APP_LOGGER.log(
+                "Clearing LD_PRELOAD for BizHawk runner launch.",
+                include_context=True,
+            )
+            env.pop("LD_PRELOAD", None)
         unit = f"ap-bizhawk-{os.getpid()}-{int(time.time())}"
         bizhawk_dir = runner.parent
         cmd = [
@@ -888,6 +967,21 @@ def _launch_bizhawk(runner: Path, rom: Path) -> None:
             error_dialog(
                 "Failed to launch BizHawk via systemd-run "
                 f"(unit={unit}, rc={result.returncode}). Output: {snippet}"
+            )
+            return
+        failure_summary = _check_bizhawk_unit(unit)
+        if failure_summary:
+            journal_tail = _journalctl_tail(unit)
+            log_tail = ""
+            if journal_tail:
+                log_tail = "\n\nRecent runner journal:\n" + journal_tail
+                APP_LOGGER.log(
+                    f"BizHawk runner unit {unit} failure details: {failure_summary}\n{journal_tail}",
+                    include_context=True,
+                )
+            error_dialog(
+                "BizHawk runner failed after systemd-run "
+                f"(unit={unit}). {failure_summary}{log_tail}"
             )
     except Exception as exc:  # pragma: no cover - safety net for runtime environments
         error_dialog(f"Failed to launch BizHawk runner: {exc}")
@@ -946,7 +1040,7 @@ def _ensure_steam_root(settings: dict) -> None:
     )
 
 
-def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path]) -> None:
+def _handle_bizhawk_for_patch(settings: dict, patch: Path, runner: Optional[Path]) -> None:
     if runner is None or not runner.is_file():
         print(f"{LOG_PREFIX} BizHawk runner not configured or not executable; skipping auto-launch.")
         return
@@ -977,7 +1071,7 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path]) -> None:
         print(f"{LOG_PREFIX} Behavior 'fallback': launching BizHawk.")
         if not _run_save_migration_helper():
             return
-        _launch_bizhawk(runner, rom)
+        _launch_bizhawk(settings, runner, rom)
         return
     if behavior not in (None, ""):
         print(f"{LOG_PREFIX} Unknown behavior '{behavior}' for .{ext}; doing nothing for safety.")
@@ -986,7 +1080,7 @@ def _handle_bizhawk_for_patch(patch: Path, runner: Optional[Path]) -> None:
     set_ext_behavior(ext, "fallback")
     if not _run_save_migration_helper():
         return
-    _launch_bizhawk(runner, rom)
+    _launch_bizhawk(settings, runner, rom)
 
 
 def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tuple[Optional[Path], Optional[Path]]:
@@ -1112,7 +1206,7 @@ def _run_full_flow(
 
         archipelago_ready = _wait_for_archipelago_ready(appimage)
         if archipelago_ready:
-            _handle_bizhawk_for_patch(patch, runner)
+            _handle_bizhawk_for_patch(settings, patch, runner)
 
         return 0
 
