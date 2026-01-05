@@ -26,6 +26,7 @@ BACKUPS_DIR = DATA_DIR / "backups"
 GAME_SAVES_DIR = DATA_DIR / "saves"
 HELPER_PATH_FILENAME = "helper_path.txt"
 HELPER_PATH_FILE = CONFIG_DIR / HELPER_PATH_FILENAME
+SAVE_HELPER_STAGED_FILENAME = "save_migration_helper.py"
 
 FILE_FILTER_APWORLD = "*.apworld"
 FILE_FILTER_ARCHIVE = "*.zip *.tar.gz"
