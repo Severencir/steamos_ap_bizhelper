@@ -308,7 +308,7 @@ def build_runner(settings: Dict[str, Any], bizhawk_root: Path) -> Path:
         if not helper_source.is_file():
             error_dialog(f"Save migration helper is missing: {helper_source}")
         else:
-            staged = _stage_script(staged_helper_path, helper_source, make_executable=False)
+            staged = _stage_script(staged_helper_path, helper_source, make_executable=True)
             if not staged:
                 error_dialog(f"Failed to stage save migration helper: {staged_helper_path}")
             else:
