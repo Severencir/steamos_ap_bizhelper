@@ -605,49 +605,54 @@ def main(argv: list[str]) -> int:
 
             original_args = list(argv[1:])
             rom_path, ap_lua_arg, emu_args = parse_args(original_args)
+            needs_archipelago = bool(rom_path or ap_lua_arg)
             rom_ext = Path(rom_path).suffix.lower().lstrip(".") if rom_path else ""
             wants_sni = rom_ext == "sfc"
 
-            mount = _find_archipelago_mount()
-            if not mount:
-                _show_error_dialog(
-                    "Archipelago AppImage mount not found.\n\n"
-                    "Please start Archipelago before launching BizHawk so the AppImage mount is available."
-                )
-                return 1
-
-            try:
-                if wants_sni:
-                    connector_path = _resolve_sni_connector(mount)
-                    if not connector_path:
-                        _show_error_dialog("SNI connector not found inside Archipelago AppImage mount.")
-                        return 1
-                else:
-                    connector_path = _resolve_connector_from_arg(mount, ap_lua_arg)
-            except FileNotFoundError as exc:
-                _show_error_dialog(str(exc))
-                return 1
-
             env = _build_runtime_env(runtime_root, bizhawk_root)
-            env[AP_BIZHELPER_CONNECTOR_PATH_ENV] = str(connector_path)
+            entry_lua: Optional[Path] = None
 
-            if wants_sni:
-                sni_path = _resolve_sni(mount)
-                if not sni_path:
-                    _show_error_dialog("SNI binary not found inside Archipelago AppImage mount.")
+            if needs_archipelago:
+                mount = _find_archipelago_mount()
+                if not mount:
+                    _show_error_dialog(
+                        "Archipelago AppImage mount not found.\n\n"
+                        "Please start Archipelago before launching BizHawk so the AppImage mount is available."
+                    )
                     return 1
-                _launch_sni(sni_path, env)
 
-            entry_lua = bizhawk_root / BIZHAWK_ENTRY_LUA_FILENAME
-            if not entry_lua.is_file():
-                _show_error_dialog(f"Missing BizHawk entry Lua script: {entry_lua}")
-                return 1
+                try:
+                    if wants_sni:
+                        connector_path = _resolve_sni_connector(mount)
+                        if not connector_path:
+                            _show_error_dialog("SNI connector not found inside Archipelago AppImage mount.")
+                            return 1
+                    else:
+                        connector_path = _resolve_connector_from_arg(mount, ap_lua_arg)
+                except FileNotFoundError as exc:
+                    _show_error_dialog(str(exc))
+                    return 1
+
+                env[AP_BIZHELPER_CONNECTOR_PATH_ENV] = str(connector_path)
+
+                if wants_sni:
+                    sni_path = _resolve_sni(mount)
+                    if not sni_path:
+                        _show_error_dialog("SNI binary not found inside Archipelago AppImage mount.")
+                        return 1
+                    _launch_sni(sni_path, env)
+
+                entry_lua = bizhawk_root / BIZHAWK_ENTRY_LUA_FILENAME
+                if not entry_lua.is_file():
+                    _show_error_dialog(f"Missing BizHawk entry Lua script: {entry_lua}")
+                    return 1
 
             final_args: list[str] = []
             if rom_path:
                 final_args.append(rom_path)
             final_args.extend(emu_args)
-            final_args.append(f"--lua={entry_lua}")
+            if entry_lua:
+                final_args.append(f"--lua={entry_lua}")
 
             RUNNER_LOGGER.log(
                 f"Launching BizHawk: {bizhawk_exe} {final_args}",
