@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Optional
 
@@ -292,68 +293,83 @@ def _record_pid(settings: dict, pid: int) -> None:
 
 def main(argv: list[str]) -> int:
     with RUNNER_LOGGER.context(RUNNER_MAIN_CONTEXT):
-        settings = _load_settings()
-        bizhawk_exe = ensure_bizhawk_exe()
-        bizhawk_root = bizhawk_exe.parent
-
-        runtime_root = _runtime_root(settings)
-        _validate_runtime(runtime_root)
-
-        original_args = list(argv[1:])
-        rom_path, ap_lua_arg, emu_args = parse_args(original_args)
-        connector_name = _detect_connector_name(ap_lua_arg)
-
-        mount = _find_archipelago_mount()
-        if not mount:
-            error_dialog(
-                "Archipelago AppImage mount not found.\n\n"
-                "Please start Archipelago before launching BizHawk so the AppImage mount is available."
-            )
-            return 1
-
-        try:
-            connector_path = _resolve_connector(mount, connector_name)
-        except FileNotFoundError as exc:
-            error_dialog(str(exc))
-            return 1
-
-        env = _build_runtime_env(runtime_root, bizhawk_root)
-        env[AP_BIZHELPER_CONNECTOR_PATH_ENV] = str(connector_path)
-
-        if connector_name == CONNECTOR_SNI:
-            sni_path = _resolve_sni(mount)
-            if not sni_path:
-                error_dialog("SNI binary not found inside Archipelago AppImage mount.")
-                return 1
-            _launch_sni(sni_path, env)
-
-        entry_lua = bizhawk_root / BIZHAWK_ENTRY_LUA_FILENAME
-        if not entry_lua.is_file():
-            error_dialog(f"Missing BizHawk entry Lua script: {entry_lua}")
-            return 1
-
-        final_args: list[str] = []
-        if rom_path:
-            final_args.append(rom_path)
-        final_args.extend(emu_args)
-        final_args.append(f"--lua={entry_lua}")
-
         RUNNER_LOGGER.log(
-            f"Launching BizHawk: {bizhawk_exe} {final_args}",
+            "BizHawk runner starting.",
             include_context=True,
-            location=COMMAND_LOCATION,
+            location="startup",
         )
+        try:
+            settings = _load_settings()
+            bizhawk_exe = ensure_bizhawk_exe()
+            bizhawk_root = bizhawk_exe.parent
 
-        _stage_cached_launch(settings, original_args)
+            runtime_root = _runtime_root(settings)
+            _validate_runtime(runtime_root)
 
-        proc = subprocess.Popen(
-            [str(bizhawk_exe), *final_args],
-            cwd=str(bizhawk_root),
-            env=env,
-        )
-        _record_pid(settings, proc.pid)
-        time.sleep(0.1)
-        return 0
+            original_args = list(argv[1:])
+            rom_path, ap_lua_arg, emu_args = parse_args(original_args)
+            connector_name = _detect_connector_name(ap_lua_arg)
+
+            mount = _find_archipelago_mount()
+            if not mount:
+                error_dialog(
+                    "Archipelago AppImage mount not found.\n\n"
+                    "Please start Archipelago before launching BizHawk so the AppImage mount is available."
+                )
+                return 1
+
+            try:
+                connector_path = _resolve_connector(mount, connector_name)
+            except FileNotFoundError as exc:
+                error_dialog(str(exc))
+                return 1
+
+            env = _build_runtime_env(runtime_root, bizhawk_root)
+            env[AP_BIZHELPER_CONNECTOR_PATH_ENV] = str(connector_path)
+
+            if connector_name == CONNECTOR_SNI:
+                sni_path = _resolve_sni(mount)
+                if not sni_path:
+                    error_dialog("SNI binary not found inside Archipelago AppImage mount.")
+                    return 1
+                _launch_sni(sni_path, env)
+
+            entry_lua = bizhawk_root / BIZHAWK_ENTRY_LUA_FILENAME
+            if not entry_lua.is_file():
+                error_dialog(f"Missing BizHawk entry Lua script: {entry_lua}")
+                return 1
+
+            final_args: list[str] = []
+            if rom_path:
+                final_args.append(rom_path)
+            final_args.extend(emu_args)
+            final_args.append(f"--lua={entry_lua}")
+
+            RUNNER_LOGGER.log(
+                f"Launching BizHawk: {bizhawk_exe} {final_args}",
+                include_context=True,
+                location=COMMAND_LOCATION,
+            )
+
+            _stage_cached_launch(settings, original_args)
+
+            proc = subprocess.Popen(
+                [str(bizhawk_exe), *final_args],
+                cwd=str(bizhawk_root),
+                env=env,
+            )
+            _record_pid(settings, proc.pid)
+            time.sleep(0.1)
+            return 0
+        except Exception as exc:
+            RUNNER_LOGGER.log(
+                f"Unhandled exception in BizHawk runner: {exc}\n{traceback.format_exc()}",
+                level=LOG_LEVEL_ERROR,
+                include_context=True,
+                location="runner-exception",
+            )
+            error_dialog(f"BizHawk runner crashed unexpectedly: {exc}")
+            return 1
 
 
 if __name__ == "__main__":  # pragma: no cover
