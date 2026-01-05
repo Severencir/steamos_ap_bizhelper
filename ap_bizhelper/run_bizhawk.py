@@ -1,40 +1,157 @@
 #!/usr/bin/env python3
+import contextlib
 import copy
+import contextvars
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
 import traceback
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+from uuid import uuid4
 
-from ap_bizhelper.logging_utils import RUNNER_LOG_ENV, create_component_logger
-from ap_bizhelper.constants import (
-    AP_BIZHELPER_CONNECTOR_PATH_ENV,
-    BIZHAWK_ENTRY_LUA_FILENAME,
-    BIZHAWK_EXE_KEY,
-    BIZHAWK_LAST_LAUNCH_ARGS_KEY,
-    BIZHAWK_LAST_PID_KEY,
-    BIZHAWK_RUNTIME_ROOT_KEY,
-    LOG_PREFIX,
+APP_NAME = "ap-bizhelper"
+AP_BIZHELPER_CONNECTOR_PATH_ENV = "AP_BIZHELPER_CONNECTOR_PATH"
+BIZHAWK_ENTRY_LUA_FILENAME = "ap_bizhelper_entry.lua"
+BIZHAWK_EXE_KEY = "BIZHAWK_EXE"
+BIZHAWK_LAST_LAUNCH_ARGS_KEY = "BIZHAWK_LAST_LAUNCH_ARGS"
+BIZHAWK_LAST_PID_KEY = "BIZHAWK_LAST_PID"
+BIZHAWK_RUNTIME_ROOT_KEY = "BIZHAWK_RUNTIME_ROOT"
+ENCODING_UTF8 = "utf-8"
+LOG_PREFIX = f"[{APP_NAME}]"
+RUN_ID_ENV = "AP_BIZHELPER_LOG_RUN_ID"
+RUNNER_LOG_ENV = "AP_BIZHELPER_RUNNER_LOG_PATH"
+TIMESTAMP_ENV = "AP_BIZHELPER_LOG_TIMESTAMP"
+
+CONFIG_DIR = Path.home() / ".config" / APP_NAME
+DATA_DIR = Path.home() / ".local" / "share" / APP_NAME
+LOG_ROOT = DATA_DIR / "logs"
+INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
+PATH_SETTINGS_FILE = CONFIG_DIR / "path_settings.json"
+STATE_SETTINGS_FILE = CONFIG_DIR / "state_settings.json"
+PATH_SETTINGS_DEFAULTS = {
+    BIZHAWK_RUNTIME_ROOT_KEY: str(DATA_DIR / "runtime_root"),
+}
+STATE_SETTINGS_DEFAULTS = {
+    BIZHAWK_LAST_LAUNCH_ARGS_KEY: [],
+    BIZHAWK_LAST_PID_KEY: "",
+}
+
+BRACKET_CLOSE = "]"
+BRACKET_OPEN = "["
+CONTEXT_SEPARATOR = " > "
+DASH = "-"
+LOG_LEVEL_ERROR = "ERROR"
+LOG_LEVEL_INFO = "INFO"
+LOG_FILE_SUFFIX = ".log"
+SPACE = " "
+UNDERSCORE = "_"
+_CONTEXT_STACK: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
+    "ap_bizhelper_runner_context", default=()
 )
-from ap_bizhelper.ap_bizhelper_config import (
-    ENCODING_UTF8,
-    INSTALL_STATE_FILE,
-    PATH_SETTINGS_DEFAULTS,
-    PATH_SETTINGS_FILE,
-    STATE_SETTINGS_DEFAULTS,
-    STATE_SETTINGS_FILE,
-)
-from ap_bizhelper.dialogs import error_dialog as _shared_error_dialog
+
+_CONFIG_CACHE: dict[Path, dict[str, Any]] = {}
+
+
+def _slugify(label: str) -> str:
+    return label.strip().replace(" ", UNDERSCORE).replace("/", DASH) or "general"
+
+
+class AppLogger:
+    def __init__(
+        self,
+        category: str,
+        *,
+        log_dir: Optional[Path] = None,
+        log_path: Optional[Path] = None,
+        run_id: Optional[str] = None,
+        timestamp: Optional[str] = None,
+    ) -> None:
+        self.timestamp = timestamp or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.run_id = run_id or uuid4().hex[:8]
+        self.category = _slugify(category)
+        base_dir = log_dir or LOG_ROOT
+        base_dir.mkdir(parents=True, exist_ok=True)
+        if log_path:
+            self.path = Path(log_path)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            self.path = (
+                base_dir
+                / f"{self.category}{UNDERSCORE}{self.timestamp}{UNDERSCORE}{self.run_id}{LOG_FILE_SUFFIX}"
+            )
+        self._sequence = 0
+
+    @contextlib.contextmanager
+    def context(self, label: str):
+        stack = _CONTEXT_STACK.get()
+        token = _CONTEXT_STACK.set((*stack, label))
+        try:
+            yield
+        finally:
+            _CONTEXT_STACK.reset(token)
+
+    def _next_entry_id(self) -> str:
+        self._sequence += 1
+        return f"{self.run_id}{DASH}{self._sequence:04d}"
+
+    def _context_label(self) -> str:
+        return CONTEXT_SEPARATOR.join(_CONTEXT_STACK.get())
+
+    def log(
+        self,
+        message: str,
+        *,
+        level: str = LOG_LEVEL_INFO,
+        location: Optional[str] = None,
+        include_context: bool = False,
+    ) -> str:
+        entry_id = self._next_entry_id()
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        context_label = self._context_label()
+        location_id = _slugify(
+            location or (context_label.split(CONTEXT_SEPARATOR)[-1] if context_label else "root")
+        )
+
+        parts = [
+            f"{BRACKET_OPEN}{timestamp}{BRACKET_CLOSE}",
+            f"{BRACKET_OPEN}{entry_id}{BRACKET_CLOSE}",
+            f"{BRACKET_OPEN}{location_id}{BRACKET_CLOSE}",
+            f"{BRACKET_OPEN}{level.upper()}{BRACKET_CLOSE}",
+        ]
+        if include_context and context_label:
+            parts.append(f"{BRACKET_OPEN}ctx:{context_label}{BRACKET_CLOSE}")
+        parts.append(message)
+        line = SPACE.join(parts)
+        with self.path.open("a", encoding=ENCODING_UTF8) as log_file:
+            log_file.write(line + "\n")
+        return entry_id
+
+
+def create_component_logger(
+    category: str,
+    *,
+    env_var: Optional[str] = None,
+    subdir: Optional[str] = None,
+) -> AppLogger:
+    env_path = Path(os.environ[env_var]) if env_var and os.environ.get(env_var) else None
+    return AppLogger(
+        category,
+        log_dir=LOG_ROOT / subdir if subdir else None,
+        log_path=env_path,
+        run_id=os.environ.get(RUN_ID_ENV) or None,
+        timestamp=os.environ.get(TIMESTAMP_ENV) or None,
+    )
 
 COMMAND_LOCATION = "command"
 CONNECTOR_GENERIC = "connector_bizhawk_generic.lua"
 CONNECTOR_SNI = "connector.lua"
 DEFAULT_MOUNT_PREFIX = ".mount_"
 ENV_CONFIG_LOCATION = "env-config"
-LOG_LEVEL_ERROR = "ERROR"
 LUA_ARG_PREFIX = "--lua="
 LUA_EXTENSION = ".lua"
 OPTION_PREFIX = "-"
@@ -46,13 +163,18 @@ SETTINGS_SAVE_LOCATION = "settings-save"
 SNI_DIRNAME = "SNI"
 
 RUNNER_LOGGER = create_component_logger("bizhawk-runner", env_var=RUNNER_LOG_ENV, subdir="runner")
-_CONFIG_CACHE: dict[Path, dict[str, Any]] = {}
 
 
-def error_dialog(msg: str) -> None:
-    """Show an error using PySide6 message boxes."""
+def _show_error_dialog(msg: str) -> None:
     RUNNER_LOGGER.log(f"Error dialog requested: {msg}", level=LOG_LEVEL_ERROR, include_context=True)
-    _shared_error_dialog(msg, title=RUNNER_ERROR_TITLE, logger=RUNNER_LOGGER)
+    zenity = shutil.which("zenity")
+    if zenity and os.environ.get("DISPLAY"):
+        subprocess.run(
+            [zenity, "--error", "--title", RUNNER_ERROR_TITLE, "--text", msg],
+            check=False,
+        )
+        return
+    sys.stderr.write(f"{RUNNER_ERROR_TITLE}: {msg}\n")
 
 def _apply_defaults(settings: dict[str, Any], defaults: dict[str, Any]) -> None:
     for key, value in defaults.items():
@@ -183,7 +305,7 @@ def get_env_or_config(var: str) -> Optional[str]:
 def ensure_bizhawk_exe() -> Path:
     exe = get_env_or_config(BIZHAWK_EXE_KEY)
     if not exe or not Path(exe).is_file():
-        error_dialog(f"{LOG_PREFIX} BIZHAWK_EXE is not set or not a file; cannot launch BizHawk.")
+        _show_error_dialog(f"{LOG_PREFIX} BIZHAWK_EXE is not set or not a file; cannot launch BizHawk.")
         sys.exit(1)
     RUNNER_LOGGER.log(f"Resolved BizHawk launcher script: {exe}", include_context=True)
     return Path(exe)
@@ -230,7 +352,7 @@ def _validate_runtime(runtime_root: Path) -> None:
         missing.append("libgdiplus")
 
     if missing:
-        error_dialog(
+        _show_error_dialog(
             "BizHawk runtime dependencies are missing from runtime_root:\n"
             f"{runtime_root}\n\nMissing: {', '.join(missing)}"
         )
@@ -358,7 +480,7 @@ def _launch_sni(sni_path: Path, env: dict[str, str]) -> None:
             stderr=subprocess.DEVNULL,
         )
     except Exception as exc:
-        error_dialog(f"Failed to launch SNI: {exc}")
+        _show_error_dialog(f"Failed to launch SNI: {exc}")
         sys.exit(1)
 
 
@@ -425,7 +547,7 @@ def main(argv: list[str]) -> int:
 
             runtime_root = _runtime_root()
             if not runtime_root:
-                error_dialog(
+                _show_error_dialog(
                     f"{LOG_PREFIX} BIZHAWK_RUNTIME_ROOT is not set; cannot launch BizHawk."
                 )
                 return 1
@@ -437,7 +559,7 @@ def main(argv: list[str]) -> int:
 
             mount = _find_archipelago_mount()
             if not mount:
-                error_dialog(
+                _show_error_dialog(
                     "Archipelago AppImage mount not found.\n\n"
                     "Please start Archipelago before launching BizHawk so the AppImage mount is available."
                 )
@@ -446,7 +568,7 @@ def main(argv: list[str]) -> int:
             try:
                 connector_path = _resolve_connector(mount, connector_name)
             except FileNotFoundError as exc:
-                error_dialog(str(exc))
+                _show_error_dialog(str(exc))
                 return 1
 
             env = _build_runtime_env(runtime_root, bizhawk_root)
@@ -455,13 +577,13 @@ def main(argv: list[str]) -> int:
             if connector_name == CONNECTOR_SNI:
                 sni_path = _resolve_sni(mount)
                 if not sni_path:
-                    error_dialog("SNI binary not found inside Archipelago AppImage mount.")
+                    _show_error_dialog("SNI binary not found inside Archipelago AppImage mount.")
                     return 1
                 _launch_sni(sni_path, env)
 
             entry_lua = bizhawk_root / BIZHAWK_ENTRY_LUA_FILENAME
             if not entry_lua.is_file():
-                error_dialog(f"Missing BizHawk entry Lua script: {entry_lua}")
+                _show_error_dialog(f"Missing BizHawk entry Lua script: {entry_lua}")
                 return 1
 
             final_args: list[str] = []
@@ -493,7 +615,7 @@ def main(argv: list[str]) -> int:
                 include_context=True,
                 location="runner-exception",
             )
-            error_dialog(f"BizHawk runner crashed unexpectedly: {exc}")
+            _show_error_dialog(f"BizHawk runner crashed unexpectedly: {exc}")
             return 1
 
 
