@@ -56,6 +56,8 @@ Repo structure & low-level flow (minimal highlights)
 - Steam relaunch & shutdown behavior
   - If not running under Steam, ap_bizhelper.py attempts relaunch via steam://rungameid/<appid> using
     cached settings.
+  - Non-GUI CLI commands (`ensure`, `uninstall-all`, `uninstall-core`) default to `--nosteam`; pass
+    `--steam` to force a relaunch through Steam.
   - Shutdown handlers attempt clean BizHawk termination and SaveRAM sync before ending the Steam
     session.
 

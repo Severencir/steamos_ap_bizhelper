@@ -10,6 +10,9 @@ Run the helper directly from source with:
 python -m ap_bizhelper
 ```
 
+CLI subcommands that never open a GUI (currently `ensure`, `uninstall-all`, and `uninstall-core`) default to running
+with `--nosteam`. Use `--steam` to force a Steam relaunch for those commands.
+
 ## Supported platform
 
 ap-bizhelper is only supported on Steam Deck–like devices running SteamOS. Other platforms are untested and unsupported.
