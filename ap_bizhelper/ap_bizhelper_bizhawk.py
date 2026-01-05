@@ -33,6 +33,7 @@ from .constants import (
     BIZHAWK_VERSION_KEY,
     DATA_DIR,
     HELPER_PATH_FILE,
+    SAVE_HELPER_STAGED_FILENAME,
 )
 from .dialogs import (
     question_dialog as _qt_question_dialog,
@@ -255,14 +256,19 @@ def _find_emuhawk_script(root: Path) -> Optional[Path]:
     return None
 
 
-def _stage_runner(target: Path, source: Path) -> bool:
+def _stage_script(target: Path, source: Path, *, make_executable: bool) -> bool:
     try:
         data = source.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         target.write_bytes(data)
-        target.chmod(target.stat().st_mode | 0o111)
+        if make_executable:
+            target.chmod(target.stat().st_mode | 0o111)
         return True
     except Exception:
         return False
+
+
+def _stage_runner(target: Path, source: Path) -> bool:
+    return _stage_script(target, source, make_executable=True)
 
 
 def build_runner(settings: Dict[str, Any], bizhawk_root: Path) -> Path:
@@ -296,15 +302,21 @@ def build_runner(settings: Dict[str, Any], bizhawk_root: Path) -> Path:
         else:
             error_dialog("Missing BizHawk entry Lua resource.")
 
-    helper_path = Path(__file__).with_name(SAVE_HELPER_FILENAME)
-    if not helper_path.is_file():
-        error_dialog(f"Save migration helper is missing: {helper_path}")
-    else:
-        try:
-            HELPER_PATH_FILE.parent.mkdir(parents=True, exist_ok=True)
-            HELPER_PATH_FILE.write_text(str(helper_path), encoding=ENCODING_UTF8)
-        except Exception as exc:
-            error_dialog(f"Failed to write helper path file: {exc}")
+    helper_resource = resources.files(__package__).joinpath(SAVE_HELPER_FILENAME)
+    staged_helper_path = DATA_DIR / SAVE_HELPER_STAGED_FILENAME
+    with resources.as_file(helper_resource) as helper_source:
+        if not helper_source.is_file():
+            error_dialog(f"Save migration helper is missing: {helper_source}")
+        else:
+            staged = _stage_script(staged_helper_path, helper_source, make_executable=False)
+            if not staged:
+                error_dialog(f"Failed to stage save migration helper: {staged_helper_path}")
+            else:
+                try:
+                    HELPER_PATH_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    HELPER_PATH_FILE.write_text(str(staged_helper_path), encoding=ENCODING_UTF8)
+                except Exception as exc:
+                    error_dialog(f"Failed to write helper path file: {exc}")
 
     settings[BIZHAWK_RUNNER_KEY] = str(runner_path)
     _save_settings(settings)

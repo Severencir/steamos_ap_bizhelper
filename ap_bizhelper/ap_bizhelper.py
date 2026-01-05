@@ -1034,12 +1034,16 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
             download_messages=download_messages,
             settings=settings,
         )
+        bizhawk_downloaded = False
         if bizhawk:
             if bizhawk_result is None:
                 raise RuntimeError("BizHawk setup was cancelled or failed.")
-            runner, _, _ = bizhawk_result
+            runner, _, bizhawk_downloaded = bizhawk_result
         elif bizhawk_result is not None:
-            runner, _, _ = bizhawk_result
+            runner, _, bizhawk_downloaded = bizhawk_result
+
+        if bizhawk_downloaded and not _run_save_migration_helper():
+            raise RuntimeError("Save migration helper failed after BizHawk setup.")
 
         runtime_root = ensure_runtime_root(
             settings,
