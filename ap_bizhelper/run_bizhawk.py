@@ -149,7 +149,12 @@ def create_component_logger(
 
 COMMAND_LOCATION = "command"
 CONNECTOR_GENERIC = "connector_bizhawk_generic.lua"
-CONNECTOR_SNI = "connector.lua"
+CONNECTOR_SNI = "Connector.lua"
+CONNECTOR_SNI_FALLBACK = "connector.lua"
+ARCHIPELAGO_ROOT_DIRNAME = "Archipelago"
+ARCHIPELAGO_OPT_DIRNAME = "opt"
+ARCHIPELAGO_SNI_DIRNAME = "SNI"
+ARCHIPELAGO_SNI_LUA_DIRNAME = "lua"
 DEFAULT_MOUNT_PREFIX = ".mount_"
 ENV_CONFIG_LOCATION = "env-config"
 LUA_ARG_PREFIX = "--lua="
@@ -160,8 +165,6 @@ RUNNER_MAIN_CONTEXT = "runner-main"
 SETTINGS_LOAD_LOCATION = "settings-load"
 SETTINGS_LOOKUP_LOCATION = "settings-lookup"
 SETTINGS_SAVE_LOCATION = "settings-save"
-SNI_DIRNAME = "SNI"
-
 RUNNER_LOGGER = create_component_logger("bizhawk-runner", env_var=RUNNER_LOG_ENV, subdir="runner")
 
 
@@ -359,9 +362,7 @@ def _validate_runtime(runtime_root: Path) -> None:
         sys.exit(1)
 
 
-def _detect_connector_name(ap_lua_arg: str | None) -> Optional[str]:
-    """Return the connector filename requested via ``--lua`` (name only)."""
-
+def _parse_lua_arg(ap_lua_arg: str | None) -> Optional[Path]:
     if not ap_lua_arg:
         return None
 
@@ -370,9 +371,7 @@ def _detect_connector_name(ap_lua_arg: str | None) -> Optional[str]:
     else:
         lua_path = ap_lua_arg
 
-    name = Path(lua_path).name
-    # Always honor the requested name, even if it was provided without a .lua suffix.
-    return name if name.endswith(LUA_EXTENSION) else f"{name}{LUA_EXTENSION}"
+    return Path(lua_path)
 
 
 def parse_args(argv):
@@ -429,12 +428,30 @@ def _archipelago_mount_candidates() -> list[Path]:
     return mounts
 
 
-def _expected_connector_path(mount: Path, connector_name: str) -> Path:
-    return mount / "Archipelago" / connector_name
+def _archipelago_root_candidates(mount: Path) -> list[Path]:
+    return [
+        mount / ARCHIPELAGO_OPT_DIRNAME / ARCHIPELAGO_ROOT_DIRNAME,
+        mount / ARCHIPELAGO_ROOT_DIRNAME,
+    ]
 
 
-def _expected_sni_path(mount: Path) -> Path:
-    return mount / "Archipelago" / SNI_DIRNAME / "sni"
+def _expected_connector_path(mount: Path, connector_name: str) -> list[Path]:
+    return [candidate / connector_name for candidate in _archipelago_root_candidates(mount)]
+
+
+def _expected_sni_path(mount: Path) -> list[Path]:
+    return [
+        candidate / ARCHIPELAGO_SNI_DIRNAME / "sni"
+        for candidate in _archipelago_root_candidates(mount)
+    ]
+
+
+def _expected_sni_connector_paths(mount: Path) -> list[Path]:
+    return [
+        candidate / ARCHIPELAGO_SNI_DIRNAME / ARCHIPELAGO_SNI_LUA_DIRNAME / name
+        for candidate in _archipelago_root_candidates(mount)
+        for name in (CONNECTOR_SNI, CONNECTOR_SNI_FALLBACK)
+    ]
 
 
 def _find_archipelago_mount() -> Optional[Path]:
@@ -443,8 +460,12 @@ def _find_archipelago_mount() -> Optional[Path]:
     for candidate in candidates:
         name = candidate.name.lower()
         has_hint = "archip" in name
-        has_connector = _expected_connector_path(candidate, CONNECTOR_GENERIC).is_file()
-        if has_hint or has_connector:
+        has_connector = any(
+            path.is_file() for path in _expected_connector_path(candidate, CONNECTOR_GENERIC)
+        )
+        has_sni = any(path.is_file() for path in _expected_sni_connector_paths(candidate))
+        has_root = any(path.is_dir() for path in _archipelago_root_candidates(candidate))
+        if has_hint or has_connector or has_sni or has_root:
             filtered.append(candidate)
 
     if not filtered:
@@ -454,18 +475,47 @@ def _find_archipelago_mount() -> Optional[Path]:
     return filtered[0]
 
 
-def _resolve_connector(mount: Path, requested: Optional[str]) -> Path:
-    connector_name = requested or CONNECTOR_GENERIC
-    expected = _expected_connector_path(mount, connector_name)
-    if expected.is_file():
-        return expected
-    raise FileNotFoundError(f"Connector not found: {expected}")
+def _resolve_connector_from_arg(mount: Path, ap_lua_arg: str | None) -> Path:
+    lua_path = _parse_lua_arg(ap_lua_arg)
+    if not lua_path:
+        raise FileNotFoundError(
+            "Connector not provided by Archipelago; launch BizHawk from Archipelago for non-SFC ROMs."
+        )
+
+    if lua_path.suffix:
+        if lua_path.suffix.lower() != LUA_EXTENSION:
+            raise FileNotFoundError(f"Connector was not a Lua file: {lua_path}")
+        candidate_paths = [lua_path]
+    else:
+        candidate_paths = [lua_path.with_suffix(LUA_EXTENSION), lua_path]
+
+    candidates: list[Path] = []
+    if lua_path.is_absolute():
+        candidates.extend(candidate_paths)
+    else:
+        for candidate_root in _archipelago_root_candidates(mount):
+            for path in candidate_paths:
+                candidates.append(candidate_root / path)
+        for path in candidate_paths:
+            candidates.append(Path.cwd() / path)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(f"Connector not found: {lua_path}")
+
+
+def _resolve_sni_connector(mount: Path) -> Optional[Path]:
+    for candidate in _expected_sni_connector_paths(mount):
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _resolve_sni(mount: Path) -> Optional[Path]:
-    candidate = _expected_sni_path(mount)
-    if candidate.is_file():
-        return candidate
+    for candidate in _expected_sni_path(mount):
+        if candidate.is_file():
+            return candidate
     return None
 
 
@@ -555,7 +605,8 @@ def main(argv: list[str]) -> int:
 
             original_args = list(argv[1:])
             rom_path, ap_lua_arg, emu_args = parse_args(original_args)
-            connector_name = _detect_connector_name(ap_lua_arg)
+            rom_ext = Path(rom_path).suffix.lower().lstrip(".") if rom_path else ""
+            wants_sni = rom_ext == "sfc"
 
             mount = _find_archipelago_mount()
             if not mount:
@@ -566,7 +617,13 @@ def main(argv: list[str]) -> int:
                 return 1
 
             try:
-                connector_path = _resolve_connector(mount, connector_name)
+                if wants_sni:
+                    connector_path = _resolve_sni_connector(mount)
+                    if not connector_path:
+                        _show_error_dialog("SNI connector not found inside Archipelago AppImage mount.")
+                        return 1
+                else:
+                    connector_path = _resolve_connector_from_arg(mount, ap_lua_arg)
             except FileNotFoundError as exc:
                 _show_error_dialog(str(exc))
                 return 1
@@ -574,7 +631,7 @@ def main(argv: list[str]) -> int:
             env = _build_runtime_env(runtime_root, bizhawk_root)
             env[AP_BIZHELPER_CONNECTOR_PATH_ENV] = str(connector_path)
 
-            if connector_name == CONNECTOR_SNI:
+            if wants_sni:
                 sni_path = _resolve_sni(mount)
                 if not sni_path:
                     _show_error_dialog("SNI binary not found inside Archipelago AppImage mount.")
