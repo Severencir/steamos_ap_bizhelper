@@ -43,6 +43,8 @@ from .ap_bizhelper_config import (
 from .dialog_shim import prepare_dialog_shim_env
 from .constants import (
     AP_APPIMAGE_KEY,
+    AP_WAIT_FOR_EXIT_KEY,
+    AP_WAIT_FOR_EXIT_POLL_SECONDS_KEY,
     APPLICATIONS_DIR,
     ARCHIPELAGO_WORLDS_DIR,
     BIZHELPER_APPIMAGE_KEY,
@@ -818,6 +820,39 @@ def _wait_for_archipelago_ready(appimage: Path, *, timeout: int = 30) -> bool:
     return False
 
 
+def _poll_seconds(value: object, *, default: int) -> int:
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _wait_for_archipelago_exit(settings: dict, appimage: Optional[Path]) -> None:
+    wait_enabled = bool(settings.get(AP_WAIT_FOR_EXIT_KEY, True))
+    if not wait_enabled:
+        return
+
+    if not (_is_archipelago_running() or _is_appimage_mounted(appimage)):
+        return
+
+    poll_seconds = _poll_seconds(
+        settings.get(AP_WAIT_FOR_EXIT_POLL_SECONDS_KEY),
+        default=5,
+    )
+    APP_LOGGER.log(
+        "Waiting for Archipelago to exit before closing ap-bizhelper.",
+        include_context=True,
+        mirror_console=True,
+    )
+    while _is_archipelago_running() or _is_appimage_mounted(appimage):
+        time.sleep(poll_seconds)
+    APP_LOGGER.log(
+        "Archipelago closed; exiting ap-bizhelper.",
+        include_context=True,
+        mirror_console=True,
+    )
+
+
 def _find_matching_rom(patch: Path) -> Optional[Path]:
     if patch.suffix.lower() == ".sfc" and patch.is_file():
         return patch
@@ -1207,6 +1242,8 @@ def _run_full_flow(
         archipelago_ready = _wait_for_archipelago_ready(appimage)
         if archipelago_ready:
             _handle_bizhawk_for_patch(settings, patch, runner)
+
+        _wait_for_archipelago_exit(settings, appimage)
 
         return 0
 
