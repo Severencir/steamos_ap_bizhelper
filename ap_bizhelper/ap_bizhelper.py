@@ -957,11 +957,6 @@ def _check_bizhawk_unit(unit: str) -> Optional[str]:
 def _launch_bizhawk(settings: dict, runner: Path, rom: Path) -> None:
     print(f"{LOG_PREFIX} Launching BizHawk runner: {runner} {rom}")
     try:
-        systemd_run = shutil.which("systemd-run")
-        if not systemd_run:
-            error_dialog("systemd-run is not available; cannot launch BizHawk.")
-            return
-
         env = APP_LOGGER.component_environ(
             env=os.environ.copy(),
             category="bizhawk-runner",
@@ -975,49 +970,40 @@ def _launch_bizhawk(settings: dict, runner: Path, rom: Path) -> None:
                 include_context=True,
             )
             env.pop("LD_PRELOAD", None)
-        unit = f"ap-bizhawk-{os.getpid()}-{int(time.time())}"
-        bizhawk_dir = runner.parent
-        cmd = [
-            systemd_run,
-            "--user",
-            "--unit",
-            unit,
-            "--collect",
-            "--no-block",
-            "--working-directory",
-            str(bizhawk_dir),
-        ]
-        for key, value in env.items():
-            cmd.append(f"--setenv={key}={value}")
-        cmd.append("--")
-        cmd.extend([str(runner), str(rom)])
 
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        output = f"{result.stdout or ''}\n{result.stderr or ''}".strip()
-        snippet = " ".join(output.split()) or "<no output>"
-        if len(snippet) > 200:
-            snippet = f"{snippet[:200]}..."
-        print(f"{LOG_PREFIX} systemd-run unit {unit} rc={result.returncode} output={snippet}")
-        if result.returncode != 0:
-            error_dialog(
-                "Failed to launch BizHawk via systemd-run "
-                f"(unit={unit}, rc={result.returncode}). Output: {snippet}"
-            )
-            return
-        failure_summary = _check_bizhawk_unit(unit)
-        if failure_summary:
-            journal_tail = _journalctl_tail(unit)
+        bizhawk_dir = runner.parent
+        cmd = [str(runner), str(rom)]
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(bizhawk_dir),
+            env=env,
+        )
+        APP_LOGGER.log(
+            f"BizHawk runner started (pid={proc.pid}). BizHawk will be launched by the runner in a detached systemd scope.",
+            include_context=True,
+        )
+
+        # If the runner exits immediately, surface the error and include a small log tail if available.
+        time.sleep(0.2)
+        rc = proc.poll()
+        if rc is not None and rc != 0:
             log_tail = ""
-            if journal_tail:
-                log_tail = "\n\nRecent runner journal:\n" + journal_tail
-                APP_LOGGER.log(
-                    f"BizHawk runner unit {unit} failure details: {failure_summary}\n{journal_tail}",
-                    include_context=True,
-                )
+            log_path = env.get(RUNNER_LOG_ENV)
+            if log_path:
+                try:
+                    path = Path(log_path)
+                    if path.is_file():
+                        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-60:]
+                        if lines:
+                            log_tail = "\n\nRecent runner log:\n" + "\n".join(lines)
+                except Exception:
+                    log_tail = ""
             error_dialog(
-                "BizHawk runner failed after systemd-run "
-                f"(unit={unit}). {failure_summary}{log_tail}"
+                "BizHawk runner exited immediately "
+                f"(rc={rc}).{log_tail}"
             )
+    except FileNotFoundError as exc:
+        error_dialog(f"Failed to launch BizHawk runner: {exc}")
     except Exception as exc:  # pragma: no cover - safety net for runtime environments
         error_dialog(f"Failed to launch BizHawk runner: {exc}")
 

@@ -655,20 +655,79 @@ def main(argv: list[str]) -> int:
                 final_args.append(f"--lua={entry_lua}")
 
             RUNNER_LOGGER.log(
-                f"Launching BizHawk: {bizhawk_exe} {final_args}",
+                f"Launching BizHawk via transient systemd service (Steam-detached): {bizhawk_exe} {final_args}",
                 include_context=True,
                 location=COMMAND_LOCATION,
             )
 
             _stage_cached_launch(original_args)
 
-            proc = subprocess.Popen(
-                [str(bizhawk_exe), *final_args],
-                cwd=str(bizhawk_root),
-                env=env,
+            systemd_run = shutil.which("systemd-run")
+            if not systemd_run:
+                _show_error_dialog(
+                    "systemd-run is not available; cannot launch BizHawk as a detached transient service."
+                )
+                return 1
+
+            # NOTE: We intentionally use a transient *service* unit here rather than a scope.
+            # A scope's processes are launched by systemd-run itself (i.e. systemd-run is the parent),
+            # which keeps BizHawk inside Steam's process tree and makes it vulnerable to Steam's cleanup.
+            # A transient service is spawned by the user service manager, giving BizHawk a detached parent
+            # process and cgroup.
+            #
+            # Transient services run in a "clean" environment by default, so we explicitly pass the
+            # environment we constructed for BizHawk (runtime root, mono config, connector paths, etc.).
+            env_opts: list[str] = []
+            for key, value in sorted(env.items()):
+                env_opts.extend(["-E", f"{key}={value}"])
+
+            unit = f"ap-bizhawk-{os.getpid()}-{int(time.time())}"
+            cmd = [
+                systemd_run,
+                "--user",
+                "--unit",
+                unit,
+                "--collect",
+                "--property=Type=exec",
+                "--working-directory",
+                str(bizhawk_root),
+            ]
+            cmd.extend(env_opts)
+            cmd.extend([
+                "--",
+                str(bizhawk_exe),
+                *final_args,
+            ])
+
+            # Use the runner's own environment for systemd-run (DBus/session access), while BizHawk gets
+            # the explicit env via -E options above.
+            result = subprocess.run(
+                cmd,
+                env=os.environ.copy(),
+                capture_output=True,
+                text=True,
+                check=False,
             )
-            _record_pid(proc.pid)
-            time.sleep(0.1)
+
+            output = f"{result.stdout or ''}\n{result.stderr or ''}".strip()
+            snippet = " ".join(output.split()) or "<no output>"
+            if len(snippet) > 400:
+                snippet = snippet[:400] + "..."
+            RUNNER_LOGGER.log(
+                f"systemd-run service requested (unit={unit}) rc={result.returncode} output={snippet}",
+                include_context=True,
+                location=COMMAND_LOCATION,
+            )
+
+            if result.returncode != 0:
+                _show_error_dialog(
+                    f"Failed to launch BizHawk via systemd-run service (rc={result.returncode}).\n\nOutput:\n{output}"
+                )
+                return 1
+
+            # We no longer have a direct BizHawk PID here (systemd manages the transient service). The save-migration helper
+            # falls back to scanning for BizHawk processes, so clearing the PID is fine.
+            _record_pid(0)
             return 0
         except Exception as exc:
             RUNNER_LOGGER.log(
