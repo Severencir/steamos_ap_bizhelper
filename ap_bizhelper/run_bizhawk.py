@@ -47,6 +47,7 @@ CONTEXT_SEPARATOR = " > "
 DASH = "-"
 LOG_LEVEL_ERROR = "ERROR"
 LOG_LEVEL_INFO = "INFO"
+LOG_LEVEL_WARNING = "WARNING"
 LOG_FILE_SUFFIX = ".log"
 SPACE = " "
 UNDERSCORE = "_"
@@ -159,6 +160,7 @@ DEFAULT_MOUNT_PREFIX = ".mount_"
 ENV_CONFIG_LOCATION = "env-config"
 LUA_ARG_PREFIX = "--lua="
 LUA_EXTENSION = ".lua"
+NO_AP_FLAG = "--noap"
 OPTION_PREFIX = "-"
 RUNNER_ERROR_TITLE = "BizHawk runner error"
 RUNNER_MAIN_CONTEXT = "runner-main"
@@ -375,10 +377,11 @@ def _parse_lua_arg(ap_lua_arg: str | None) -> Optional[Path]:
 
 
 def parse_args(argv):
-    """Return (rom_path, ap_lua_arg, emu_args_no_lua)."""
+    """Return (rom_path, ap_lua_arg, emu_args_no_lua, no_ap)."""
     rom_path = None
     ap_lua_arg = None
     emu_args = []
+    no_ap = False
 
     i = 0
     n = len(argv)
@@ -386,6 +389,9 @@ def parse_args(argv):
         arg = argv[i]
         i += 1
 
+        if arg == NO_AP_FLAG:
+            no_ap = True
+            continue
         if arg.startswith(LUA_ARG_PREFIX):
             ap_lua_arg = arg
         elif arg == "--lua":
@@ -407,11 +413,11 @@ def parse_args(argv):
                 break
 
     RUNNER_LOGGER.log(
-        f"Parsed args rom={rom_path}, ap_lua_arg={ap_lua_arg}, emu_args={emu_args}",
+        f"Parsed args rom={rom_path}, ap_lua_arg={ap_lua_arg}, emu_args={emu_args}, no_ap={no_ap}",
         include_context=True,
         location="parse-args",
     )
-    return rom_path, ap_lua_arg, emu_args
+    return rom_path, ap_lua_arg, emu_args, no_ap
 
 
 def _archipelago_mount_candidates() -> list[Path]:
@@ -519,6 +525,27 @@ def _resolve_sni(mount: Path) -> Optional[Path]:
     return None
 
 
+def _resolve_lua_arg_path(ap_lua_arg: str | None) -> Optional[Path]:
+    lua_path = _parse_lua_arg(ap_lua_arg)
+    if not lua_path:
+        return None
+
+    if lua_path.suffix:
+        candidate_paths = [lua_path]
+    else:
+        candidate_paths = [lua_path.with_suffix(LUA_EXTENSION), lua_path]
+
+    if lua_path.is_absolute():
+        candidates = candidate_paths
+    else:
+        candidates = [Path.cwd() / candidate for candidate in candidate_paths]
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _launch_sni(sni_path: Path, env: dict[str, str]) -> None:
     RUNNER_LOGGER.log(f"Launching SNI: {sni_path}", include_context=True)
     try:
@@ -604,13 +631,25 @@ def main(argv: list[str]) -> int:
             _validate_runtime(runtime_root)
 
             original_args = list(argv[1:])
-            rom_path, ap_lua_arg, emu_args = parse_args(original_args)
-            needs_archipelago = bool(rom_path or ap_lua_arg)
+            rom_path, ap_lua_arg, emu_args, no_ap = parse_args(original_args)
+            needs_archipelago = bool(rom_path or ap_lua_arg) and not no_ap
             rom_ext = Path(rom_path).suffix.lower().lstrip(".") if rom_path else ""
             wants_sni = rom_ext == "sfc"
 
             env = _build_runtime_env(runtime_root, bizhawk_root)
             entry_lua: Optional[Path] = None
+            passthrough_lua_arg: Optional[str] = None
+
+            if no_ap and ap_lua_arg:
+                if _resolve_lua_arg_path(ap_lua_arg):
+                    passthrough_lua_arg = ap_lua_arg
+                else:
+                    RUNNER_LOGGER.log(
+                        f"Lua script not found, skipping: {ap_lua_arg}",
+                        level=LOG_LEVEL_WARNING,
+                        include_context=True,
+                        location="lua-arg",
+                    )
 
             if needs_archipelago:
                 mount = _find_archipelago_mount()
@@ -651,6 +690,8 @@ def main(argv: list[str]) -> int:
             if rom_path:
                 final_args.append(rom_path)
             final_args.extend(emu_args)
+            if passthrough_lua_arg:
+                final_args.append(passthrough_lua_arg)
             if entry_lua:
                 final_args.append(f"--lua={entry_lua}")
 
