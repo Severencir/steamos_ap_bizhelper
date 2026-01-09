@@ -54,10 +54,10 @@ from .constants import (
     BIZHAWK_RUNTIME_DOWNLOAD_KEY,
     BIZHAWK_RUNTIME_ROOT_KEY,
     FILE_FILTER_APWORLD,
-    HELPER_PATH_FILE,
     LOG_PREFIX,
     MIME_PACKAGES_DIR,
     PENDING_RELAUNCH_ARGS_KEY,
+    SAVE_MIGRATION_HELPER_PATH_KEY,
     STEAM_APPID_KEY,
     STEAM_ROOT_PATH_KEY,
     USE_CACHED_RELAUNCH_ARGS_KEY,
@@ -1008,14 +1008,13 @@ def _launch_bizhawk(settings: dict, runner: Path, rom: Path) -> None:
         error_dialog(f"Failed to launch BizHawk runner: {exc}")
 
 
-def _run_save_migration_helper(*, system_dir: Optional[str] = None) -> bool:
-    helper_path: Optional[Path] = None
-    try:
-        if HELPER_PATH_FILE.is_file():
-            helper_path = Path(HELPER_PATH_FILE.read_text(encoding="utf-8").strip())
-    except Exception:
-        helper_path = None
+def _run_save_migration_helper(
+    *, system_dir: Optional[str] = None, settings: Optional[dict] = None
+) -> bool:
+    if settings is None:
+        settings = load_settings()
 
+    helper_path = get_path_setting(settings, SAVE_MIGRATION_HELPER_PATH_KEY)
     if not helper_path or not helper_path.is_file():
         error_dialog("Save migration helper path is missing; cannot continue.")
         return False
@@ -1090,7 +1089,7 @@ def _handle_bizhawk_for_patch(settings: dict, patch: Path, runner: Optional[Path
         return
     if behavior == "fallback":
         print(f"{LOG_PREFIX} Behavior 'fallback': launching BizHawk.")
-        if not _run_save_migration_helper():
+        if not _run_save_migration_helper(settings=settings):
             return
         _launch_bizhawk(settings, runner, rom)
         return
@@ -1099,7 +1098,7 @@ def _handle_bizhawk_for_patch(settings: dict, patch: Path, runner: Optional[Path
         return
     print(f"{LOG_PREFIX} No behavior stored yet; defaulting .{ext} to 'fallback'.")
     set_ext_behavior(ext, "fallback")
-    if not _run_save_migration_helper():
+    if not _run_save_migration_helper(settings=settings):
         return
     _launch_bizhawk(settings, runner, rom)
 
@@ -1157,7 +1156,7 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
         elif bizhawk_result is not None:
             runner, _, bizhawk_downloaded = bizhawk_result
 
-        if bizhawk_downloaded and not _run_save_migration_helper():
+        if bizhawk_downloaded and not _run_save_migration_helper(settings=settings):
             raise RuntimeError("Save migration helper failed after BizHawk setup.")
 
         runtime_root = ensure_runtime_root(

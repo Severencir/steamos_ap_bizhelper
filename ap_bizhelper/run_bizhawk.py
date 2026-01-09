@@ -21,6 +21,7 @@ BIZHAWK_EXE_KEY = "BIZHAWK_EXE"
 BIZHAWK_LAST_LAUNCH_ARGS_KEY = "BIZHAWK_LAST_LAUNCH_ARGS"
 BIZHAWK_LAST_PID_KEY = "BIZHAWK_LAST_PID"
 BIZHAWK_RUNTIME_ROOT_KEY = "BIZHAWK_RUNTIME_ROOT"
+SAVE_MIGRATION_HELPER_PATH_KEY = "SAVE_MIGRATION_HELPER_PATH"
 ENCODING_UTF8 = "utf-8"
 LOG_PREFIX = f"[{APP_NAME}]"
 RUN_ID_ENV = "AP_BIZHELPER_LOG_RUN_ID"
@@ -33,8 +34,10 @@ LOG_ROOT = DATA_DIR / "logs"
 INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
 PATH_SETTINGS_FILE = CONFIG_DIR / "path_settings.json"
 STATE_SETTINGS_FILE = CONFIG_DIR / "state_settings.json"
+SAVE_HELPER_STAGED_FILENAME = "save_migration_helper.py"
 PATH_SETTINGS_DEFAULTS = {
     BIZHAWK_RUNTIME_ROOT_KEY: str(DATA_DIR / "runtime_root"),
+    SAVE_MIGRATION_HELPER_PATH_KEY: str(DATA_DIR / SAVE_HELPER_STAGED_FILENAME),
 }
 STATE_SETTINGS_DEFAULTS = {
     BIZHAWK_LAST_LAUNCH_ARGS_KEY: [],
@@ -292,7 +295,7 @@ def get_env_or_config(var: str) -> Optional[str]:
 
     if var == BIZHAWK_EXE_KEY:
         value = _read_setting_value(INSTALL_STATE_FILE, var)
-    elif var == BIZHAWK_RUNTIME_ROOT_KEY:
+    elif var in (BIZHAWK_RUNTIME_ROOT_KEY, SAVE_MIGRATION_HELPER_PATH_KEY):
         default = PATH_SETTINGS_DEFAULTS.get(var, "")
         value = _read_setting_value(PATH_SETTINGS_FILE, var, default=default)
     else:
@@ -639,6 +642,21 @@ def main(argv: list[str]) -> int:
             env = _build_runtime_env(runtime_root, bizhawk_root)
             entry_lua: Optional[Path] = None
             passthrough_lua_arg: Optional[str] = None
+            helper_path = get_env_or_config(SAVE_MIGRATION_HELPER_PATH_KEY)
+            if helper_path:
+                env[SAVE_MIGRATION_HELPER_PATH_KEY] = str(helper_path)
+                RUNNER_LOGGER.log(
+                    f"Using save migration helper path: {helper_path}",
+                    include_context=True,
+                    location=ENV_CONFIG_LOCATION,
+                )
+            else:
+                RUNNER_LOGGER.log(
+                    "Save migration helper path not configured; migration launcher may fail.",
+                    level=LOG_LEVEL_WARNING,
+                    include_context=True,
+                    location=ENV_CONFIG_LOCATION,
+                )
 
             if no_ap and ap_lua_arg:
                 if _resolve_lua_arg_path(ap_lua_arg):
