@@ -388,35 +388,62 @@ def _relaunch_bizhawk(settings: dict) -> None:
 
 
 def main(argv: list[str]) -> int:
-    settings = load_settings()
-    system_dir = argv[1] if len(argv) > 1 else None
-
-    try:
+    with HELPER_LOGGER.context("main"):
+        HELPER_LOGGER.log(
+            "Save migration helper starting.",
+            include_context=True,
+            location="startup",
+        )
+        settings = load_settings()
+        system_dir = argv[1] if len(argv) > 1 else None
         if system_dir:
-            bizhawk_root = _bizhawk_root(settings)
-            if not bizhawk_root:
-                raise RuntimeError("BizHawk root directory not configured.")
-            _ensure_bizhawk_closed(settings, bizhawk_root)
-            _migrate_system_dir(system_dir, settings=settings)
-            _relaunch_bizhawk(settings)
+            HELPER_LOGGER.log(
+                f"Running targeted migration for system dir: {system_dir}",
+                include_context=True,
+                location="startup",
+            )
         else:
-            bizhawk_root = _bizhawk_root(settings)
-            if not bizhawk_root:
-                raise RuntimeError("BizHawk root directory not configured.")
-            save_root = _save_root(settings)
-            system_dirs = _derive_system_dirs(save_root, bizhawk_root)
-            if not system_dirs:
-                HELPER_LOGGER.log("No system directories found for SaveRAM repair.")
-                return 0
-            for name in system_dirs:
-                _migrate_system_dir(name, settings=settings)
-    except Exception as exc:
-        message = f"SaveRAM migration failed: {exc}"
-        HELPER_LOGGER.log(message, level="ERROR", include_context=True)
-        error_dialog(message)
-        return 1
+            HELPER_LOGGER.log(
+                "Running migration scan for all system directories.",
+                include_context=True,
+                location="startup",
+            )
 
-    return 0
+        try:
+            if system_dir:
+                bizhawk_root = _bizhawk_root(settings)
+                if not bizhawk_root:
+                    raise RuntimeError("BizHawk root directory not configured.")
+                _ensure_bizhawk_closed(settings, bizhawk_root)
+                _migrate_system_dir(system_dir, settings=settings)
+                _relaunch_bizhawk(settings)
+            else:
+                bizhawk_root = _bizhawk_root(settings)
+                if not bizhawk_root:
+                    raise RuntimeError("BizHawk root directory not configured.")
+                save_root = _save_root(settings)
+                system_dirs = _derive_system_dirs(save_root, bizhawk_root)
+                if not system_dirs:
+                    HELPER_LOGGER.log(
+                        "No system directories found for SaveRAM repair.",
+                        include_context=True,
+                        location="migration",
+                    )
+                    return 0
+                HELPER_LOGGER.log(
+                    f"Discovered system directories for SaveRAM repair: {system_dirs}",
+                    include_context=True,
+                    location="migration",
+                )
+                for name in system_dirs:
+                    _migrate_system_dir(name, settings=settings)
+        except Exception as exc:
+            message = f"SaveRAM migration failed: {exc}"
+            HELPER_LOGGER.log(message, level="ERROR", include_context=True)
+            error_dialog(message)
+            return 1
+
+        return 0
 
 
 if __name__ == "__main__":  # pragma: no cover
