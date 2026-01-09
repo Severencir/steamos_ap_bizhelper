@@ -20,6 +20,6 @@ packages = ["ap_bizhelper"]
 [tool.setuptools.package-data]
 ap_bizhelper = [
     "run_bizhawk.py",
-    "ap_bizhelper_entry.lua",
+    "ap_bizhelper_migration_launcher.lua",
     "save_migration_helper.py",
 ]
