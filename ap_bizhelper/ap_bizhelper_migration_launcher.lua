@@ -9,9 +9,9 @@ local function _default_log_file()
     local home = os.getenv("HOME") or ""
     local base = ""
     if home ~= "" then
-        base = home .. "/.local/share/ap-bizhelper/logs/lua_entry"
+        base = home .. "/.local/share/ap-bizhelper/logs/ap_bizhelper_migration_launcher"
     else
-        base = "./logs/lua_entry"
+        base = "./logs/ap_bizhelper_migration_launcher"
     end
     pcall(os.execute, string.format("mkdir -p %q", base))
 

@@ -1011,28 +1011,55 @@ def _launch_bizhawk(settings: dict, runner: Path, rom: Path) -> None:
 def _run_save_migration_helper(
     *, system_dir: Optional[str] = None, settings: Optional[dict] = None
 ) -> bool:
-    if settings is None:
-        settings = load_settings()
+    with APP_LOGGER.context("_run_save_migration_helper"):
+        if settings is None:
+            settings = load_settings()
 
-    helper_path = get_path_setting(settings, SAVE_MIGRATION_HELPER_PATH_KEY)
-    if not helper_path or not helper_path.is_file():
-        error_dialog("Save migration helper path is missing; cannot continue.")
-        return False
+        helper_path = get_path_setting(settings, SAVE_MIGRATION_HELPER_PATH_KEY)
+        if not helper_path or not helper_path.is_file():
+            APP_LOGGER.log(
+                "Save migration helper path is missing or invalid; cannot continue.",
+                include_context=True,
+                mirror_console=True,
+            )
+            error_dialog("Save migration helper path is missing; cannot continue.")
+            return False
 
-    cmd = [str(helper_path)]
-    if system_dir:
-        cmd.append(system_dir)
+        cmd = [str(helper_path)]
+        if system_dir:
+            cmd.append(system_dir)
 
-    try:
-        result = subprocess.run(cmd, check=False)
-    except Exception as exc:
-        error_dialog(f"Failed to run save migration helper: {exc}")
-        return False
+        APP_LOGGER.log(
+            f"Launching save migration helper: {' '.join(cmd)}",
+            include_context=True,
+            mirror_console=True,
+        )
+        if system_dir:
+            APP_LOGGER.log(
+                f"Save migration helper system_dir={system_dir}",
+                include_context=True,
+            )
 
-    if result.returncode != 0:
-        error_dialog("Save migration helper reported an error; BizHawk will not be launched.")
-        return False
-    return True
+        try:
+            result = subprocess.run(cmd, check=False)
+        except Exception as exc:
+            APP_LOGGER.log(
+                f"Save migration helper failed to start: {exc}",
+                include_context=True,
+                mirror_console=True,
+            )
+            error_dialog(f"Failed to run save migration helper: {exc}")
+            return False
+
+        APP_LOGGER.log(
+            f"Save migration helper completed with returncode={result.returncode}",
+            include_context=True,
+            mirror_console=True,
+        )
+        if result.returncode != 0:
+            error_dialog("Save migration helper reported an error; BizHawk will not be launched.")
+            return False
+        return True
 
 
 def _ensure_steam_root(settings: dict) -> None:
