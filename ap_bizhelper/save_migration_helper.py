@@ -68,19 +68,30 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _scan_bizhawk_pids(bizhawk_root: Path) -> set[int]:
+    patterns = []
+    emuhawk_mono = bizhawk_root / "EmuHawkMono.sh"
+    emuhawk_exe = bizhawk_root / "EmuHawk.exe"
+    if emuhawk_mono.exists():
+        patterns.append(str(emuhawk_mono))
+    if emuhawk_exe.exists():
+        patterns.append(str(emuhawk_exe))
+    if not patterns:
+        return set()
+
     pids: set[int] = set()
-    try:
-        output = subprocess.check_output(
-            ["pgrep", "-f", str(bizhawk_root / "EmuHawkMono.sh")],
-            text=True,
-        )
-    except Exception:
-        return pids
-    for line in output.splitlines():
+    for pattern in patterns:
         try:
-            pids.add(int(line.strip()))
-        except ValueError:
+            output = subprocess.check_output(
+                ["pgrep", "-f", pattern],
+                text=True,
+            )
+        except Exception:
             continue
+        for line in output.splitlines():
+            try:
+                pids.add(int(line.strip()))
+            except ValueError:
+                continue
     return pids
 
 
@@ -109,13 +120,15 @@ def _kill_pids(pids: Iterable[int]) -> None:
             continue
 
 
-def _ensure_bizhawk_closed(settings: dict, bizhawk_root: Path) -> None:
+def _ensure_bizhawk_closed(settings: dict, bizhawk_root: Path, *, current_pid: Optional[int] = None) -> None:
     pids: set[int] = set()
     last_pid = str(settings.get(BIZHAWK_LAST_PID_KEY, "") or "")
     if last_pid.isdigit():
         pid = int(last_pid)
         if _pid_alive(pid):
             pids.add(pid)
+    if current_pid and _pid_alive(current_pid):
+        pids.add(current_pid)
 
     pids.update(_scan_bizhawk_pids(bizhawk_root))
 
@@ -387,16 +400,31 @@ def _relaunch_bizhawk(settings: dict) -> None:
     subprocess.Popen([str(runner), *[str(arg) for arg in args]])
 
 
+def _parse_pid_arg(argv: list[str]) -> Optional[int]:
+    if len(argv) < 3:
+        return None
+    candidate = argv[2]
+    if not isinstance(candidate, str):
+        return None
+    if not candidate.isdigit():
+        return None
+    pid = int(candidate)
+    if pid <= 0:
+        return None
+    return pid
+
+
 def main(argv: list[str]) -> int:
     settings = load_settings()
     system_dir = argv[1] if len(argv) > 1 else None
+    current_pid = _parse_pid_arg(argv)
 
     try:
         if system_dir:
             bizhawk_root = _bizhawk_root(settings)
             if not bizhawk_root:
                 raise RuntimeError("BizHawk root directory not configured.")
-            _ensure_bizhawk_closed(settings, bizhawk_root)
+            _ensure_bizhawk_closed(settings, bizhawk_root, current_pid=current_pid)
             _migrate_system_dir(system_dir, settings=settings)
             _relaunch_bizhawk(settings)
         else:

@@ -140,7 +140,17 @@ local function _launch_helper(system_dir)
     if not helper then
         error("Save migration helper path not configured")
     end
-    local cmd = string.format("%q %q &", helper, system_dir)
+    local cmd = string.format("%q %q", helper, system_dir)
+    if type(luanet) == "table" and type(luanet.import_type) == "function" then
+        local Process = luanet.import_type("System.Diagnostics.Process")
+        if Process and Process.GetCurrentProcess then
+            local current = Process.GetCurrentProcess()
+            if current and current.Id then
+                cmd = cmd .. string.format(" %q", tostring(current.Id))
+            end
+        end
+    end
+    cmd = cmd .. " &"
     log("launching save migration helper: " .. cmd)
     os.execute(cmd)
 end
