@@ -122,32 +122,17 @@ local function _shell_ok(result)
     return false
 end
 
-local function _read_first_line(path)
-    local ok, file = pcall(io.open, path, "r")
-    if not ok or not file then
-        return nil
-    end
-    local line = file:read("*l")
-    file:close()
-    if not line or line == "" then
-        return nil
-    end
-    return line
-end
-
 local function _exists(path)
     local cmd = string.format("test -e %q", path)
     return _shell_ok(os.execute(cmd))
 end
 
 local function _helper_path()
-    local home = os.getenv("HOME") or ""
-    if home == "" then
-        return nil
+    local helper_path = os.getenv("SAVE_MIGRATION_HELPER_PATH")
+    if helper_path and helper_path ~= "" then
+        return helper_path
     end
-    local config_dir = join(home, ".config/ap_bizhelper")
-    local helper_path = _read_first_line(join(config_dir, "helper_path.txt"))
-    return helper_path
+    return nil
 end
 
 local function _launch_helper(system_dir)

@@ -32,8 +32,8 @@ from .constants import (
     BIZHAWK_SKIP_VERSION_KEY,
     BIZHAWK_VERSION_KEY,
     DATA_DIR,
-    HELPER_PATH_FILE,
     SAVE_HELPER_STAGED_FILENAME,
+    SAVE_MIGRATION_HELPER_PATH_KEY,
 )
 from .dialogs import (
     question_dialog as _qt_question_dialog,
@@ -312,11 +312,8 @@ def build_runner(settings: Dict[str, Any], bizhawk_root: Path) -> Path:
             if not staged:
                 error_dialog(f"Failed to stage save migration helper: {staged_helper_path}")
             else:
-                try:
-                    HELPER_PATH_FILE.parent.mkdir(parents=True, exist_ok=True)
-                    HELPER_PATH_FILE.write_text(str(staged_helper_path), encoding=ENCODING_UTF8)
-                except Exception as exc:
-                    error_dialog(f"Failed to write helper path file: {exc}")
+                settings[SAVE_MIGRATION_HELPER_PATH_KEY] = str(staged_helper_path)
+                _save_settings(settings)
 
     settings[BIZHAWK_RUNNER_KEY] = str(runner_path)
     _save_settings(settings)
