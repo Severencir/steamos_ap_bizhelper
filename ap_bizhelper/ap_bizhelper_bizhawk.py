@@ -294,10 +294,10 @@ def build_runner(settings: Dict[str, Any], bizhawk_root: Path) -> Path:
     if not staged:
         error_dialog(RUNNER_STAGE_FAILED_TEMPLATE.format(runner=RUNNER_FILENAME))
 
-    entry_resource = resources.files(__package__).joinpath("ap_bizhelper_entry.lua")
+    entry_resource = resources.files(__package__).joinpath("ap_bizhelper_migration_launcher.lua")
     with resources.as_file(entry_resource) as entry_source:
         if entry_source.is_file():
-            target = bizhawk_root / "ap_bizhelper_entry.lua"
+            target = bizhawk_root / "ap_bizhelper_migration_launcher.lua"
             target.write_bytes(entry_source.read_bytes())
         else:
             error_dialog("Missing BizHawk entry Lua resource.")
