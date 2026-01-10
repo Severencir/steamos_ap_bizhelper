@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import os
-import signal
 import shutil
 import sys
 import subprocess
-import time
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 from ap_bizhelper.ap_bizhelper_config import get_path_setting, load_settings
 from ap_bizhelper.constants import (
@@ -30,7 +28,6 @@ from ap_bizhelper.logging_utils import create_component_logger
 
 CONFLICTS_DIRNAME = ".conflicts"
 MIGRATION_LOG_SUBDIR = "saveram"
-MIGRATION_TIMEOUT_SECONDS = 15
 SAVE_RAM_DIRNAME = "SaveRAM"
 TIME_WINDOW_SECONDS = 300
 
@@ -83,102 +80,24 @@ def _scan_bizhawk_pids(bizhawk_root: Path) -> set[int]:
     return pids
 
 
-def _wait_for_exit(pids: Iterable[int], timeout: int) -> set[int]:
-    deadline = time.monotonic() + timeout
-    pending = set(pid for pid in pids if _pid_alive(pid))
-    while pending and time.monotonic() < deadline:
-        time.sleep(0.5)
-        pending = set(pid for pid in pending if _pid_alive(pid))
-    return pending
-
-
-def _terminate_pid(pid: int) -> None:
-    if not _pid_alive(pid):
-        HELPER_LOGGER.log(
-            f"Target EmuHawk pid {pid} already exited.",
-            include_context=True,
-            location="bizhawk-close",
-        )
-        return
-    try:
-        os.kill(pid, signal.SIGTERM)
-        HELPER_LOGGER.log(
-            f"Sent SIGTERM to EmuHawk pid {pid}.",
-            include_context=True,
-            location="bizhawk-close",
-        )
-    except OSError as exc:
-        HELPER_LOGGER.log(
-            f"Failed to SIGTERM EmuHawk pid {pid}: {exc}",
-            include_context=True,
-            location="bizhawk-close",
-        )
-    remaining = _wait_for_exit([pid], MIGRATION_TIMEOUT_SECONDS)
-    if not remaining:
-        HELPER_LOGGER.log(
-            f"EmuHawk pid {pid} exited after SIGTERM.",
-            include_context=True,
-            location="bizhawk-close",
-        )
-        return
-    try:
-        os.kill(pid, signal.SIGKILL)
-        HELPER_LOGGER.log(
-            f"Sent SIGKILL to EmuHawk pid {pid}.",
-            include_context=True,
-            location="bizhawk-close",
-        )
-    except OSError as exc:
-        HELPER_LOGGER.log(
-            f"Failed to SIGKILL EmuHawk pid {pid}: {exc}",
-            include_context=True,
-            location="bizhawk-close",
-        )
-    remaining = _wait_for_exit([pid], MIGRATION_TIMEOUT_SECONDS)
-    if remaining:
-        raise RuntimeError(f"EmuHawk pid {pid} did not exit after SIGKILL.")
-    HELPER_LOGGER.log(
-        f"EmuHawk pid {pid} exited after SIGKILL.",
-        include_context=True,
-        location="bizhawk-close",
-    )
-
-
 def _ensure_bizhawk_closed(
     settings: dict, bizhawk_root: Path, target_pid: Optional[int]
 ) -> None:
-    if target_pid:
-        HELPER_LOGGER.log(
-            f"Target EmuHawk pid requested for termination: {target_pid}",
-            include_context=True,
-            location="bizhawk-close",
-        )
-        _terminate_pid(target_pid)
-    last_pid = str(settings.get(BIZHAWK_LAST_PID_KEY, "") or "")
     while True:
         pids: set[int] = set()
+        last_pid = str(settings.get(BIZHAWK_LAST_PID_KEY, "") or "")
         if last_pid.isdigit():
             pid = int(last_pid)
             if _pid_alive(pid):
                 pids.add(pid)
+        if target_pid and _pid_alive(target_pid):
+            pids.add(target_pid)
         pids.update(_scan_bizhawk_pids(bizhawk_root))
-        if target_pid and target_pid in pids:
-            pids.remove(target_pid)
         if not pids:
             return
 
         HELPER_LOGGER.log(
-            f"Waiting for BizHawk to exit. PIDs={sorted(pids)}",
-            include_context=True,
-            location="bizhawk-close",
-        )
-
-        remaining = _wait_for_exit(pids, MIGRATION_TIMEOUT_SECONDS)
-        if not remaining:
-            return
-
-        HELPER_LOGGER.log(
-            f"BizHawk still running after wait. PIDs={sorted(remaining)}",
+            f"EmuHawk running; migration blocked. PIDs={sorted(pids)}",
             include_context=True,
             location="bizhawk-close",
         )
@@ -186,11 +105,8 @@ def _ensure_bizhawk_closed(
         ensure_qt_available()
         ensure_qt_app()
         choice = question_dialog(
-            title="BizHawk still running",
-            text=(
-                "SaveRAM migration cannot proceed while EmuHawk is running.\n"
-                "Please close BizHawk, then try again."
-            ),
+            title="EmuHawk running",
+            text="EmuHawk is running. Migration cannot proceed while EmuHawk is open.",
             ok_label="Try again",
             cancel_label="Cancel",
         )
@@ -204,11 +120,11 @@ def _ensure_bizhawk_closed(
             continue
 
         HELPER_LOGGER.log(
-            "User cancelled SaveRAM migration because BizHawk is still running.",
+            "User cancelled SaveRAM migration because EmuHawk is still running.",
             include_context=True,
             location="bizhawk-close",
         )
-        raise RuntimeError("SaveRAM migration cancelled while BizHawk was running.")
+        raise RuntimeError("SaveRAM migration cancelled while EmuHawk was running.")
 
 
 def _conflict_root(base: Path, rel_path: Path) -> Path:

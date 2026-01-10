@@ -311,6 +311,8 @@ while os.time() < deadline do
                         _launch_helper(sys, emuhawk_pid)
                         if client ~= nil and type(client.exit) == "function" then
                             pcall(client.exit)
+                        else
+                            log("[warn] client.exit unavailable; cannot request EmuHawk shutdown from Lua")
                         end
                         log("=== MIGRATION CHECK DONE (migration) ===")
                         return
