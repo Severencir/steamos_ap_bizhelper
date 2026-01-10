@@ -59,7 +59,7 @@ local function get_path_for(sysid, typeKey)
 end
 
 local function normalize_path(p)
-    return (p or ""):gsub("\\", "/")
+    return (p or "")
 end
 
 local function is_abs(p)
@@ -106,7 +106,7 @@ end
 local function set_cwd(p)
     if type(luanet) == "table" and type(luanet.import_type) == "function" then
         local Env = luanet.import_type("System.Environment")
-        Env.CurrentDirectory = normalize_path(p):gsub("/", "\\")
+        Env.CurrentDirectory = normalize_path(p)
         return true
     end
     return false
