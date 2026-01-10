@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import os
+import signal
 import shutil
 import sys
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -30,6 +32,9 @@ CONFLICTS_DIRNAME = ".conflicts"
 MIGRATION_LOG_SUBDIR = "saveram"
 SAVE_RAM_DIRNAME = "SaveRAM"
 TIME_WINDOW_SECONDS = 300
+PID_TERM_WAIT_SECONDS = 2.0
+PID_KILL_WAIT_SECONDS = 2.0
+PID_POLL_INTERVAL_SECONDS = 0.1
 
 HELPER_LOGGER = create_component_logger("save-migration", subdir=MIGRATION_LOG_SUBDIR)
 
@@ -63,6 +68,57 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def _wait_for_pid_exit(pid: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _pid_alive(pid):
+            return True
+        time.sleep(PID_POLL_INTERVAL_SECONDS)
+    return not _pid_alive(pid)
+
+
+def _terminate_pid(pid: int) -> None:
+    if not _pid_alive(pid):
+        return
+    HELPER_LOGGER.log(
+        f"Sending SIGTERM to EmuHawk pid={pid}.",
+        include_context=True,
+        location="bizhawk-close",
+    )
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return
+
+    if _wait_for_pid_exit(pid, PID_TERM_WAIT_SECONDS):
+        HELPER_LOGGER.log(
+            f"EmuHawk pid={pid} terminated after SIGTERM.",
+            include_context=True,
+            location="bizhawk-close",
+        )
+        return
+
+    HELPER_LOGGER.log(
+        f"EmuHawk pid={pid} still alive; sending SIGKILL.",
+        include_context=True,
+        location="bizhawk-close",
+    )
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError as exc:
+        raise RuntimeError(f"Failed to SIGKILL EmuHawk pid={pid}: {exc}") from exc
+
+    if _wait_for_pid_exit(pid, PID_KILL_WAIT_SECONDS):
+        HELPER_LOGGER.log(
+            f"EmuHawk pid={pid} terminated after SIGKILL.",
+            include_context=True,
+            location="bizhawk-close",
+        )
+        return
+
+    raise RuntimeError(f"EmuHawk pid={pid} refused to exit after SIGKILL.")
+
+
 def _scan_bizhawk_pids(bizhawk_root: Path) -> set[int]:
     pids: set[int] = set()
     try:
@@ -83,6 +139,9 @@ def _scan_bizhawk_pids(bizhawk_root: Path) -> set[int]:
 def _ensure_bizhawk_closed(
     settings: dict, bizhawk_root: Path, target_pid: Optional[int]
 ) -> None:
+    if target_pid:
+        _terminate_pid(target_pid)
+
     while True:
         pids: set[int] = set()
         last_pid = str(settings.get(BIZHAWK_LAST_PID_KEY, "") or "")

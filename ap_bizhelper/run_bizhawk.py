@@ -16,6 +16,7 @@ from uuid import uuid4
 
 APP_NAME = "ap-bizhelper"
 AP_BIZHELPER_CONNECTOR_PATH_ENV = "AP_BIZHELPER_CONNECTOR_PATH"
+AP_BIZHELPER_EMUHAWK_PID_ENV = "AP_BIZHELPER_EMUHAWK_PID"
 BIZHAWK_ENTRY_LUA_FILENAME = "ap_bizhelper_migration_launcher.lua"
 BIZHAWK_EXE_KEY = "BIZHAWK_EXE"
 BIZHAWK_LAST_LAUNCH_ARGS_KEY = "BIZHAWK_LAST_LAUNCH_ARGS"
@@ -171,6 +172,9 @@ SETTINGS_LOAD_LOCATION = "settings-load"
 SETTINGS_LOOKUP_LOCATION = "settings-lookup"
 SETTINGS_SAVE_LOCATION = "settings-save"
 RUNNER_LOGGER = create_component_logger("bizhawk-runner", env_var=RUNNER_LOG_ENV, subdir="runner")
+
+EMUHAWK_PID_DISCOVERY_ATTEMPTS = 12
+EMUHAWK_PID_DISCOVERY_SLEEP_SECONDS = 0.25
 
 
 def _show_error_dialog(msg: str) -> None:
@@ -614,6 +618,37 @@ def _record_pid(pid: int) -> None:
     _update_state_setting(BIZHAWK_LAST_PID_KEY, str(pid))
 
 
+def _discover_emuhawk_pid(emuhawk_path: Path) -> Optional[int]:
+    for attempt in range(EMUHAWK_PID_DISCOVERY_ATTEMPTS):
+        try:
+            output = subprocess.check_output(
+                ["pgrep", "-f", str(emuhawk_path)],
+                text=True,
+            )
+        except subprocess.CalledProcessError:
+            output = ""
+        except Exception as exc:
+            RUNNER_LOGGER.log(
+                f"Failed to discover EmuHawk pid: {exc}",
+                level=LOG_LEVEL_WARNING,
+                include_context=True,
+                location="pid-discovery",
+            )
+            return None
+        for line in output.splitlines():
+            try:
+                return int(line.strip())
+            except ValueError:
+                continue
+        time.sleep(EMUHAWK_PID_DISCOVERY_SLEEP_SECONDS)
+        RUNNER_LOGGER.log(
+            f"Waiting for EmuHawk pid discovery attempt {attempt + 1}/{EMUHAWK_PID_DISCOVERY_ATTEMPTS}.",
+            include_context=True,
+            location="pid-discovery",
+        )
+    return None
+
+
 def main(argv: list[str]) -> int:
     with RUNNER_LOGGER.context(RUNNER_MAIN_CONTEXT):
         RUNNER_LOGGER.log(
@@ -752,11 +787,20 @@ def main(argv: list[str]) -> int:
                 str(bizhawk_root),
             ]
             cmd.extend(env_opts)
-            cmd.extend([
-                "--",
-                str(bizhawk_exe),
-                *final_args,
-            ])
+            launch_wrapper = (
+                f"export {AP_BIZHELPER_EMUHAWK_PID_ENV}=$$; exec \"$@\""
+            )
+            cmd.extend(
+                [
+                    "--",
+                    "/bin/sh",
+                    "-lc",
+                    launch_wrapper,
+                    "--",
+                    str(bizhawk_exe),
+                    *final_args,
+                ]
+            )
 
             # Use the runner's own environment for systemd-run (DBus/session access), while BizHawk gets
             # the explicit env via -E options above.
@@ -784,9 +828,23 @@ def main(argv: list[str]) -> int:
                 )
                 return 1
 
-            # We no longer have a direct BizHawk PID here (systemd manages the transient service). The save-migration helper
-            # falls back to scanning for BizHawk processes, so clearing the PID is fine.
-            _record_pid(0)
+            emuhawk_path = bizhawk_root / "EmuHawkMono.sh"
+            emuhawk_pid = _discover_emuhawk_pid(emuhawk_path)
+            if emuhawk_pid:
+                RUNNER_LOGGER.log(
+                    f"Discovered EmuHawk pid={emuhawk_pid} for {emuhawk_path}.",
+                    include_context=True,
+                    location="pid-discovery",
+                )
+                _record_pid(emuhawk_pid)
+            else:
+                RUNNER_LOGGER.log(
+                    f"Unable to discover EmuHawk pid for {emuhawk_path}.",
+                    level=LOG_LEVEL_WARNING,
+                    include_context=True,
+                    location="pid-discovery",
+                )
+                _record_pid(0)
             return 0
         except Exception as exc:
             RUNNER_LOGGER.log(

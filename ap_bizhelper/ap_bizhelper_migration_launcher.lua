@@ -136,15 +136,11 @@ local function _helper_path()
 end
 
 local function _get_emuhawk_pid()
-    if client ~= nil and type(client.getpid) == "function" then
-        local ok, pid = pcall(client.getpid)
-        if ok then
-            if type(pid) == "number" and pid > 0 then
-                return pid
-            end
-            if type(pid) == "string" and pid:match("^%d+$") then
-                return tonumber(pid)
-            end
+    local pid_env = os.getenv("AP_BIZHELPER_EMUHAWK_PID")
+    if pid_env and pid_env:match("^%d+$") then
+        local pid = tonumber(pid_env)
+        if pid and pid > 0 then
+            return pid
         end
     end
     return nil
@@ -302,9 +298,9 @@ while os.time() < deadline do
                         end
                         local emuhawk_pid = _get_emuhawk_pid()
                         if emuhawk_pid then
-                            log("captured EmuHawk pid=" .. tostring(emuhawk_pid))
+                            log("captured EmuHawk pid from environment=" .. tostring(emuhawk_pid))
                         else
-                            log("no EmuHawk pid available from client.getpid")
+                            log("[warn] no EmuHawk pid available from AP_BIZHELPER_EMUHAWK_PID")
                         end
                         log("starting migration helper")
                         log("closing emuhawk pending helper relaunch")
