@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import shutil
 import sys
-import signal
 import subprocess
 import time
 from datetime import datetime
@@ -31,7 +30,6 @@ from ap_bizhelper.logging_utils import create_component_logger
 CONFLICTS_DIRNAME = ".conflicts"
 MIGRATION_LOG_SUBDIR = "saveram"
 MIGRATION_TIMEOUT_SECONDS = 15
-SIGTERM_GRACE_SECONDS = 3
 SAVE_RAM_DIRNAME = "SaveRAM"
 TIME_WINDOW_SECONDS = 300
 
@@ -93,60 +91,60 @@ def _wait_for_exit(pids: Iterable[int], timeout: int) -> set[int]:
     return pending
 
 
-def _terminate_pids(pids: Iterable[int]) -> None:
-    for pid in pids:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            continue
-
-
-def _kill_pids(pids: Iterable[int]) -> None:
-    for pid in pids:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            continue
-
-
 def _ensure_bizhawk_closed(settings: dict, bizhawk_root: Path) -> None:
-    pids: set[int] = set()
     last_pid = str(settings.get(BIZHAWK_LAST_PID_KEY, "") or "")
-    if last_pid.isdigit():
-        pid = int(last_pid)
-        if _pid_alive(pid):
-            pids.add(pid)
+    while True:
+        pids: set[int] = set()
+        if last_pid.isdigit():
+            pid = int(last_pid)
+            if _pid_alive(pid):
+                pids.add(pid)
+        pids.update(_scan_bizhawk_pids(bizhawk_root))
+        if not pids:
+            return
 
-    pids.update(_scan_bizhawk_pids(bizhawk_root))
-
-    if not pids:
-        return
-
-    HELPER_LOGGER.log(
-        f"Waiting for BizHawk to exit. PIDs={sorted(pids)}",
-        include_context=True,
-        location="bizhawk-close",
-    )
-
-    remaining = _wait_for_exit(pids, MIGRATION_TIMEOUT_SECONDS)
-    if not remaining:
-        return
-
-    HELPER_LOGGER.log(
-        f"BizHawk still running; sending SIGTERM to {sorted(remaining)}",
-        include_context=True,
-        location="bizhawk-close",
-    )
-    _terminate_pids(remaining)
-    remaining = _wait_for_exit(remaining, SIGTERM_GRACE_SECONDS)
-    if remaining:
         HELPER_LOGGER.log(
-            f"BizHawk still running; sending SIGKILL to {sorted(remaining)}",
+            f"Waiting for BizHawk to exit. PIDs={sorted(pids)}",
             include_context=True,
             location="bizhawk-close",
         )
-        _kill_pids(remaining)
-        _wait_for_exit(remaining, SIGTERM_GRACE_SECONDS)
+
+        remaining = _wait_for_exit(pids, MIGRATION_TIMEOUT_SECONDS)
+        if not remaining:
+            return
+
+        HELPER_LOGGER.log(
+            f"BizHawk still running after wait. PIDs={sorted(remaining)}",
+            include_context=True,
+            location="bizhawk-close",
+        )
+
+        ensure_qt_available()
+        ensure_qt_app()
+        choice = question_dialog(
+            title="BizHawk still running",
+            text=(
+                "SaveRAM migration cannot proceed while EmuHawk is running.\n"
+                "Please close BizHawk, then try again."
+            ),
+            ok_label="Try again",
+            cancel_label="Cancel",
+        )
+
+        if choice == "ok":
+            HELPER_LOGGER.log(
+                "User chose to try BizHawk wait again.",
+                include_context=True,
+                location="bizhawk-close",
+            )
+            continue
+
+        HELPER_LOGGER.log(
+            "User cancelled SaveRAM migration because BizHawk is still running.",
+            include_context=True,
+            location="bizhawk-close",
+        )
+        raise RuntimeError("SaveRAM migration cancelled while BizHawk was running.")
 
 
 def _conflict_root(base: Path, rel_path: Path) -> Path:
