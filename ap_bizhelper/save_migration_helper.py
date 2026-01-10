@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import shutil
 import sys
 import subprocess
@@ -91,7 +92,68 @@ def _wait_for_exit(pids: Iterable[int], timeout: int) -> set[int]:
     return pending
 
 
-def _ensure_bizhawk_closed(settings: dict, bizhawk_root: Path) -> None:
+def _terminate_pid(pid: int) -> None:
+    if not _pid_alive(pid):
+        HELPER_LOGGER.log(
+            f"Target EmuHawk pid {pid} already exited.",
+            include_context=True,
+            location="bizhawk-close",
+        )
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+        HELPER_LOGGER.log(
+            f"Sent SIGTERM to EmuHawk pid {pid}.",
+            include_context=True,
+            location="bizhawk-close",
+        )
+    except OSError as exc:
+        HELPER_LOGGER.log(
+            f"Failed to SIGTERM EmuHawk pid {pid}: {exc}",
+            include_context=True,
+            location="bizhawk-close",
+        )
+    remaining = _wait_for_exit([pid], MIGRATION_TIMEOUT_SECONDS)
+    if not remaining:
+        HELPER_LOGGER.log(
+            f"EmuHawk pid {pid} exited after SIGTERM.",
+            include_context=True,
+            location="bizhawk-close",
+        )
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+        HELPER_LOGGER.log(
+            f"Sent SIGKILL to EmuHawk pid {pid}.",
+            include_context=True,
+            location="bizhawk-close",
+        )
+    except OSError as exc:
+        HELPER_LOGGER.log(
+            f"Failed to SIGKILL EmuHawk pid {pid}: {exc}",
+            include_context=True,
+            location="bizhawk-close",
+        )
+    remaining = _wait_for_exit([pid], MIGRATION_TIMEOUT_SECONDS)
+    if remaining:
+        raise RuntimeError(f"EmuHawk pid {pid} did not exit after SIGKILL.")
+    HELPER_LOGGER.log(
+        f"EmuHawk pid {pid} exited after SIGKILL.",
+        include_context=True,
+        location="bizhawk-close",
+    )
+
+
+def _ensure_bizhawk_closed(
+    settings: dict, bizhawk_root: Path, target_pid: Optional[int]
+) -> None:
+    if target_pid:
+        HELPER_LOGGER.log(
+            f"Target EmuHawk pid requested for termination: {target_pid}",
+            include_context=True,
+            location="bizhawk-close",
+        )
+        _terminate_pid(target_pid)
     last_pid = str(settings.get(BIZHAWK_LAST_PID_KEY, "") or "")
     while True:
         pids: set[int] = set()
@@ -100,6 +162,8 @@ def _ensure_bizhawk_closed(settings: dict, bizhawk_root: Path) -> None:
             if _pid_alive(pid):
                 pids.add(pid)
         pids.update(_scan_bizhawk_pids(bizhawk_root))
+        if target_pid and target_pid in pids:
+            pids.remove(target_pid)
         if not pids:
             return
 
@@ -394,6 +458,20 @@ def main(argv: list[str]) -> int:
         )
         settings = load_settings()
         system_dir = argv[1] if len(argv) > 1 else None
+        target_pid: Optional[int] = None
+        if len(argv) > 2:
+            try:
+                candidate = int(argv[2])
+                if candidate <= 0:
+                    raise ValueError("PID must be positive")
+                target_pid = candidate
+            except ValueError as exc:
+                raise RuntimeError(f"Invalid EmuHawk pid argument: {argv[2]}") from exc
+            HELPER_LOGGER.log(
+                f"Received EmuHawk pid argument: {target_pid}",
+                include_context=True,
+                location="startup",
+            )
         if system_dir:
             HELPER_LOGGER.log(
                 f"Running targeted migration for system dir: {system_dir}",
@@ -412,7 +490,7 @@ def main(argv: list[str]) -> int:
                 bizhawk_root = _bizhawk_root(settings)
                 if not bizhawk_root:
                     raise RuntimeError("BizHawk root directory not configured.")
-                _ensure_bizhawk_closed(settings, bizhawk_root)
+                _ensure_bizhawk_closed(settings, bizhawk_root, target_pid)
                 _migrate_system_dir(system_dir, settings=settings)
                 _relaunch_bizhawk(settings)
             else:

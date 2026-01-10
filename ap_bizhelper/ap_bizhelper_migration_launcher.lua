@@ -135,12 +135,32 @@ local function _helper_path()
     return nil
 end
 
-local function _launch_helper(system_dir)
+local function _get_emuhawk_pid()
+    if client ~= nil and type(client.getpid) == "function" then
+        local ok, pid = pcall(client.getpid)
+        if ok then
+            if type(pid) == "number" and pid > 0 then
+                return pid
+            end
+            if type(pid) == "string" and pid:match("^%d+$") then
+                return tonumber(pid)
+            end
+        end
+    end
+    return nil
+end
+
+local function _launch_helper(system_dir, pid)
     local helper = _helper_path()
     if not helper then
         error("Save migration helper path not configured")
     end
-    local cmd = string.format("%q %q &", helper, system_dir)
+    local cmd
+    if pid then
+        cmd = string.format("%q %q %d &", helper, system_dir, pid)
+    else
+        cmd = string.format("%q %q &", helper, system_dir)
+    end
     log("launching save migration helper: " .. cmd)
     os.execute(cmd)
 end
@@ -280,9 +300,15 @@ while os.time() < deadline do
                         if status == "BROKEN" then
                             log(string.format("[warn] broken symlink target=%s resolved=%s", tostring(target), tostring(abs)))
                         end
+                        local emuhawk_pid = _get_emuhawk_pid()
+                        if emuhawk_pid then
+                            log("captured EmuHawk pid=" .. tostring(emuhawk_pid))
+                        else
+                            log("no EmuHawk pid available from client.getpid")
+                        end
                         log("starting migration helper")
                         log("closing emuhawk pending helper relaunch")
-                        _launch_helper(sys)
+                        _launch_helper(sys, emuhawk_pid)
                         if client ~= nil and type(client.exit) == "function" then
                             pcall(client.exit)
                         end
