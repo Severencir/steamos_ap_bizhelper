@@ -1,6 +1,9 @@
 # TODO
 
 - Add a settings-map dialog helper function for the UI.
+- Fix inconsistent file select dialog behavior between app based and shim based.
+- Normalize log names.
+- Modify migration helper and launcher to support saveram dirs not named SaveRAM. Ensure that save dir tree reflects this.
 - Fix BizHawk SaveRAM migration logic.
 - Implement rollback support.
 - Make BizHawk deps separate checkboxes in the downloads dialog and prompt to select independently for each.
