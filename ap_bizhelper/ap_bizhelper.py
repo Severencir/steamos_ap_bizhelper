@@ -12,7 +12,7 @@ from urllib.parse import quote, unquote, urlparse
 from pathlib import Path
 from typing import Optional, Tuple
 
-from .ap_bizhelper_ap import AP_APPIMAGE_DEFAULT, ensure_appimage
+from .ap_bizhelper_ap import ensure_appimage
 from .dialogs import (
     enable_dialog_gamepad as _enable_dialog_gamepad,
     ensure_qt_app as _ensure_qt_app,
@@ -43,11 +43,13 @@ from .ap_bizhelper_config import (
 from .dialog_shim import prepare_dialog_shim_env
 from .constants import (
     AP_APPIMAGE_KEY,
+    AP_APPIMAGE_DEFAULT,
     AP_WAIT_FOR_EXIT_KEY,
     AP_WAIT_FOR_EXIT_POLL_SECONDS_KEY,
     APPLICATIONS_DIR,
     ARCHIPELAGO_WORLDS_DIR,
     BIZHELPER_APPIMAGE_KEY,
+    BIZHELPER_APPIMAGE_DEFAULT,
     BIZHAWK_CLEAR_LD_PRELOAD_KEY,
     BIZHAWK_EXE_KEY,
     BIZHAWK_RUNNER_KEY,
@@ -126,30 +128,11 @@ def _capture_bizhelper_appimage(settings: dict) -> None:
     """Persist the current AppImage path into settings when available."""
 
     with APP_LOGGER.context("_capture_bizhelper_appimage"):
-        appimage_value = os.environ.get("APPIMAGE")
-        appimage_path: Optional[Path] = None
-
-        if appimage_value:
-            appimage_path = Path(appimage_value)
-        else:
-            argv_path = Path(sys.argv[0]).resolve()
-            if argv_path.is_file():
-                appimage_path = argv_path
-
+        appimage_path = _current_appimage_path()
         if not appimage_path:
             return
 
-        cached_path = str(settings.get(BIZHELPER_APPIMAGE_KEY) or "")
-        new_path = str(appimage_path)
-        if cached_path == new_path:
-            return
-
-        settings[BIZHELPER_APPIMAGE_KEY] = new_path
-        save_settings(settings)
-        APP_LOGGER.log(
-            f"Captured ap-bizhelper AppImage path: {new_path}",
-            include_context=True,
-        )
+        _stage_bizhelper_appimage(settings, appimage_path)
 
 
 def _require_bizhelper_appimage(settings: dict, action: str) -> bool:
@@ -170,6 +153,98 @@ def _require_bizhelper_appimage(settings: dict, action: str) -> bool:
         return False
 
     return True
+
+
+def _bizhelper_appimage_target(settings: dict) -> Path:
+    target = BIZHELPER_APPIMAGE_DEFAULT
+    if str(settings.get(BIZHELPER_APPIMAGE_KEY) or "") != str(target):
+        settings[BIZHELPER_APPIMAGE_KEY] = str(target)
+        save_settings(settings)
+    return target
+
+
+def _stage_bizhelper_appimage(settings: dict, appimage_path: Path) -> Optional[Path]:
+    with APP_LOGGER.context("_stage_bizhelper_appimage"):
+        if not appimage_path.is_file():
+            return None
+
+        target = _bizhelper_appimage_target(settings)
+        try:
+            if target.exists() and target.samefile(appimage_path):
+                return target
+        except Exception:
+            pass
+
+        try:
+            if target.resolve() == appimage_path.resolve():
+                return target
+        except Exception:
+            pass
+
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(appimage_path, target)
+            target.chmod(target.stat().st_mode | 0o111)
+        except Exception as exc:
+            APP_LOGGER.log(
+                f"Failed to stage ap-bizhelper AppImage: {exc}",
+                include_context=True,
+                level="ERROR",
+                mirror_console=True,
+                stream="stderr",
+            )
+            return None
+
+        settings[BIZHELPER_APPIMAGE_KEY] = str(target)
+        save_settings(settings)
+        APP_LOGGER.log(
+            f"Staged ap-bizhelper AppImage to {target}",
+            include_context=True,
+            mirror_console=True,
+        )
+        return target
+
+
+def _current_appimage_path() -> Optional[Path]:
+    appimage_value = os.environ.get("APPIMAGE")
+    if appimage_value:
+        return Path(appimage_value)
+    try:
+        argv_path = Path(sys.argv[0]).resolve()
+        if argv_path.is_file() and argv_path.suffix.lower() == ".appimage":
+            return argv_path
+    except Exception:
+        return None
+    return None
+
+
+def _maybe_relaunch_from_staged_appimage(settings: dict, argv: list[str]) -> bool:
+    with APP_LOGGER.context("_maybe_relaunch_from_staged_appimage"):
+        source = _current_appimage_path()
+        if not source or not source.is_file():
+            return False
+
+        target = _stage_bizhelper_appimage(settings, source)
+        if not target or not target.is_file():
+            return False
+
+        try:
+            if target.samefile(source):
+                return False
+        except Exception:
+            try:
+                if target.resolve() == source.resolve():
+                    return False
+            except Exception:
+                pass
+
+        APP_LOGGER.log(
+            f"Relaunching from staged AppImage at {target}",
+            include_context=True,
+            mirror_console=True,
+        )
+        subprocess.Popen([str(target), *argv[1:]], env=os.environ.copy())
+        return True
 
 
 def _get_known_steam_appid(settings: dict) -> Optional[str]:
@@ -524,18 +599,11 @@ def _ensure_apworld_for_extension(ext: str) -> None:
 def _association_exec_command() -> str:
     """Return the Exec command for desktop entries."""
 
-    appimage_env = os.environ.get("APPIMAGE")
-    if appimage_env:
-        appimage_path = Path(appimage_env)
-        if appimage_path.is_file():
-            return f"{shlex.quote(str(appimage_path))} %u"
-
-    try:
-        candidate = Path(sys.argv[0]).resolve()
-        if candidate.is_file():
-            return f"{shlex.quote(str(candidate))} %u"
-    except Exception:
-        pass
+    settings = load_settings()
+    appimage_value = str(settings.get(BIZHELPER_APPIMAGE_KEY) or BIZHELPER_APPIMAGE_DEFAULT)
+    appimage_path = Path(appimage_value)
+    if appimage_path.is_file():
+        return f"{shlex.quote(str(appimage_path))} %u"
 
     return f"{shlex.quote(sys.executable)} -m ap_bizhelper %u"
 
@@ -1268,6 +1336,8 @@ def main(argv: list[str]) -> int:
         except RuntimeError:
             return 1
         settings = load_settings()
+        if _maybe_relaunch_from_staged_appimage(settings, argv):
+            return 0
         _capture_bizhelper_appimage(settings)
         ensure_local_action_scripts(settings)
 

@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 import contextlib
-import copy
 import contextvars
-import json
 import os
 import shutil
 import subprocess
@@ -14,36 +12,25 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
-APP_NAME = "ap-bizhelper"
-AP_BIZHELPER_CONNECTOR_PATH_ENV = "AP_BIZHELPER_CONNECTOR_PATH"
+from .ap_bizhelper_config import get_path_setting, load_settings, save_settings
+from .constants import (
+    AP_BIZHELPER_CONNECTOR_PATH_ENV,
+    BIZHAWK_ENTRY_LUA_FILENAME,
+    BIZHAWK_ENTRY_LUA_PATH_KEY,
+    BIZHAWK_EXE_KEY,
+    BIZHAWK_LAST_LAUNCH_ARGS_KEY,
+    BIZHAWK_LAST_PID_KEY,
+    BIZHAWK_RUNTIME_ROOT_KEY,
+    LOG_PREFIX,
+    LOG_ROOT,
+    SAVE_MIGRATION_HELPER_PATH_KEY,
+)
+
 AP_BIZHELPER_EMUHAWK_PID_ENV = "AP_BIZHELPER_EMUHAWK_PID"
-BIZHAWK_ENTRY_LUA_FILENAME = "ap_bizhelper_migration_launcher.lua"
-BIZHAWK_EXE_KEY = "BIZHAWK_EXE"
-BIZHAWK_LAST_LAUNCH_ARGS_KEY = "BIZHAWK_LAST_LAUNCH_ARGS"
-BIZHAWK_LAST_PID_KEY = "BIZHAWK_LAST_PID"
-BIZHAWK_RUNTIME_ROOT_KEY = "BIZHAWK_RUNTIME_ROOT"
-SAVE_MIGRATION_HELPER_PATH_KEY = "SAVE_MIGRATION_HELPER_PATH"
 ENCODING_UTF8 = "utf-8"
-LOG_PREFIX = f"[{APP_NAME}]"
 RUN_ID_ENV = "AP_BIZHELPER_LOG_RUN_ID"
 RUNNER_LOG_ENV = "AP_BIZHELPER_RUNNER_LOG_PATH"
 TIMESTAMP_ENV = "AP_BIZHELPER_LOG_TIMESTAMP"
-
-CONFIG_DIR = Path.home() / ".config" / APP_NAME
-DATA_DIR = Path.home() / ".local" / "share" / APP_NAME
-LOG_ROOT = DATA_DIR / "logs"
-INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
-PATH_SETTINGS_FILE = CONFIG_DIR / "path_settings.json"
-STATE_SETTINGS_FILE = CONFIG_DIR / "state_settings.json"
-SAVE_HELPER_STAGED_FILENAME = "save_migration_helper.py"
-PATH_SETTINGS_DEFAULTS = {
-    BIZHAWK_RUNTIME_ROOT_KEY: str(DATA_DIR / "runtime_root"),
-    SAVE_MIGRATION_HELPER_PATH_KEY: str(DATA_DIR / SAVE_HELPER_STAGED_FILENAME),
-}
-STATE_SETTINGS_DEFAULTS = {
-    BIZHAWK_LAST_LAUNCH_ARGS_KEY: [],
-    BIZHAWK_LAST_PID_KEY: "",
-}
 
 BRACKET_CLOSE = "]"
 BRACKET_OPEN = "["
@@ -59,7 +46,7 @@ _CONTEXT_STACK: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar
     "ap_bizhelper_runner_context", default=()
 )
 
-_CONFIG_CACHE: dict[Path, dict[str, Any]] = {}
+_SETTINGS_CACHE: Optional[dict[str, Any]] = None
 
 
 def _slugify(label: str) -> str:
@@ -188,102 +175,20 @@ def _show_error_dialog(msg: str) -> None:
         return
     sys.stderr.write(f"{RUNNER_ERROR_TITLE}: {msg}\n")
 
-def _apply_defaults(settings: dict[str, Any], defaults: dict[str, Any]) -> None:
-    for key, value in defaults.items():
-        if key not in settings:
-            settings[key] = copy.deepcopy(value)
-
-
-def _load_json_file(path: Path) -> dict[str, Any]:
-    if path in _CONFIG_CACHE:
-        return _CONFIG_CACHE[path]
-
-    if not path.exists():
-        RUNNER_LOGGER.log(
-            f"Settings file missing: {path}",
-            include_context=True,
-            location=SETTINGS_LOAD_LOCATION,
-        )
-        data: dict[str, Any] = {}
-        _CONFIG_CACHE[path] = data
-        return data
-
-    try:
-        with path.open("r", encoding=ENCODING_UTF8) as handle:
-            data = json.load(handle)
-        if not isinstance(data, dict):
+def _settings() -> dict[str, Any]:
+    global _SETTINGS_CACHE
+    if _SETTINGS_CACHE is None:
+        try:
+            _SETTINGS_CACHE = load_settings()
+        except Exception as exc:
             RUNNER_LOGGER.log(
-                f"Settings file {path} did not contain a JSON object; treating as empty.",
+                f"Failed to read shared settings: {exc}\n{traceback.format_exc()}",
                 level=LOG_LEVEL_ERROR,
                 include_context=True,
                 location=SETTINGS_LOAD_LOCATION,
             )
-            data = {}
-    except Exception as exc:
-        RUNNER_LOGGER.log(
-            f"Failed to read settings file {path}: {exc}\n{traceback.format_exc()}",
-            level=LOG_LEVEL_ERROR,
-            include_context=True,
-            location=SETTINGS_LOAD_LOCATION,
-        )
-        data = {}
-
-    _CONFIG_CACHE[path] = data
-    return data
-
-
-def _save_json_file(path: Path, data: dict[str, Any]) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        with tmp.open("w", encoding=ENCODING_UTF8) as handle:
-            json.dump(data, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        tmp.replace(path)
-        _CONFIG_CACHE[path] = data
-        RUNNER_LOGGER.log(
-            f"Saved settings file: {path}",
-            include_context=True,
-            location=SETTINGS_SAVE_LOCATION,
-        )
-    except Exception as exc:
-        RUNNER_LOGGER.log(
-            f"Failed to save settings file {path}: {exc}\n{traceback.format_exc()}",
-            level=LOG_LEVEL_ERROR,
-            include_context=True,
-            location=SETTINGS_SAVE_LOCATION,
-        )
-        raise
-
-
-def _read_setting_value(path: Path, key: str, default: Any = None) -> Any:
-    settings = _load_json_file(path)
-    if not settings:
-        settings = {}
-    value = settings.get(key, default)
-    if value not in (None, ""):
-        RUNNER_LOGGER.log(
-            f"Loaded {key} from {path}: {value}",
-            include_context=True,
-            location=SETTINGS_LOOKUP_LOCATION,
-        )
-        return value
-
-    if default not in (None, ""):
-        RUNNER_LOGGER.log(
-            f"Using default for {key}: {default}",
-            include_context=True,
-            location=SETTINGS_LOOKUP_LOCATION,
-        )
-        return default
-
-    RUNNER_LOGGER.log(
-        f"No configured value found for {key} in {path}.",
-        level=LOG_LEVEL_ERROR,
-        include_context=True,
-        location=SETTINGS_LOOKUP_LOCATION,
-    )
-    return None
+            _SETTINGS_CACHE = {}
+    return _SETTINGS_CACHE
 
 
 def get_env_or_config(var: str) -> Optional[str]:
@@ -297,21 +202,27 @@ def get_env_or_config(var: str) -> Optional[str]:
         )
         return value
 
-    if var == BIZHAWK_EXE_KEY:
-        value = _read_setting_value(INSTALL_STATE_FILE, var)
-    elif var in (BIZHAWK_RUNTIME_ROOT_KEY, SAVE_MIGRATION_HELPER_PATH_KEY):
-        default = PATH_SETTINGS_DEFAULTS.get(var, "")
-        value = _read_setting_value(PATH_SETTINGS_FILE, var, default=default)
+    settings = _settings()
+    if var in (BIZHAWK_RUNTIME_ROOT_KEY, SAVE_MIGRATION_HELPER_PATH_KEY):
+        value = str(get_path_setting(settings, var) or "")
     else:
+        value = str(settings.get(var) or "")
+
+    if value:
         RUNNER_LOGGER.log(
-            f"No settings file mapping configured for {var}.",
-            level=LOG_LEVEL_ERROR,
+            f"Loaded {var} from shared settings: {value}",
             include_context=True,
             location=SETTINGS_LOOKUP_LOCATION,
         )
-        return None
+        return value
 
-    return str(value) if value not in (None, "") else None
+    RUNNER_LOGGER.log(
+        f"No configured value found for {var} in shared settings.",
+        level=LOG_LEVEL_ERROR,
+        include_context=True,
+        location=SETTINGS_LOOKUP_LOCATION,
+    )
+    return None
 
 
 def ensure_bizhawk_exe() -> Path:
@@ -593,21 +504,18 @@ def _build_runtime_env(runtime_root: Path, bizhawk_root: Path) -> dict[str, str]
     return env
 
 
-def _load_state_settings() -> dict[str, Any]:
-    state_settings = _load_json_file(STATE_SETTINGS_FILE)
-    if not isinstance(state_settings, dict):
-        state_settings = {}
-    _apply_defaults(state_settings, STATE_SETTINGS_DEFAULTS)
-    return state_settings
-
-
 def _update_state_setting(key: str, value: Any) -> None:
-    state_settings = _load_state_settings()
-    state_settings[key] = value
+    settings = _settings()
+    settings[key] = value
     try:
-        _save_json_file(STATE_SETTINGS_FILE, state_settings)
-    except Exception:
-        pass
+        save_settings(settings)
+    except Exception as exc:
+        RUNNER_LOGGER.log(
+            f"Failed to save shared settings: {exc}",
+            level=LOG_LEVEL_ERROR,
+            include_context=True,
+            location=SETTINGS_SAVE_LOCATION,
+        )
 
 
 def _stage_cached_launch(args: list[str]) -> None:
@@ -734,9 +642,12 @@ def main(argv: list[str]) -> int:
                         return 1
                     _launch_sni(sni_path, env)
 
-                entry_lua = bizhawk_root / BIZHAWK_ENTRY_LUA_FILENAME
-                if not entry_lua.is_file():
-                    _show_error_dialog(f"Missing BizHawk entry Lua script: {entry_lua}")
+                entry_lua_value = get_env_or_config(BIZHAWK_ENTRY_LUA_PATH_KEY)
+                entry_lua = Path(entry_lua_value) if entry_lua_value else None
+                if not entry_lua or not entry_lua.is_file():
+                    _show_error_dialog(
+                        f"Missing BizHawk entry Lua script: {entry_lua_value or BIZHAWK_ENTRY_LUA_FILENAME}"
+                    )
                     return 1
 
             final_args: list[str] = []

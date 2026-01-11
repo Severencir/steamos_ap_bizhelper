@@ -37,6 +37,7 @@ from typing import Any, Dict, Optional
 
 from .constants import (
     AP_APPIMAGE_KEY,
+    AP_APPIMAGE_DEFAULT,
     AP_DESKTOP_SHORTCUT_KEY,
     AP_LATEST_SEEN_VERSION_KEY,
     AP_SKIP_VERSION_KEY,
@@ -44,9 +45,12 @@ from .constants import (
     AP_WAIT_FOR_EXIT_POLL_SECONDS_KEY,
     AP_VERSION_KEY,
     BIZHELPER_APPIMAGE_KEY,
+    BIZHELPER_APPIMAGE_DEFAULT,
     BIZHAWK_DESKTOP_SHORTCUT_KEY,
     BIZHAWK_CLEAR_LD_PRELOAD_KEY,
     BIZHAWK_EXE_KEY,
+    BIZHAWK_ENTRY_LUA_PATH_KEY,
+    BIZHAWK_ENTRY_LUA_FILENAME,
     BIZHAWK_INSTALL_DIR_KEY,
     BIZHAWK_LAST_LAUNCH_ARGS_KEY,
     BIZHAWK_LAST_PID_KEY,
@@ -70,6 +74,7 @@ from .constants import (
     SAVE_HELPER_STAGED_FILENAME,
     SAVE_MIGRATION_HELPER_PATH_KEY,
     SFC_LUA_PATH_KEY,
+    STAGED_COMPONENTS_DIR,
     STEAM_APPID_KEY,
     STEAM_ROOT_PATH_KEY,
     USE_CACHED_RELAUNCH_ARGS_KEY,
@@ -88,13 +93,18 @@ PATH_SETTINGS_DEFAULTS = {
     BIZHAWK_INSTALL_DIR_KEY: str(DATA_DIR / "bizhawk_install"),
     BIZHAWK_RUNTIME_ROOT_KEY: str(DATA_DIR / "runtime_root"),
     BIZHAWK_SAVERAM_DIR_KEY: str(BIZHAWK_SAVERAM_DIR),
-    SAVE_MIGRATION_HELPER_PATH_KEY: str(DATA_DIR / SAVE_HELPER_STAGED_FILENAME),
+    SAVE_MIGRATION_HELPER_PATH_KEY: str(STAGED_COMPONENTS_DIR / SAVE_HELPER_STAGED_FILENAME),
     STEAM_ROOT_PATH_KEY: str(Path(os.path.expanduser("~/.steam/steam"))),
     SFC_LUA_PATH_KEY: "",
     LAST_FILE_DIALOG_DIR_KEY: "",
     LAST_FILE_DIALOG_DIRS_KEY: {},
     LAST_ROM_DIR_KEY: "",
     ROM_ROOTS_KEY: [],
+}
+INSTALL_STATE_DEFAULTS = {
+    AP_APPIMAGE_KEY: str(AP_APPIMAGE_DEFAULT),
+    BIZHELPER_APPIMAGE_KEY: str(BIZHELPER_APPIMAGE_DEFAULT),
+    BIZHAWK_ENTRY_LUA_PATH_KEY: str(STAGED_COMPONENTS_DIR / BIZHAWK_ENTRY_LUA_FILENAME),
 }
 STATE_SETTINGS_DEFAULTS = {
     BIZHAWK_LAST_LAUNCH_ARGS_KEY: [],
@@ -125,6 +135,7 @@ INSTALL_STATE_KEYS = {
     AP_LATEST_SEEN_VERSION_KEY,
     BIZHELPER_APPIMAGE_KEY,
     BIZHAWK_EXE_KEY,
+    BIZHAWK_ENTRY_LUA_PATH_KEY,
     BIZHAWK_VERSION_KEY,
     BIZHAWK_SKIP_VERSION_KEY,
     BIZHAWK_LATEST_SEEN_KEY,
@@ -206,6 +217,7 @@ def load_settings() -> Dict[str, Any]:
     state_settings = _load_state_settings()
     needs_save = _apply_defaults(state_settings, STATE_SETTINGS_DEFAULTS) or needs_save
     install_state = _load_install_state()
+    needs_save = _apply_defaults(install_state, INSTALL_STATE_DEFAULTS) or needs_save
     merged = {**settings, **path_settings, **state_settings, **install_state}
     if needs_save:
         save_settings(merged)

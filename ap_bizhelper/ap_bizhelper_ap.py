@@ -26,15 +26,13 @@ from .constants import (
     AP_LATEST_SEEN_VERSION_KEY,
     AP_SKIP_VERSION_KEY,
     AP_VERSION_KEY,
+    AP_APPIMAGE_DEFAULT,
     DATA_DIR,
     DESKTOP_DIR_KEY,
     USER_AGENT,
     USER_AGENT_HEADER,
 )
 from .logging_utils import get_app_logger
-
-# Paths mirror the bash script and the config helper.
-AP_APPIMAGE_DEFAULT = DATA_DIR / "Archipelago.AppImage"
 
 APP_LOGGER = get_app_logger()
 
