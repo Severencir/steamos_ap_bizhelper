@@ -1,159 +1,51 @@
 #!/usr/bin/env python3
-import contextlib
-import copy
-import contextvars
-import json
 import os
 import shutil
 import subprocess
 import sys
 import time
 import traceback
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-from uuid import uuid4
 
-APP_NAME = "ap-bizhelper"
-AP_BIZHELPER_CONNECTOR_PATH_ENV = "AP_BIZHELPER_CONNECTOR_PATH"
-AP_BIZHELPER_EMUHAWK_PID_ENV = "AP_BIZHELPER_EMUHAWK_PID"
-BIZHAWK_ENTRY_LUA_FILENAME = "ap_bizhelper_migration_launcher.lua"
-BIZHAWK_EXE_KEY = "BIZHAWK_EXE"
-BIZHAWK_HELPERS_ROOT_KEY = "BIZHAWK_HELPERS_ROOT"
-BIZHAWK_LAST_LAUNCH_ARGS_KEY = "BIZHAWK_LAST_LAUNCH_ARGS"
-BIZHAWK_LAST_PID_KEY = "BIZHAWK_LAST_PID"
-BIZHAWK_RUNTIME_ROOT_KEY = "BIZHAWK_RUNTIME_ROOT"
-SAVE_MIGRATION_HELPER_PATH_KEY = "SAVE_MIGRATION_HELPER_PATH"
-ENCODING_UTF8 = "utf-8"
-LOG_PREFIX = f"[{APP_NAME}]"
-RUN_ID_ENV = "AP_BIZHELPER_LOG_RUN_ID"
-RUNNER_LOG_ENV = "AP_BIZHELPER_RUNNER_LOG_PATH"
-TIMESTAMP_ENV = "AP_BIZHELPER_LOG_TIMESTAMP"
 
-CONFIG_DIR = Path.home() / ".config" / APP_NAME
-DATA_DIR = Path.home() / ".local" / "share" / APP_NAME
-LOG_ROOT = DATA_DIR / "logs"
-INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
-PATH_SETTINGS_FILE = CONFIG_DIR / "path_settings.json"
-STATE_SETTINGS_FILE = CONFIG_DIR / "state_settings.json"
-SAVE_HELPER_STAGED_FILENAME = "save_migration_helper.py"
-HELPERS_ROOT_DEFAULT = DATA_DIR / "helpers"
-PATH_SETTINGS_DEFAULTS = {
-    BIZHAWK_HELPERS_ROOT_KEY: str(HELPERS_ROOT_DEFAULT),
-    BIZHAWK_RUNTIME_ROOT_KEY: str(DATA_DIR / "runtime_root"),
-    SAVE_MIGRATION_HELPER_PATH_KEY: str(HELPERS_ROOT_DEFAULT / SAVE_HELPER_STAGED_FILENAME),
-}
-STATE_SETTINGS_DEFAULTS = {
-    BIZHAWK_LAST_LAUNCH_ARGS_KEY: [],
-    BIZHAWK_LAST_PID_KEY: "",
-}
+def _prepend_helpers_lib_path() -> None:
+    script_path = Path(__file__).resolve()
+    helpers_root = script_path.parent.parent
+    helpers_lib = helpers_root / "lib"
+    if not helpers_lib.is_dir():
+        return
+    helpers_lib_str = helpers_lib.as_posix()
+    if helpers_lib_str not in sys.path:
+        sys.path.insert(0, helpers_lib_str)
 
-BRACKET_CLOSE = "]"
-BRACKET_OPEN = "["
-CONTEXT_SEPARATOR = " > "
-DASH = "-"
-LOG_LEVEL_ERROR = "ERROR"
-LOG_LEVEL_INFO = "INFO"
-LOG_LEVEL_WARNING = "WARNING"
-LOG_FILE_SUFFIX = ".log"
-SPACE = " "
-UNDERSCORE = "_"
-_CONTEXT_STACK: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
-    "ap_bizhelper_runner_context", default=()
+
+_prepend_helpers_lib_path()
+
+from ap_bizhelper.ap_bizhelper_config import (  # noqa: E402
+    get_path_setting,
+    load_settings,
+    save_settings,
 )
-
-_CONFIG_CACHE: dict[Path, dict[str, Any]] = {}
-
-
-def _slugify(label: str) -> str:
-    return label.strip().replace(" ", UNDERSCORE).replace("/", DASH) or "general"
-
-
-class AppLogger:
-    def __init__(
-        self,
-        category: str,
-        *,
-        log_dir: Optional[Path] = None,
-        log_path: Optional[Path] = None,
-        run_id: Optional[str] = None,
-        timestamp: Optional[str] = None,
-    ) -> None:
-        self.timestamp = timestamp or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.run_id = run_id or uuid4().hex[:8]
-        self.category = _slugify(category)
-        base_dir = log_dir or LOG_ROOT
-        base_dir.mkdir(parents=True, exist_ok=True)
-        if log_path:
-            self.path = Path(log_path)
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-        else:
-            self.path = (
-                base_dir
-                / f"{self.category}{UNDERSCORE}{self.timestamp}{UNDERSCORE}{self.run_id}{LOG_FILE_SUFFIX}"
-            )
-        self._sequence = 0
-
-    @contextlib.contextmanager
-    def context(self, label: str):
-        stack = _CONTEXT_STACK.get()
-        token = _CONTEXT_STACK.set((*stack, label))
-        try:
-            yield
-        finally:
-            _CONTEXT_STACK.reset(token)
-
-    def _next_entry_id(self) -> str:
-        self._sequence += 1
-        return f"{self.run_id}{DASH}{self._sequence:04d}"
-
-    def _context_label(self) -> str:
-        return CONTEXT_SEPARATOR.join(_CONTEXT_STACK.get())
-
-    def log(
-        self,
-        message: str,
-        *,
-        level: str = LOG_LEVEL_INFO,
-        location: Optional[str] = None,
-        include_context: bool = False,
-    ) -> str:
-        entry_id = self._next_entry_id()
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        context_label = self._context_label()
-        location_id = _slugify(
-            location or (context_label.split(CONTEXT_SEPARATOR)[-1] if context_label else "root")
-        )
-
-        parts = [
-            f"{BRACKET_OPEN}{timestamp}{BRACKET_CLOSE}",
-            f"{BRACKET_OPEN}{entry_id}{BRACKET_CLOSE}",
-            f"{BRACKET_OPEN}{location_id}{BRACKET_CLOSE}",
-            f"{BRACKET_OPEN}{level.upper()}{BRACKET_CLOSE}",
-        ]
-        if include_context and context_label:
-            parts.append(f"{BRACKET_OPEN}ctx:{context_label}{BRACKET_CLOSE}")
-        parts.append(message)
-        line = SPACE.join(parts)
-        with self.path.open("a", encoding=ENCODING_UTF8) as log_file:
-            log_file.write(line + "\n")
-        return entry_id
-
-
-def create_component_logger(
-    category: str,
-    *,
-    env_var: Optional[str] = None,
-    subdir: Optional[str] = None,
-) -> AppLogger:
-    env_path = Path(os.environ[env_var]) if env_var and os.environ.get(env_var) else None
-    return AppLogger(
-        category,
-        log_dir=LOG_ROOT / subdir if subdir else None,
-        log_path=env_path,
-        run_id=os.environ.get(RUN_ID_ENV) or None,
-        timestamp=os.environ.get(TIMESTAMP_ENV) or None,
-    )
+from ap_bizhelper.constants import (  # noqa: E402
+    AP_BIZHELPER_CONNECTOR_PATH_ENV,
+    AP_BIZHELPER_EMUHAWK_PID_ENV,
+    BIZHAWK_ENTRY_LUA_FILENAME,
+    BIZHAWK_EXE_KEY,
+    BIZHAWK_HELPERS_BIN_DIRNAME,
+    BIZHAWK_HELPERS_ROOT_KEY,
+    BIZHAWK_LAST_LAUNCH_ARGS_KEY,
+    BIZHAWK_LAST_PID_KEY,
+    BIZHAWK_RUNTIME_ROOT_KEY,
+    LOG_PREFIX,
+    SAVE_MIGRATION_HELPER_PATH_KEY,
+)
+from ap_bizhelper.logging_utils import (  # noqa: E402
+    LOG_LEVEL_ERROR,
+    LOG_LEVEL_WARNING,
+    RUNNER_LOG_ENV,
+    create_component_logger,
+)
 
 COMMAND_LOCATION = "command"
 CONNECTOR_GENERIC = "connector_bizhawk_generic.lua"
@@ -178,7 +70,6 @@ RUNNER_LOGGER = create_component_logger("bizhawk-runner", env_var=RUNNER_LOG_ENV
 
 EMUHAWK_PID_DISCOVERY_ATTEMPTS = 12
 EMUHAWK_PID_DISCOVERY_SLEEP_SECONDS = 0.25
-HELPERS_BIN_DIRNAME = "bin"
 
 
 def _show_error_dialog(msg: str) -> None:
@@ -192,105 +83,21 @@ def _show_error_dialog(msg: str) -> None:
         return
     sys.stderr.write(f"{RUNNER_ERROR_TITLE}: {msg}\n")
 
-def _apply_defaults(settings: dict[str, Any], defaults: dict[str, Any]) -> None:
-    for key, value in defaults.items():
-        if key not in settings:
-            settings[key] = copy.deepcopy(value)
 
-
-def _load_json_file(path: Path) -> dict[str, Any]:
-    if path in _CONFIG_CACHE:
-        return _CONFIG_CACHE[path]
-
-    if not path.exists():
-        RUNNER_LOGGER.log(
-            f"Settings file missing: {path}",
-            include_context=True,
-            location=SETTINGS_LOAD_LOCATION,
-        )
-        data: dict[str, Any] = {}
-        _CONFIG_CACHE[path] = data
-        return data
-
+def _load_settings_safe() -> dict[str, Any]:
     try:
-        with path.open("r", encoding=ENCODING_UTF8) as handle:
-            data = json.load(handle)
-        if not isinstance(data, dict):
-            RUNNER_LOGGER.log(
-                f"Settings file {path} did not contain a JSON object; treating as empty.",
-                level=LOG_LEVEL_ERROR,
-                include_context=True,
-                location=SETTINGS_LOAD_LOCATION,
-            )
-            data = {}
+        return load_settings()
     except Exception as exc:
         RUNNER_LOGGER.log(
-            f"Failed to read settings file {path}: {exc}\n{traceback.format_exc()}",
+            f"Failed to load settings: {exc}\n{traceback.format_exc()}",
             level=LOG_LEVEL_ERROR,
             include_context=True,
             location=SETTINGS_LOAD_LOCATION,
         )
-        data = {}
-
-    _CONFIG_CACHE[path] = data
-    return data
+        return {}
 
 
-def _save_json_file(path: Path, data: dict[str, Any]) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        with tmp.open("w", encoding=ENCODING_UTF8) as handle:
-            json.dump(data, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        tmp.replace(path)
-        _CONFIG_CACHE[path] = data
-        RUNNER_LOGGER.log(
-            f"Saved settings file: {path}",
-            include_context=True,
-            location=SETTINGS_SAVE_LOCATION,
-        )
-    except Exception as exc:
-        RUNNER_LOGGER.log(
-            f"Failed to save settings file {path}: {exc}\n{traceback.format_exc()}",
-            level=LOG_LEVEL_ERROR,
-            include_context=True,
-            location=SETTINGS_SAVE_LOCATION,
-        )
-        raise
-
-
-def _read_setting_value(path: Path, key: str, default: Any = None) -> Any:
-    settings = _load_json_file(path)
-    if not settings:
-        settings = {}
-    value = settings.get(key, default)
-    if value not in (None, ""):
-        RUNNER_LOGGER.log(
-            f"Loaded {key} from {path}: {value}",
-            include_context=True,
-            location=SETTINGS_LOOKUP_LOCATION,
-        )
-        return value
-
-    if default not in (None, ""):
-        RUNNER_LOGGER.log(
-            f"Using default for {key}: {default}",
-            include_context=True,
-            location=SETTINGS_LOOKUP_LOCATION,
-        )
-        return default
-
-    RUNNER_LOGGER.log(
-        f"No configured value found for {key} in {path}.",
-        level=LOG_LEVEL_ERROR,
-        include_context=True,
-        location=SETTINGS_LOOKUP_LOCATION,
-    )
-    return None
-
-
-def get_env_or_config(var: str) -> Optional[str]:
+def get_env_or_config(var: str, settings: dict[str, Any]) -> Optional[str]:
     """Read config from the environment or stored settings."""
     value = os.environ.get(var)
     if value:
@@ -302,28 +109,41 @@ def get_env_or_config(var: str) -> Optional[str]:
         return value
 
     if var == BIZHAWK_EXE_KEY:
-        value = _read_setting_value(INSTALL_STATE_FILE, var)
+        value = settings.get(var, "")
     elif var in (
         BIZHAWK_HELPERS_ROOT_KEY,
         BIZHAWK_RUNTIME_ROOT_KEY,
         SAVE_MIGRATION_HELPER_PATH_KEY,
     ):
-        default = PATH_SETTINGS_DEFAULTS.get(var, "")
-        value = _read_setting_value(PATH_SETTINGS_FILE, var, default=default)
+        value = get_path_setting(settings, var)
     else:
         RUNNER_LOGGER.log(
-            f"No settings file mapping configured for {var}.",
+            f"No settings mapping configured for {var}.",
             level=LOG_LEVEL_ERROR,
             include_context=True,
             location=SETTINGS_LOOKUP_LOCATION,
         )
         return None
 
-    return str(value) if value not in (None, "") else None
+    if value not in (None, "", Path()):
+        RUNNER_LOGGER.log(
+            f"Loaded {var} from settings: {value}",
+            include_context=True,
+            location=SETTINGS_LOOKUP_LOCATION,
+        )
+        return str(value)
+
+    RUNNER_LOGGER.log(
+        f"No configured value found for {var}.",
+        level=LOG_LEVEL_ERROR,
+        include_context=True,
+        location=SETTINGS_LOOKUP_LOCATION,
+    )
+    return None
 
 
-def ensure_bizhawk_exe() -> Path:
-    exe = get_env_or_config(BIZHAWK_EXE_KEY)
+def ensure_bizhawk_exe(settings: dict[str, Any]) -> Path:
+    exe = get_env_or_config(BIZHAWK_EXE_KEY, settings)
     if not exe or not Path(exe).is_file():
         _show_error_dialog(f"{LOG_PREFIX} BIZHAWK_EXE is not set or not a file; cannot launch BizHawk.")
         sys.exit(1)
@@ -331,15 +151,15 @@ def ensure_bizhawk_exe() -> Path:
     return Path(exe)
 
 
-def _runtime_root() -> Path:
-    value = get_env_or_config(BIZHAWK_RUNTIME_ROOT_KEY)
+def _runtime_root(settings: dict[str, Any]) -> Path:
+    value = get_env_or_config(BIZHAWK_RUNTIME_ROOT_KEY, settings)
     if not value:
         return Path()
     return Path(os.path.expanduser(value))
 
 
-def _helpers_root() -> Path:
-    value = get_env_or_config(BIZHAWK_HELPERS_ROOT_KEY)
+def _helpers_root(settings: dict[str, Any]) -> Path:
+    value = get_env_or_config(BIZHAWK_HELPERS_ROOT_KEY, settings)
     if not value:
         return Path()
     return Path(os.path.expanduser(value))
@@ -608,21 +428,18 @@ def _build_runtime_env(runtime_root: Path, bizhawk_root: Path) -> dict[str, str]
     return env
 
 
-def _load_state_settings() -> dict[str, Any]:
-    state_settings = _load_json_file(STATE_SETTINGS_FILE)
-    if not isinstance(state_settings, dict):
-        state_settings = {}
-    _apply_defaults(state_settings, STATE_SETTINGS_DEFAULTS)
-    return state_settings
-
-
 def _update_state_setting(key: str, value: Any) -> None:
-    state_settings = _load_state_settings()
-    state_settings[key] = value
+    settings = _load_settings_safe()
+    settings[key] = value
     try:
-        _save_json_file(STATE_SETTINGS_FILE, state_settings)
-    except Exception:
-        pass
+        save_settings(settings)
+    except Exception as exc:
+        RUNNER_LOGGER.log(
+            f"Failed to persist setting {key}: {exc}",
+            level=LOG_LEVEL_WARNING,
+            include_context=True,
+            location=SETTINGS_SAVE_LOCATION,
+        )
 
 
 def _stage_cached_launch(args: list[str]) -> None:
@@ -672,10 +489,11 @@ def main(argv: list[str]) -> int:
             location="startup",
         )
         try:
-            bizhawk_exe = ensure_bizhawk_exe()
+            settings = _load_settings_safe()
+            bizhawk_exe = ensure_bizhawk_exe(settings)
             bizhawk_root = bizhawk_exe.parent
 
-            runtime_root = _runtime_root()
+            runtime_root = _runtime_root(settings)
             if not runtime_root:
                 _show_error_dialog(
                     f"{LOG_PREFIX} BIZHAWK_RUNTIME_ROOT is not set; cannot launch BizHawk."
@@ -692,7 +510,7 @@ def main(argv: list[str]) -> int:
             env = _build_runtime_env(runtime_root, bizhawk_root)
             entry_lua: Optional[Path] = None
             passthrough_lua_arg: Optional[str] = None
-            helper_path = get_env_or_config(SAVE_MIGRATION_HELPER_PATH_KEY)
+            helper_path = get_env_or_config(SAVE_MIGRATION_HELPER_PATH_KEY, settings)
             if helper_path:
                 env[SAVE_MIGRATION_HELPER_PATH_KEY] = str(helper_path)
                 RUNNER_LOGGER.log(
@@ -749,8 +567,8 @@ def main(argv: list[str]) -> int:
                         return 1
                     _launch_sni(sni_path, env)
 
-                helpers_root = _helpers_root()
-                entry_lua = helpers_root / HELPERS_BIN_DIRNAME / BIZHAWK_ENTRY_LUA_FILENAME
+                helpers_root = _helpers_root(settings)
+                entry_lua = helpers_root / BIZHAWK_HELPERS_BIN_DIRNAME / BIZHAWK_ENTRY_LUA_FILENAME
                 if not entry_lua.is_file():
                     _show_error_dialog(f"Missing BizHawk entry Lua script: {entry_lua}")
                     return 1

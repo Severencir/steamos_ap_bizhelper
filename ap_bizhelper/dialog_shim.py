@@ -25,10 +25,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from ap_bizhelper import dialogs
-from .ap_bizhelper_config import load_settings, save_settings
+from .ap_bizhelper_config import get_path_setting, load_settings, save_settings
 from .constants import (
     BIZHAWK_EXE_KEY,
     BIZHAWK_RUNNER_KEY,
+    BIZHAWK_HELPERS_LIB_DIRNAME,
+    BIZHAWK_HELPERS_ROOT_KEY,
     LAST_ROM_DIR_KEY,
     ROM_HASH_CACHE_KEY,
     ROM_ROOTS_KEY,
@@ -477,17 +479,15 @@ def _select_rom_aware_file_dialog(
 
 def _locate_bizhawk_runner(logger: AppLogger) -> Optional[Path]:
     try:
-        from ap_bizhelper.ap_bizhelper_ap import _load_settings as _load_ap_settings
+        settings = load_settings()
     except Exception as exc:
         logger.log(
-            f"BizHawk runner discovery aborted: could not import settings loader ({exc}).",
+            f"BizHawk runner discovery aborted: settings load failed ({exc}).",
             level="DEBUG",
             include_context=True,
             location="auto-answer",
         )
         return None
-
-    settings = _load_ap_settings()
     runner_str = str(settings.get(BIZHAWK_RUNNER_KEY, "") or "")
     exe_str = str(settings.get(BIZHAWK_EXE_KEY, "") or "")
 
@@ -1150,6 +1150,7 @@ class PortalShim:
         )
         return 127
 
+
 def prepare_dialog_shim_env(logger: Optional[AppLogger] = None) -> Optional[Dict[str, str]]:
     """Create a temporary dialog shim script and return environment overrides.
 
@@ -1200,10 +1201,23 @@ if __name__ == "__main__":
     portal_path.chmod(0o755)
 
     pkg_root = Path(__file__).resolve().parent.parent
+    helpers_lib = None
+    try:
+        settings = load_settings()
+        helpers_root = get_path_setting(settings, BIZHAWK_HELPERS_ROOT_KEY)
+        if helpers_root:
+            helpers_lib_candidate = helpers_root / BIZHAWK_HELPERS_LIB_DIRNAME
+            if helpers_lib_candidate.is_dir():
+                helpers_lib = helpers_lib_candidate
+    except Exception:
+        helpers_lib = None
     pythonpath = os.environ.get("PYTHONPATH", "")
+    pythonpath_parts = [pkg_root.as_posix()]
+    if helpers_lib:
+        pythonpath_parts.insert(0, helpers_lib.as_posix())
     env = {
         "PATH": shim_dir.as_posix() + os.pathsep + os.environ.get("PATH", ""),
-        "PYTHONPATH": pkg_root.as_posix()
+        "PYTHONPATH": os.pathsep.join(pythonpath_parts)
         + (os.pathsep + pythonpath if pythonpath else ""),
         _REAL_ZENITY_ENV: real_zenity or "",
         _REAL_KDIALOG_ENV: real_kdialog or "",
