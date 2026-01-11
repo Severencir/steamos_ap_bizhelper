@@ -1,6 +1,7 @@
 SteamOS/Steam Deck–like compatibility > minimal dependencies > simple modification to behavior.
 Simplicity of code > readability of code > all else.
 
+where possible and practical, all code should use and reuse versitile general modular code instead of duplicating or creating new functions that behave similarly. extending existing modules or creating such modular solutions should be prioritized when similar behavior exists
 All dynamic/configurable values should be initialized to settings from a default value if they are not present, and read from settings when used. this supercedes the constants preference. This includes things like window/font size, paths, or anything that is likely to need some flexibility, but should also persist across runs
 settings should be partitioned by category with one file being dedicated to values a typical user may wish to change themselves, and several to various categories of persistent storage. Any value for which changing could break behavior should be separated into one of these partitions.
 Prefer using shared constants to literals where reasonable which should be consolidated to constants.py where possible.
