@@ -10,6 +10,7 @@ from .ap_bizhelper_config import PATH_SETTINGS_DEFAULTS
 from .constants import (
     BIZHAWK_ENTRY_LUA_FILENAME,
     BIZHAWK_HELPERS_BIN_DIRNAME,
+    BIZHAWK_HELPERS_LIB_DIRNAME,
     BIZHAWK_HELPERS_ROOT_KEY,
     BIZHAWK_RUNNER_FILENAME,
     SAVE_HELPER_STAGED_FILENAME,
@@ -32,6 +33,10 @@ def get_helpers_root(settings: dict[str, Any]) -> Path:
 
 def get_helpers_bin_root(settings: dict[str, Any]) -> Path:
     return get_helpers_root(settings) / BIZHAWK_HELPERS_BIN_DIRNAME
+
+
+def get_helpers_lib_root(settings: dict[str, Any]) -> Path:
+    return get_helpers_root(settings) / BIZHAWK_HELPERS_LIB_DIRNAME
 
 
 def _stage_script(target: Path, source: Path, *, make_executable: bool) -> bool:
@@ -58,13 +63,35 @@ def stage_helper_resource(resource_name: str, target: Path, *, make_executable: 
         return _stage_script(target, helper_source, make_executable=make_executable)
 
 
+def stage_helper_lib(settings: dict[str, Any]) -> dict[str, tuple[Path, bool]]:
+    helpers_lib = get_helpers_lib_root(settings)
+    package_root = helpers_lib / "ap_bizhelper"
+    package_root.mkdir(parents=True, exist_ok=True)
+    modules = [
+        "__init__.py",
+        "ap_bizhelper_config.py",
+        "constants.py",
+        "dialogs.py",
+        "dialog_shim.py",
+        "logging_utils.py",
+    ]
+    staged: dict[str, tuple[Path, bool]] = {}
+    for module in modules:
+        target = package_root / module
+        staged[module] = (
+            target,
+            stage_helper_resource(module, target, make_executable=False),
+        )
+    return staged
+
+
 def stage_bizhawk_helpers(settings: dict[str, Any]) -> dict[str, tuple[Path, bool]]:
     helpers_root = get_helpers_root(settings)
     helpers_bin = helpers_root / BIZHAWK_HELPERS_BIN_DIRNAME
     helpers_root.mkdir(parents=True, exist_ok=True)
     helpers_bin.mkdir(parents=True, exist_ok=True)
 
-    return {
+    staged = {
         BIZHAWK_RUNNER_FILENAME: (
             helpers_bin / BIZHAWK_RUNNER_FILENAME,
             stage_helper_resource(
@@ -90,3 +117,5 @@ def stage_bizhawk_helpers(settings: dict[str, Any]) -> dict[str, tuple[Path, boo
             ),
         ),
     }
+    staged.update(stage_helper_lib(settings))
+    return staged
