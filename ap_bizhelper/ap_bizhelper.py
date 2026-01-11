@@ -79,6 +79,7 @@ from .ui_utils import (
 
 APP_LOGGER = get_app_logger()
 NO_STEAM_DEFAULT_COMMANDS = {"ensure", "uninstall-all", "uninstall-core"}
+NO_SETUP_COMMANDS = {"utils", "uninstall", "uninstall-all", "uninstall-core"}
 
 
 def _split_launcher_args(argv: list[str]) -> tuple[list[str], bool, bool]:
@@ -103,6 +104,10 @@ def _is_running_under_steam() -> bool:
     """Return ``True`` when launched by Steam (Steam overlay/controller env set)."""
 
     return bool(_steam_game_id_from_env())
+
+
+def _is_running_from_appimage() -> bool:
+    return _current_appimage_path() is not None
 
 
 def _capture_steam_appid_if_present(settings: dict) -> None:
@@ -135,6 +140,14 @@ def _capture_bizhelper_appimage(settings: dict) -> None:
             return
 
         _stage_bizhelper_appimage(settings, appimage_path)
+
+
+def _ensure_appimage_handlers(settings: dict) -> None:
+    appimage_value = str(settings.get(BIZHELPER_APPIMAGE_KEY) or BIZHELPER_APPIMAGE_DEFAULT)
+    appimage_path = Path(appimage_value)
+    if not appimage_path.is_file():
+        return
+    _apply_association_files(_registered_association_exts())
 
 
 def _require_bizhelper_appimage(settings: dict, action: str) -> bool:
@@ -1333,29 +1346,37 @@ def _run_full_flow(
 def main(argv: list[str]) -> int:
     with APP_LOGGER.context("main"):
         APP_LOGGER.log("Starting ap-bizhelper", include_context=True)
-        ensure_pyside_components()
-        try:
-            _ensure_qt_available()
-        except RuntimeError:
-            return 1
-        settings = load_settings()
-        if _maybe_relaunch_from_staged_appimage(settings, argv):
-            return 0
-        _capture_bizhelper_appimage(settings)
-        ensure_app_components(settings)
-        ensure_local_action_scripts(settings)
+        user_args, explicit_no_steam, explicit_steam = _split_launcher_args(argv)
+        patch_arg: Optional[str] = user_args[0] if user_args else None
+        skip_setup = patch_arg in NO_SETUP_COMMANDS
 
-        try:
-            _ensure_qt_app(settings)
-        except Exception as exc:
-            APP_LOGGER.log(
-                f"Failed to initialize Qt with settings: {exc}",
-                level="ERROR",
-                include_context=True,
-                mirror_console=True,
-                stream="stderr",
-            )
-            return 1
+        if not skip_setup:
+            ensure_pyside_components()
+            try:
+                _ensure_qt_available()
+            except RuntimeError:
+                return 1
+
+        settings = load_settings()
+        if not skip_setup:
+            if _maybe_relaunch_from_staged_appimage(settings, argv):
+                return 0
+            _capture_bizhelper_appimage(settings)
+            ensure_app_components(settings)
+            ensure_local_action_scripts(settings)
+            _ensure_appimage_handlers(settings)
+
+            try:
+                _ensure_qt_app(settings)
+            except Exception as exc:
+                APP_LOGGER.log(
+                    f"Failed to initialize Qt with settings: {exc}",
+                    level="ERROR",
+                    include_context=True,
+                    mirror_console=True,
+                    stream="stderr",
+                )
+                return 1
 
         settings_dirty = False
 
@@ -1370,7 +1391,6 @@ def main(argv: list[str]) -> int:
         if settings_dirty:
             save_settings(settings)
 
-        user_args, explicit_no_steam, explicit_steam = _split_launcher_args(argv)
         if explicit_no_steam and explicit_steam:
             APP_LOGGER.log(
                 "Cannot combine --steam and --nosteam.",
@@ -1381,9 +1401,11 @@ def main(argv: list[str]) -> int:
             )
             return 1
 
-        patch_arg: Optional[str] = user_args[0] if user_args else None
-        no_steam = explicit_no_steam or (
-            patch_arg in NO_STEAM_DEFAULT_COMMANDS and not explicit_steam
+        running_from_source = not _is_running_from_appimage()
+        no_steam = (
+            explicit_no_steam
+            or (patch_arg in NO_STEAM_DEFAULT_COMMANDS and not explicit_steam)
+            or (running_from_source and not explicit_steam)
         )
 
         if not no_steam:

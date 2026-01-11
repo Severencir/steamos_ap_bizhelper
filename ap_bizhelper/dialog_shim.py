@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from ap_bizhelper import dialogs
 from .ap_bizhelper_config import load_settings, save_settings
 from .constants import (
-    APP_COMPONENTS_PYTHON_DIR,
+    APP_COMPONENTS_SRC_DIR,
     BIZHAWK_EXE_KEY,
     BIZHAWK_RUNNER_KEY,
     LAST_ROM_DIR_KEY,
@@ -1203,8 +1203,8 @@ if __name__ == "__main__":
     pkg_root = Path(__file__).resolve().parent.parent
     pythonpath = os.environ.get("PYTHONPATH", "")
     component_pythonpath = (
-        APP_COMPONENTS_PYTHON_DIR.as_posix() + os.pathsep
-        if APP_COMPONENTS_PYTHON_DIR.is_dir()
+        APP_COMPONENTS_SRC_DIR.as_posix() + os.pathsep
+        if APP_COMPONENTS_SRC_DIR.is_dir()
         else ""
     )
     env = {

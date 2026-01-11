@@ -23,7 +23,7 @@ from .ap_bizhelper_config import (
 )
 from .constants import (
     APP_COMPONENTS_DIR,
-    APP_COMPONENTS_PYTHON_DIR,
+    APP_COMPONENTS_SRC_DIR,
     BIZHAWK_ENTRY_LUA_FILENAME,
     BIZHAWK_DESKTOP_SHORTCUT_KEY,
     BIZHAWK_EXE_KEY,
@@ -102,6 +102,7 @@ def _ensure_dirs() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     APP_COMPONENTS_DIR.mkdir(parents=True, exist_ok=True)
+    APP_COMPONENTS_SRC_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _load_settings() -> Dict[str, Any]:
@@ -289,7 +290,7 @@ def _appimage_site_packages() -> Optional[Path]:
 
 
 def ensure_pyside_components() -> None:
-    target_root = APP_COMPONENTS_PYTHON_DIR
+    target_root = APP_COMPONENTS_SRC_DIR
     if all((target_root / name).exists() for name in PYSIDE_PACKAGES):
         return
 
@@ -358,7 +359,7 @@ def ensure_app_components(settings: Dict[str, Any], *, force: bool = False) -> N
             else:
                 error_dialog(failure_template.format(runner=resource_name))
 
-    runner_path = APP_COMPONENTS_DIR / RUNNER_FILENAME
+    runner_path = APP_COMPONENTS_SRC_DIR / RUNNER_FILENAME
     _stage_resource(
         RUNNER_FILENAME,
         runner_path,
@@ -366,7 +367,7 @@ def ensure_app_components(settings: Dict[str, Any], *, force: bool = False) -> N
         failure_template=RUNNER_STAGE_FAILED_TEMPLATE,
     )
 
-    entry_path = APP_COMPONENTS_DIR / BIZHAWK_ENTRY_LUA_FILENAME
+    entry_path = APP_COMPONENTS_SRC_DIR / BIZHAWK_ENTRY_LUA_FILENAME
     _stage_resource(
         BIZHAWK_ENTRY_LUA_FILENAME,
         entry_path,
@@ -374,7 +375,7 @@ def ensure_app_components(settings: Dict[str, Any], *, force: bool = False) -> N
         failure_template="Failed to stage BizHawk entry Lua resource ({runner}).",
     )
 
-    helper_path = APP_COMPONENTS_DIR / SAVE_HELPER_STAGED_FILENAME
+    helper_path = APP_COMPONENTS_SRC_DIR / SAVE_HELPER_STAGED_FILENAME
     _stage_resource(
         SAVE_HELPER_FILENAME,
         helper_path,
@@ -402,7 +403,7 @@ def ensure_app_components(settings: Dict[str, Any], *, force: bool = False) -> N
 
 def build_runner(settings: Dict[str, Any], bizhawk_root: Path) -> Path:
     ensure_app_components(settings, force=True)
-    return APP_COMPONENTS_DIR / RUNNER_FILENAME
+    return APP_COMPONENTS_SRC_DIR / RUNNER_FILENAME
 
 
 def ensure_bizhawk_desktop_shortcut(
