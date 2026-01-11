@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.resources as resources
 import json
 import os
 import shutil
@@ -27,11 +26,13 @@ from .constants import (
     BIZHAWK_INSTALL_DIR_KEY,
     BIZHAWK_LATEST_SEEN_KEY,
     BIZHAWK_RUNNER_KEY,
+    BIZHAWK_RUNNER_FILENAME,
     BIZHAWK_RUNTIME_DOWNLOAD_KEY,
     BIZHAWK_RUNTIME_ROOT_KEY,
     BIZHAWK_SKIP_VERSION_KEY,
     BIZHAWK_VERSION_KEY,
     DATA_DIR,
+    BIZHAWK_ENTRY_LUA_FILENAME,
     SAVE_HELPER_STAGED_FILENAME,
     SAVE_MIGRATION_HELPER_PATH_KEY,
 )
@@ -41,6 +42,7 @@ from .dialogs import (
     error_dialog,
     info_dialog,
 )
+from .staging import stage_bizhawk_helpers
 
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 
@@ -62,10 +64,7 @@ EMPTY_STRING = ""
 ENCODING_UTF8 = "utf-8"
 GITHUB_API_LATEST = "https://api.github.com/repos/TASEmulators/BizHawk/releases/latest"
 NAME_KEY = "name"
-RUNNER_FILENAME = "run_bizhawk.py"
-RUNNER_MISSING_TEMPLATE = "BizHawk runner helper ({runner}) is missing."
 RUNNER_STAGE_FAILED_TEMPLATE = "Failed to stage BizHawk runner helper ({runner})."
-SAVE_HELPER_FILENAME = "save_migration_helper.py"
 SELECT_EMUHAWK_TITLE = "Select EmuHawkMono.sh"
 TAG_NAME_KEY = "tag_name"
 TAR_TYPE_HINT = "tar"
@@ -256,64 +255,21 @@ def _find_emuhawk_script(root: Path) -> Optional[Path]:
     return None
 
 
-def _stage_script(target: Path, source: Path, *, make_executable: bool) -> bool:
-    try:
-        data = source.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-        target.write_bytes(data)
-        if make_executable:
-            target.chmod(target.stat().st_mode | 0o111)
-        return True
-    except Exception:
-        return False
-
-
-def _stage_runner(target: Path, source: Path) -> bool:
-    return _stage_script(target, source, make_executable=True)
-
-
-def build_runner(settings: Dict[str, Any], bizhawk_root: Path) -> Path:
+def build_runner(settings: Dict[str, Any], _bizhawk_root: Path) -> Path:
     _ensure_dirs()
-    try:
-        runner_resource = resources.files(__package__).joinpath(RUNNER_FILENAME)
-    except (ModuleNotFoundError, AttributeError):
-        runner_resource = None
+    stage_results = stage_bizhawk_helpers(settings)
+    runner_path, runner_staged = stage_results[BIZHAWK_RUNNER_FILENAME]
+    _entry_lua_path, entry_lua_staged = stage_results[BIZHAWK_ENTRY_LUA_FILENAME]
+    helper_path, helper_staged = stage_results[SAVE_HELPER_STAGED_FILENAME]
 
-    runner_path = bizhawk_root / RUNNER_FILENAME
-
-    if runner_resource is None:
-        error_dialog(RUNNER_MISSING_TEMPLATE.format(runner=RUNNER_FILENAME))
-        return runner_path
-
-    staged = False
-    with resources.as_file(runner_resource) as source_runner:
-        if not source_runner.is_file():
-            error_dialog(RUNNER_MISSING_TEMPLATE.format(runner=RUNNER_FILENAME))
-            return runner_path
-        staged = _stage_runner(runner_path, source_runner)
-
-    if not staged:
-        error_dialog(RUNNER_STAGE_FAILED_TEMPLATE.format(runner=RUNNER_FILENAME))
-
-    entry_resource = resources.files(__package__).joinpath("ap_bizhelper_migration_launcher.lua")
-    with resources.as_file(entry_resource) as entry_source:
-        if entry_source.is_file():
-            target = bizhawk_root / "ap_bizhelper_migration_launcher.lua"
-            target.write_bytes(entry_source.read_bytes())
-        else:
-            error_dialog("Missing BizHawk entry Lua resource.")
-
-    helper_resource = resources.files(__package__).joinpath(SAVE_HELPER_FILENAME)
-    staged_helper_path = DATA_DIR / SAVE_HELPER_STAGED_FILENAME
-    with resources.as_file(helper_resource) as helper_source:
-        if not helper_source.is_file():
-            error_dialog(f"Save migration helper is missing: {helper_source}")
-        else:
-            staged = _stage_script(staged_helper_path, helper_source, make_executable=True)
-            if not staged:
-                error_dialog(f"Failed to stage save migration helper: {staged_helper_path}")
-            else:
-                settings[SAVE_MIGRATION_HELPER_PATH_KEY] = str(staged_helper_path)
-                _save_settings(settings)
+    if not runner_staged:
+        error_dialog(RUNNER_STAGE_FAILED_TEMPLATE.format(runner=BIZHAWK_RUNNER_FILENAME))
+    if not entry_lua_staged:
+        error_dialog("Missing BizHawk entry Lua resource.")
+    if not helper_staged:
+        error_dialog(f"Failed to stage save migration helper: {helper_path}")
+    else:
+        settings[SAVE_MIGRATION_HELPER_PATH_KEY] = str(helper_path)
 
     settings[BIZHAWK_RUNNER_KEY] = str(runner_path)
     _save_settings(settings)
