@@ -23,6 +23,7 @@ from .ap_bizhelper_config import (
 )
 from .constants import (
     APP_COMPONENTS_DIR,
+    APP_COMPONENTS_PYTHON_DIR,
     BIZHAWK_ENTRY_LUA_FILENAME,
     BIZHAWK_DESKTOP_SHORTCUT_KEY,
     BIZHAWK_EXE_KEY,
@@ -288,7 +289,7 @@ def _appimage_site_packages() -> Optional[Path]:
 
 
 def ensure_pyside_components() -> None:
-    target_root = APP_COMPONENTS_DIR
+    target_root = APP_COMPONENTS_PYTHON_DIR
     if all((target_root / name).exists() for name in PYSIDE_PACKAGES):
         return
 
