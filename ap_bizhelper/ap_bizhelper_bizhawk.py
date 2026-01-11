@@ -22,8 +22,10 @@ from .ap_bizhelper_config import (
     save_settings as _save_shared_settings,
 )
 from .constants import (
+    BIZHAWK_ENTRY_LUA_FILENAME,
     BIZHAWK_DESKTOP_SHORTCUT_KEY,
     BIZHAWK_EXE_KEY,
+    BIZHAWK_ENTRY_LUA_PATH_KEY,
     BIZHAWK_INSTALL_DIR_KEY,
     BIZHAWK_LATEST_SEEN_KEY,
     BIZHAWK_RUNNER_KEY,
@@ -34,6 +36,7 @@ from .constants import (
     DATA_DIR,
     SAVE_HELPER_STAGED_FILENAME,
     SAVE_MIGRATION_HELPER_PATH_KEY,
+    STAGED_COMPONENTS_DIR,
 )
 from .dialogs import (
     question_dialog as _qt_question_dialog,
@@ -95,6 +98,7 @@ class RuntimeValidationError(RuntimeError):
 def _ensure_dirs() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    STAGED_COMPONENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _load_settings() -> Dict[str, Any]:
@@ -278,7 +282,7 @@ def build_runner(settings: Dict[str, Any], bizhawk_root: Path) -> Path:
     except (ModuleNotFoundError, AttributeError):
         runner_resource = None
 
-    runner_path = bizhawk_root / RUNNER_FILENAME
+    runner_path = STAGED_COMPONENTS_DIR / RUNNER_FILENAME
 
     if runner_resource is None:
         error_dialog(RUNNER_MISSING_TEMPLATE.format(runner=RUNNER_FILENAME))
@@ -294,16 +298,18 @@ def build_runner(settings: Dict[str, Any], bizhawk_root: Path) -> Path:
     if not staged:
         error_dialog(RUNNER_STAGE_FAILED_TEMPLATE.format(runner=RUNNER_FILENAME))
 
-    entry_resource = resources.files(__package__).joinpath("ap_bizhelper_migration_launcher.lua")
+    entry_resource = resources.files(__package__).joinpath(BIZHAWK_ENTRY_LUA_FILENAME)
     with resources.as_file(entry_resource) as entry_source:
         if entry_source.is_file():
-            target = bizhawk_root / "ap_bizhelper_migration_launcher.lua"
+            target = STAGED_COMPONENTS_DIR / BIZHAWK_ENTRY_LUA_FILENAME
             target.write_bytes(entry_source.read_bytes())
+            settings[BIZHAWK_ENTRY_LUA_PATH_KEY] = str(target)
+            _save_settings(settings)
         else:
             error_dialog("Missing BizHawk entry Lua resource.")
 
     helper_resource = resources.files(__package__).joinpath(SAVE_HELPER_FILENAME)
-    staged_helper_path = DATA_DIR / SAVE_HELPER_STAGED_FILENAME
+    staged_helper_path = STAGED_COMPONENTS_DIR / SAVE_HELPER_STAGED_FILENAME
     with resources.as_file(helper_resource) as helper_source:
         if not helper_source.is_file():
             error_dialog(f"Save migration helper is missing: {helper_source}")

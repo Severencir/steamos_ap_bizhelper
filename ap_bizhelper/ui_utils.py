@@ -10,7 +10,7 @@ import shutil
 import subprocess
 from typing import Callable, Iterable, Optional
 
-from .ap_bizhelper_ap import AP_APPIMAGE_DEFAULT, force_update_appimage, manual_select_appimage
+from .ap_bizhelper_ap import force_update_appimage, manual_select_appimage
 from .ap_bizhelper_bizhawk import (
     ensure_runtime_root,
     force_update_bizhawk,
@@ -27,6 +27,7 @@ from .ap_bizhelper_config import (
 from .ap_bizhelper_worlds import WORLD_DIR, force_update_apworlds, manual_select_apworld
 from .constants import (
     AP_APPIMAGE_KEY,
+    AP_APPIMAGE_DEFAULT,
     AP_LATEST_SEEN_VERSION_KEY,
     AP_SKIP_VERSION_KEY,
     AP_VERSION_KEY,
