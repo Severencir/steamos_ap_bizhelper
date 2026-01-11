@@ -9,6 +9,7 @@ passing load/save callbacks for file dialogs.
 
 import importlib.util
 import os
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,7 @@ from .ap_bizhelper_config import (
     save_settings as _save_shared_settings,
 )
 from .constants import (
+    APP_COMPONENTS_PYTHON_DIR,
     DOWNLOADS_DIR_KEY,
     LAST_FILE_DIALOG_DIR_KEY,
     LAST_FILE_DIALOG_DIRS_KEY,
@@ -216,6 +218,10 @@ def ensure_qt_available() -> None:
         raise RuntimeError("PySide6 is required for ap-bizhelper") from _QT_IMPORT_ERROR
 
     try:
+        if APP_COMPONENTS_PYTHON_DIR.is_dir():
+            pyside_path = str(APP_COMPONENTS_PYTHON_DIR)
+            if pyside_path not in sys.path:
+                sys.path.insert(0, pyside_path)
         from PySide6 import QtWidgets  # noqa: F401
     except Exception as exc:  # pragma: no cover - import guard
         _QT_IMPORT_ERROR = exc

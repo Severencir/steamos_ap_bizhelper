@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import urllib.request
@@ -80,6 +81,45 @@ def _ensure_qt_available() -> None:
             location="qt-deps",
         )
         raise
+
+
+def _stage_appimage(settings: Dict[str, Any], app_path: Path) -> Path:
+    if app_path == AP_APPIMAGE_DEFAULT:
+        return app_path
+
+    try:
+        if AP_APPIMAGE_DEFAULT.exists() and AP_APPIMAGE_DEFAULT.samefile(app_path):
+            return AP_APPIMAGE_DEFAULT
+    except Exception:
+        pass
+
+    try:
+        if AP_APPIMAGE_DEFAULT.resolve() == app_path.resolve():
+            return AP_APPIMAGE_DEFAULT
+    except Exception:
+        pass
+
+    try:
+        AP_APPIMAGE_DEFAULT.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(app_path, AP_APPIMAGE_DEFAULT)
+        AP_APPIMAGE_DEFAULT.chmod(AP_APPIMAGE_DEFAULT.stat().st_mode | 0o111)
+    except Exception as exc:
+        APP_LOGGER.log(
+            f"Failed to stage Archipelago AppImage to {AP_APPIMAGE_DEFAULT}: {exc}",
+            include_context=True,
+            level="WARNING",
+            mirror_console=True,
+        )
+        return app_path
+
+    settings[AP_APPIMAGE_KEY] = str(AP_APPIMAGE_DEFAULT)
+    _save_settings(settings)
+    APP_LOGGER.log(
+        f"Staged Archipelago AppImage to {AP_APPIMAGE_DEFAULT}",
+        include_context=True,
+        mirror_console=True,
+    )
+    return AP_APPIMAGE_DEFAULT
 
 
 def _version_sort_key(version: str) -> tuple[tuple[int, object], ...]:
@@ -697,7 +737,10 @@ def ensure_appimage(
     )
     downloaded = downloaded or updated
 
-    # 5. Create a desktop shortcut only when a download occurred
+    # 5. Stage a local copy in the managed data directory.
+    app_path = _stage_appimage(settings, app_path)
+
+    # 6. Create a desktop shortcut only when a download occurred
     if downloaded:
         _create_desktop_shortcut(
             settings,

@@ -27,6 +27,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from ap_bizhelper import dialogs
 from .ap_bizhelper_config import load_settings, save_settings
 from .constants import (
+    APP_COMPONENTS_PYTHON_DIR,
     BIZHAWK_EXE_KEY,
     BIZHAWK_RUNNER_KEY,
     LAST_ROM_DIR_KEY,
@@ -1201,9 +1202,15 @@ if __name__ == "__main__":
 
     pkg_root = Path(__file__).resolve().parent.parent
     pythonpath = os.environ.get("PYTHONPATH", "")
+    component_pythonpath = (
+        APP_COMPONENTS_PYTHON_DIR.as_posix() + os.pathsep
+        if APP_COMPONENTS_PYTHON_DIR.is_dir()
+        else ""
+    )
     env = {
         "PATH": shim_dir.as_posix() + os.pathsep + os.environ.get("PATH", ""),
-        "PYTHONPATH": pkg_root.as_posix()
+        "PYTHONPATH": component_pythonpath
+        + pkg_root.as_posix()
         + (os.pathsep + pythonpath if pythonpath else ""),
         _REAL_ZENITY_ENV: real_zenity or "",
         _REAL_KDIALOG_ENV: real_kdialog or "",

@@ -24,6 +24,8 @@ from .dialogs import (
 )
 from .ap_bizhelper_bizhawk import (
     ensure_bizhawk_install,
+    ensure_app_components,
+    ensure_pyside_components,
     ensure_runtime_root,
     validate_runtime_root,
 )
@@ -1331,6 +1333,7 @@ def _run_full_flow(
 def main(argv: list[str]) -> int:
     with APP_LOGGER.context("main"):
         APP_LOGGER.log("Starting ap-bizhelper", include_context=True)
+        ensure_pyside_components()
         try:
             _ensure_qt_available()
         except RuntimeError:
@@ -1339,6 +1342,7 @@ def main(argv: list[str]) -> int:
         if _maybe_relaunch_from_staged_appimage(settings, argv):
             return 0
         _capture_bizhelper_appimage(settings)
+        ensure_app_components(settings)
         ensure_local_action_scripts(settings)
 
         try:
