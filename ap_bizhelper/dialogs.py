@@ -21,7 +21,7 @@ from .ap_bizhelper_config import (
     save_settings as _save_shared_settings,
 )
 from .constants import (
-    APP_COMPONENTS_SRC_DIR,
+    APP_COMPONENTS_DIR,
     DOWNLOADS_DIR_KEY,
     LAST_FILE_DIALOG_DIR_KEY,
     LAST_FILE_DIALOG_DIRS_KEY,
@@ -218,8 +218,8 @@ def ensure_qt_available() -> None:
         raise RuntimeError("PySide6 is required for ap-bizhelper") from _QT_IMPORT_ERROR
 
     try:
-        if APP_COMPONENTS_SRC_DIR.is_dir():
-            pyside_path = str(APP_COMPONENTS_SRC_DIR)
+        if APP_COMPONENTS_DIR.is_dir():
+            pyside_path = str(APP_COMPONENTS_DIR)
             if pyside_path not in sys.path:
                 sys.path.insert(0, pyside_path)
         from PySide6 import QtWidgets  # noqa: F401
