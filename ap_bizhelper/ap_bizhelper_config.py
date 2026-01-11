@@ -83,14 +83,15 @@ EXT_ASSOCIATION_FILE = CONFIG_DIR / "ext_associations.json"
 APWORLD_CACHE_FILE = CONFIG_DIR / "apworld_cache.json"
 PATH_SETTINGS_FILE = CONFIG_DIR / "path_settings.json"
 BIZHAWK_SAVERAM_DIR = Path(os.path.expanduser("~/Documents/bizhawk-saveram"))
+HELPERS_ROOT_DEFAULT = DATA_DIR / "helpers"
 PATH_SETTINGS_DEFAULTS = {
     DESKTOP_DIR_KEY: str(Path.home() / "Desktop"),
     DOWNLOADS_DIR_KEY: str(Path.home() / "Downloads"),
     BIZHAWK_INSTALL_DIR_KEY: str(DATA_DIR / "bizhawk_install"),
-    BIZHAWK_HELPERS_ROOT_KEY: str(DATA_DIR / "helpers"),
+    BIZHAWK_HELPERS_ROOT_KEY: str(HELPERS_ROOT_DEFAULT),
     BIZHAWK_RUNTIME_ROOT_KEY: str(DATA_DIR / "runtime_root"),
     BIZHAWK_SAVERAM_DIR_KEY: str(BIZHAWK_SAVERAM_DIR),
-    SAVE_MIGRATION_HELPER_PATH_KEY: str(DATA_DIR / SAVE_HELPER_STAGED_FILENAME),
+    SAVE_MIGRATION_HELPER_PATH_KEY: str(HELPERS_ROOT_DEFAULT / SAVE_HELPER_STAGED_FILENAME),
     STEAM_ROOT_PATH_KEY: str(Path(os.path.expanduser("~/.steam/steam"))),
     SFC_LUA_PATH_KEY: "",
     LAST_FILE_DIALOG_DIR_KEY: "",

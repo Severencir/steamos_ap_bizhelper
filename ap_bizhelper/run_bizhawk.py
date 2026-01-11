@@ -37,10 +37,11 @@ INSTALL_STATE_FILE = CONFIG_DIR / "install_state.json"
 PATH_SETTINGS_FILE = CONFIG_DIR / "path_settings.json"
 STATE_SETTINGS_FILE = CONFIG_DIR / "state_settings.json"
 SAVE_HELPER_STAGED_FILENAME = "save_migration_helper.py"
+HELPERS_ROOT_DEFAULT = DATA_DIR / "helpers"
 PATH_SETTINGS_DEFAULTS = {
-    BIZHAWK_HELPERS_ROOT_KEY: str(DATA_DIR / "helpers"),
+    BIZHAWK_HELPERS_ROOT_KEY: str(HELPERS_ROOT_DEFAULT),
     BIZHAWK_RUNTIME_ROOT_KEY: str(DATA_DIR / "runtime_root"),
-    SAVE_MIGRATION_HELPER_PATH_KEY: str(DATA_DIR / SAVE_HELPER_STAGED_FILENAME),
+    SAVE_MIGRATION_HELPER_PATH_KEY: str(HELPERS_ROOT_DEFAULT / SAVE_HELPER_STAGED_FILENAME),
 }
 STATE_SETTINGS_DEFAULTS = {
     BIZHAWK_LAST_LAUNCH_ARGS_KEY: [],
@@ -177,6 +178,7 @@ RUNNER_LOGGER = create_component_logger("bizhawk-runner", env_var=RUNNER_LOG_ENV
 
 EMUHAWK_PID_DISCOVERY_ATTEMPTS = 12
 EMUHAWK_PID_DISCOVERY_SLEEP_SECONDS = 0.25
+HELPERS_BIN_DIRNAME = "bin"
 
 
 def _show_error_dialog(msg: str) -> None:
@@ -301,7 +303,11 @@ def get_env_or_config(var: str) -> Optional[str]:
 
     if var == BIZHAWK_EXE_KEY:
         value = _read_setting_value(INSTALL_STATE_FILE, var)
-    elif var in (BIZHAWK_RUNTIME_ROOT_KEY, SAVE_MIGRATION_HELPER_PATH_KEY):
+    elif var in (
+        BIZHAWK_HELPERS_ROOT_KEY,
+        BIZHAWK_RUNTIME_ROOT_KEY,
+        SAVE_MIGRATION_HELPER_PATH_KEY,
+    ):
         default = PATH_SETTINGS_DEFAULTS.get(var, "")
         value = _read_setting_value(PATH_SETTINGS_FILE, var, default=default)
     else:
@@ -327,6 +333,13 @@ def ensure_bizhawk_exe() -> Path:
 
 def _runtime_root() -> Path:
     value = get_env_or_config(BIZHAWK_RUNTIME_ROOT_KEY)
+    if not value:
+        return Path()
+    return Path(os.path.expanduser(value))
+
+
+def _helpers_root() -> Path:
+    value = get_env_or_config(BIZHAWK_HELPERS_ROOT_KEY)
     if not value:
         return Path()
     return Path(os.path.expanduser(value))
@@ -736,7 +749,8 @@ def main(argv: list[str]) -> int:
                         return 1
                     _launch_sni(sni_path, env)
 
-                entry_lua = bizhawk_root / BIZHAWK_ENTRY_LUA_FILENAME
+                helpers_root = _helpers_root()
+                entry_lua = helpers_root / HELPERS_BIN_DIRNAME / BIZHAWK_ENTRY_LUA_FILENAME
                 if not entry_lua.is_file():
                     _show_error_dialog(f"Missing BizHawk entry Lua script: {entry_lua}")
                     return 1

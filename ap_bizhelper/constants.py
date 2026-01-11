@@ -25,6 +25,8 @@ MIME_PACKAGES_DIR = LOCAL_SHARE_DIR / "mime" / "packages"
 BACKUPS_DIR = DATA_DIR / "backups"
 GAME_SAVES_DIR = DATA_DIR / "saves"
 SAVE_HELPER_STAGED_FILENAME = "save_migration_helper.py"
+BIZHAWK_HELPERS_BIN_DIRNAME = "bin"
+BIZHAWK_RUNNER_FILENAME = "run_bizhawk.py"
 
 FILE_FILTER_APWORLD = "*.apworld"
 FILE_FILTER_ARCHIVE = "*.zip *.tar.gz"
