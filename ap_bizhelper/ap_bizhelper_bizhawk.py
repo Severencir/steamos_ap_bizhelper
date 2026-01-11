@@ -22,6 +22,8 @@ from .ap_bizhelper_config import (
     save_settings as _save_shared_settings,
 )
 from .constants import (
+    APP_COMPONENTS_DIR,
+    APP_COMPONENTS_PYTHON_DIR,
     BIZHAWK_ENTRY_LUA_FILENAME,
     BIZHAWK_DESKTOP_SHORTCUT_KEY,
     BIZHAWK_EXE_KEY,
@@ -36,7 +38,6 @@ from .constants import (
     DATA_DIR,
     SAVE_HELPER_STAGED_FILENAME,
     SAVE_MIGRATION_HELPER_PATH_KEY,
-    STAGED_COMPONENTS_DIR,
 )
 from .dialogs import (
     question_dialog as _qt_question_dialog,
@@ -44,8 +45,10 @@ from .dialogs import (
     error_dialog,
     info_dialog,
 )
+from .logging_utils import get_app_logger
 
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
+APP_LOGGER = get_app_logger()
 
 ARCHIVE_READ = "r:*"
 ARCHIVE_TAR_GZ_SUFFIX = ".tar.gz"
@@ -66,7 +69,6 @@ ENCODING_UTF8 = "utf-8"
 GITHUB_API_LATEST = "https://api.github.com/repos/TASEmulators/BizHawk/releases/latest"
 NAME_KEY = "name"
 RUNNER_FILENAME = "run_bizhawk.py"
-RUNNER_MISSING_TEMPLATE = "BizHawk runner helper ({runner}) is missing."
 RUNNER_STAGE_FAILED_TEMPLATE = "Failed to stage BizHawk runner helper ({runner})."
 SAVE_HELPER_FILENAME = "save_migration_helper.py"
 SELECT_EMUHAWK_TITLE = "Select EmuHawkMono.sh"
@@ -74,6 +76,7 @@ TAG_NAME_KEY = "tag_name"
 TAR_TYPE_HINT = "tar"
 YES_VALUE = "yes"
 NO_VALUE = "no"
+PYSIDE_PACKAGES = ("PySide6", "shiboken6")
 
 ARCH_MIRROR_BASE = "https://geo.mirror.pkgbuild.com"
 ARCH_REPO = "extra"
@@ -98,7 +101,7 @@ class RuntimeValidationError(RuntimeError):
 def _ensure_dirs() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    STAGED_COMPONENTS_DIR.mkdir(parents=True, exist_ok=True)
+    APP_COMPONENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _load_settings() -> Dict[str, Any]:
@@ -271,59 +274,135 @@ def _stage_script(target: Path, source: Path, *, make_executable: bool) -> bool:
         return False
 
 
-def _stage_runner(target: Path, source: Path) -> bool:
-    return _stage_script(target, source, make_executable=True)
+def _appimage_site_packages() -> Optional[Path]:
+    appdir = os.environ.get("APPDIR")
+    if not appdir:
+        return None
+    lib_root = Path(appdir) / "usr" / "lib"
+    if not lib_root.is_dir():
+        return None
+    for candidate in sorted(lib_root.glob("python*")):
+        site_packages = candidate / "site-packages"
+        if site_packages.is_dir():
+            return site_packages
+    return None
+
+
+def ensure_pyside_components() -> None:
+    target_root = APP_COMPONENTS_PYTHON_DIR
+    if all((target_root / name).exists() for name in PYSIDE_PACKAGES):
+        return
+
+    site_packages = _appimage_site_packages()
+    if site_packages is None:
+        return
+
+    try:
+        target_root.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        APP_LOGGER.log(
+            f"Failed to create PySide staging directory {target_root}: {exc}",
+            include_context=True,
+            level="WARNING",
+        )
+        return
+
+    for name in PYSIDE_PACKAGES:
+        source = site_packages / name
+        target = target_root / name
+        if target.exists():
+            continue
+        try:
+            if source.is_dir():
+                shutil.copytree(source, target)
+            elif source.is_file():
+                shutil.copy2(source, target)
+            else:
+                APP_LOGGER.log(
+                    f"PySide component not found in AppImage: {source}",
+                    include_context=True,
+                    level="WARNING",
+                )
+        except Exception as exc:
+            APP_LOGGER.log(
+                f"Failed to stage PySide component {name}: {exc}",
+                include_context=True,
+                level="WARNING",
+            )
+
+
+def ensure_app_components(settings: Dict[str, Any], *, force: bool = False) -> None:
+    _ensure_dirs()
+    settings_changed = False
+
+    def _stage_resource(
+        resource_name: str, target: Path, *, make_executable: bool, failure_template: str
+    ) -> None:
+        nonlocal settings_changed
+
+        if not force and target.is_file():
+            return
+        try:
+            resource = resources.files(__package__).joinpath(resource_name)
+        except (ModuleNotFoundError, AttributeError):
+            resource = None
+        if resource is None:
+            error_dialog(failure_template.format(runner=resource_name))
+            return
+        with resources.as_file(resource) as source:
+            if not source.is_file():
+                error_dialog(failure_template.format(runner=resource_name))
+                return
+            if _stage_script(target, source, make_executable=make_executable):
+                settings_changed = True
+            else:
+                error_dialog(failure_template.format(runner=resource_name))
+
+    runner_path = APP_COMPONENTS_DIR / RUNNER_FILENAME
+    _stage_resource(
+        RUNNER_FILENAME,
+        runner_path,
+        make_executable=True,
+        failure_template=RUNNER_STAGE_FAILED_TEMPLATE,
+    )
+
+    entry_path = APP_COMPONENTS_DIR / BIZHAWK_ENTRY_LUA_FILENAME
+    _stage_resource(
+        BIZHAWK_ENTRY_LUA_FILENAME,
+        entry_path,
+        make_executable=False,
+        failure_template="Failed to stage BizHawk entry Lua resource ({runner}).",
+    )
+
+    helper_path = APP_COMPONENTS_DIR / SAVE_HELPER_STAGED_FILENAME
+    _stage_resource(
+        SAVE_HELPER_FILENAME,
+        helper_path,
+        make_executable=True,
+        failure_template="Failed to stage save migration helper ({runner}).",
+    )
+
+    if settings.get(BIZHAWK_RUNNER_KEY) != str(runner_path):
+        settings[BIZHAWK_RUNNER_KEY] = str(runner_path)
+        settings_changed = True
+
+    if settings.get(BIZHAWK_ENTRY_LUA_PATH_KEY) != str(entry_path):
+        settings[BIZHAWK_ENTRY_LUA_PATH_KEY] = str(entry_path)
+        settings_changed = True
+
+    if settings.get(SAVE_MIGRATION_HELPER_PATH_KEY) != str(helper_path):
+        settings[SAVE_MIGRATION_HELPER_PATH_KEY] = str(helper_path)
+        settings_changed = True
+
+    if settings_changed:
+        _save_settings(settings)
+
+    ensure_pyside_components()
 
 
 def build_runner(settings: Dict[str, Any], bizhawk_root: Path) -> Path:
-    _ensure_dirs()
-    try:
-        runner_resource = resources.files(__package__).joinpath(RUNNER_FILENAME)
-    except (ModuleNotFoundError, AttributeError):
-        runner_resource = None
-
-    runner_path = STAGED_COMPONENTS_DIR / RUNNER_FILENAME
-
-    if runner_resource is None:
-        error_dialog(RUNNER_MISSING_TEMPLATE.format(runner=RUNNER_FILENAME))
-        return runner_path
-
-    staged = False
-    with resources.as_file(runner_resource) as source_runner:
-        if not source_runner.is_file():
-            error_dialog(RUNNER_MISSING_TEMPLATE.format(runner=RUNNER_FILENAME))
-            return runner_path
-        staged = _stage_runner(runner_path, source_runner)
-
-    if not staged:
-        error_dialog(RUNNER_STAGE_FAILED_TEMPLATE.format(runner=RUNNER_FILENAME))
-
-    entry_resource = resources.files(__package__).joinpath(BIZHAWK_ENTRY_LUA_FILENAME)
-    with resources.as_file(entry_resource) as entry_source:
-        if entry_source.is_file():
-            target = STAGED_COMPONENTS_DIR / BIZHAWK_ENTRY_LUA_FILENAME
-            target.write_bytes(entry_source.read_bytes())
-            settings[BIZHAWK_ENTRY_LUA_PATH_KEY] = str(target)
-            _save_settings(settings)
-        else:
-            error_dialog("Missing BizHawk entry Lua resource.")
-
-    helper_resource = resources.files(__package__).joinpath(SAVE_HELPER_FILENAME)
-    staged_helper_path = STAGED_COMPONENTS_DIR / SAVE_HELPER_STAGED_FILENAME
-    with resources.as_file(helper_resource) as helper_source:
-        if not helper_source.is_file():
-            error_dialog(f"Save migration helper is missing: {helper_source}")
-        else:
-            staged = _stage_script(staged_helper_path, helper_source, make_executable=True)
-            if not staged:
-                error_dialog(f"Failed to stage save migration helper: {staged_helper_path}")
-            else:
-                settings[SAVE_MIGRATION_HELPER_PATH_KEY] = str(staged_helper_path)
-                _save_settings(settings)
-
-    settings[BIZHAWK_RUNNER_KEY] = str(runner_path)
-    _save_settings(settings)
-    return runner_path
+    ensure_app_components(settings, force=True)
+    return APP_COMPONENTS_DIR / RUNNER_FILENAME
 
 
 def ensure_bizhawk_desktop_shortcut(
