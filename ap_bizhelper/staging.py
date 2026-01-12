@@ -44,6 +44,16 @@ def get_helpers_appimage_root(settings: dict[str, Any]) -> Path:
 
 
 def _stage_script(target: Path, source: Path, *, make_executable: bool) -> bool:
+    if target.is_file():
+        return True
+    if target.exists():
+        try:
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+        except Exception:
+            return False
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         data = source.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
@@ -80,6 +90,16 @@ def _get_bizhelper_appimage(settings: dict[str, Any]) -> Path | None:
 
 
 def _copy_tree(source: Path, target: Path) -> bool:
+    if target.is_dir():
+        return True
+    if target.exists():
+        try:
+            if target.is_file():
+                target.unlink()
+            else:
+                shutil.rmtree(target)
+        except Exception:
+            return False
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
@@ -89,6 +109,16 @@ def _copy_tree(source: Path, target: Path) -> bool:
 
 
 def _copy_file(source: Path, target: Path) -> bool:
+    if target.is_file():
+        return True
+    if target.exists():
+        try:
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+        except Exception:
+            return False
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target, follow_symlinks=False)
