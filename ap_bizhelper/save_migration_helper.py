@@ -32,6 +32,8 @@ from ap_bizhelper.constants import (
     BIZHAWK_LAST_PID_KEY,
     BIZHAWK_RUNNER_KEY,
     BIZHAWK_SAVERAM_DIR_KEY,
+    BIZHAWK_HELPERS_APPIMAGE_DIRNAME,
+    BIZHAWK_HELPERS_LIB_DIRNAME,
 )
 from ap_bizhelper.dialogs import (
     ensure_qt_app,
@@ -50,6 +52,40 @@ PID_KILL_WAIT_SECONDS = 2.0
 PID_POLL_INTERVAL_SECONDS = 0.1
 
 HELPER_LOGGER = create_component_logger("save-migration", subdir=MIGRATION_LOG_SUBDIR)
+
+
+def _prepend_sys_path(path: Path) -> None:
+    if not path.is_dir():
+        return
+    path_str = path.as_posix()
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
+
+
+def _prepend_env_path(key: str, value: Path) -> None:
+    if not value.is_dir():
+        return
+    value_str = value.as_posix()
+    existing = os.environ.get(key, "")
+    if existing:
+        os.environ[key] = value_str + os.pathsep + existing
+    else:
+        os.environ[key] = value_str
+
+
+def _stage_pyside6_paths() -> None:
+    helpers_root = Path(__file__).resolve().parent
+    helpers_lib = helpers_root / BIZHAWK_HELPERS_LIB_DIRNAME
+    helpers_appimage = helpers_lib / BIZHAWK_HELPERS_APPIMAGE_DIRNAME
+    _prepend_sys_path(helpers_lib)
+    for site_packages in helpers_appimage.glob("usr/lib/python*/site-packages"):
+        _prepend_sys_path(site_packages)
+    _prepend_env_path("LD_LIBRARY_PATH", helpers_appimage / "usr/lib")
+    for plugin_rel in ("usr/lib/qt6/plugins", "usr/lib/qt/plugins"):
+        _prepend_env_path("QT_PLUGIN_PATH", helpers_appimage / plugin_rel)
+
+
+_stage_pyside6_paths()
 
 
 def _bizhawk_root(settings: dict) -> Optional[Path]:
