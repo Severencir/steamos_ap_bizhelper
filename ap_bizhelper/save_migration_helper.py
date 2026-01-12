@@ -11,6 +11,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+def _prepend_helpers_lib_path() -> None:
+    script_path = Path(__file__).resolve()
+    helpers_root = script_path.parent
+    helpers_lib = helpers_root / "lib"
+    if not helpers_lib.is_dir():
+        return
+    helpers_lib_str = helpers_lib.as_posix()
+    if helpers_lib_str not in sys.path:
+        sys.path.insert(0, helpers_lib_str)
+
+
+_prepend_helpers_lib_path()
+
 from ap_bizhelper.ap_bizhelper_config import get_path_setting, load_settings
 from ap_bizhelper.constants import (
     BIZHAWK_EXE_KEY,
