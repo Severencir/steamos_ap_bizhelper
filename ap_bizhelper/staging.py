@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import importlib.resources as resources
+import json
 import os
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ from typing import Any
 from .ap_bizhelper_config import PATH_SETTINGS_DEFAULTS
 from .constants import (
     BIZHAWK_ENTRY_LUA_FILENAME,
+    BIZHAWK_HELPERS_APPIMAGE_MANIFEST,
     BIZHAWK_HELPERS_APPIMAGE_DIRNAME,
     BIZHAWK_HELPERS_LIB_DIRNAME,
     BIZHAWK_HELPERS_ROOT_KEY,
@@ -41,6 +43,10 @@ def get_helpers_lib_root(settings: dict[str, Any]) -> Path:
 
 def get_helpers_appimage_root(settings: dict[str, Any]) -> Path:
     return get_helpers_lib_root(settings) / BIZHAWK_HELPERS_APPIMAGE_DIRNAME
+
+
+def _helpers_appimage_manifest_path(stage_root: Path) -> Path:
+    return stage_root / BIZHAWK_HELPERS_APPIMAGE_MANIFEST
 
 
 def _stage_script(target: Path, source: Path, *, make_executable: bool) -> bool:
@@ -161,9 +167,60 @@ def _iter_qt_plugin_dirs(appimage_root: Path) -> list[Path]:
     return [candidate for candidate in candidates if candidate.is_dir()]
 
 
+def _iter_tree_entries(root: Path) -> tuple[list[Path], list[Path]]:
+    files: list[Path] = []
+    dirs: list[Path] = [root]
+    for entry in root.rglob("*"):
+        if entry.is_dir():
+            dirs.append(entry)
+        else:
+            files.append(entry)
+    return files, dirs
+
+
+def _load_appimage_manifest(manifest_path: Path) -> dict[str, list[str]] | None:
+    if not manifest_path.is_file():
+        return None
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    files = data.get("files")
+    dirs = data.get("dirs")
+    if not isinstance(files, list) or not isinstance(dirs, list):
+        return None
+    if not all(isinstance(item, str) for item in files + dirs):
+        return None
+    return {"files": files, "dirs": dirs}
+
+
+def _appimage_stage_complete(stage_root: Path, manifest: dict[str, list[str]]) -> bool:
+    for entry in manifest.get("dirs", []):
+        if not (stage_root / entry).is_dir():
+            return False
+    for entry in manifest.get("files", []):
+        if not (stage_root / entry).is_file():
+            return False
+    return True
+
+
+def _write_appimage_manifest(stage_root: Path, manifest: dict[str, list[str]]) -> None:
+    manifest_path = _helpers_appimage_manifest_path(stage_root)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def stage_pyside6_from_appimage(settings: dict[str, Any]) -> dict[str, tuple[Path, bool]]:
     appimage = _get_bizhelper_appimage(settings)
     if not appimage:
+        return {}
+
+    stage_root = get_helpers_appimage_root(settings)
+    manifest_path = _helpers_appimage_manifest_path(stage_root)
+    manifest = _load_appimage_manifest(manifest_path)
+    if manifest and _appimage_stage_complete(stage_root, manifest):
         return {}
 
     staged: dict[str, tuple[Path, bool]] = {}
@@ -185,22 +242,36 @@ def stage_pyside6_from_appimage(settings: dict[str, Any]) -> dict[str, tuple[Pat
         if not squashfs_root.is_dir():
             return {}
 
-        stage_root = get_helpers_appimage_root(settings)
         packages = _iter_pyside6_packages(squashfs_root)
         if not packages:
             return {}
 
+        manifest_files: list[Path] = []
+        manifest_dirs: list[Path] = []
         for package in packages:
             target = stage_root / package.relative_to(squashfs_root)
             staged[str(package)] = (target, _copy_tree(package, target))
+            files, dirs = _iter_tree_entries(package)
+            manifest_files.extend(files)
+            manifest_dirs.extend(dirs)
 
         for library in _iter_qt_library_files(squashfs_root):
             target = stage_root / library.relative_to(squashfs_root)
             staged[str(library)] = (target, _copy_file(library, target))
+            manifest_files.append(library)
 
         for plugin_dir in _iter_qt_plugin_dirs(squashfs_root):
             target = stage_root / plugin_dir.relative_to(squashfs_root)
             staged[str(plugin_dir)] = (target, _copy_tree(plugin_dir, target))
+            files, dirs = _iter_tree_entries(plugin_dir)
+            manifest_files.extend(files)
+            manifest_dirs.extend(dirs)
+
+        manifest_payload = {
+            "files": sorted({str(path.relative_to(squashfs_root)) for path in manifest_files}),
+            "dirs": sorted({str(path.relative_to(squashfs_root)) for path in manifest_dirs}),
+        }
+        _write_appimage_manifest(stage_root, manifest_payload)
 
     return staged
 
