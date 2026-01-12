@@ -9,6 +9,9 @@ passing load/save callbacks for file dialogs.
 
 import importlib.util
 import os
+import shutil
+import subprocess
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +24,7 @@ from .ap_bizhelper_config import (
 )
 from .constants import (
     DOWNLOADS_DIR_KEY,
+    DIALOG_SHIM_ZENITY_FILENAME,
     LAST_FILE_DIALOG_DIR_KEY,
     LAST_FILE_DIALOG_DIRS_KEY,
 )
@@ -1559,6 +1563,43 @@ def error_dialog(message: str, *, title: str = "Error", logger: Optional[AppLogg
         icon="error",
         buttons=[DialogButtonSpec("OK", role="positive", is_default=True)],
     )
+
+
+def fallback_error_dialog(
+    message: str, *, title: str = "Error", logger: Optional[AppLogger] = None
+) -> None:
+    app_logger = logger or get_app_logger()
+    if importlib.util.find_spec("PySide6") is not None:
+        try:
+            error_dialog(message, title=title, logger=app_logger)
+            return
+        except Exception as exc:
+            app_logger.log(
+                f"Qt error dialog failed; falling back to zenity. {exc}",
+                level="WARNING",
+                include_context=True,
+                location="error-dialog",
+            )
+
+    zenity = shutil.which(DIALOG_SHIM_ZENITY_FILENAME)
+    if zenity and os.environ.get("DISPLAY"):
+        try:
+            app_logger.log_dialog(title, message, level="ERROR", backend="zenity", location="error-dialog")
+            subprocess.run(
+                [zenity, "--error", "--title", title, "--text", message],
+                check=False,
+            )
+            return
+        except Exception as exc:
+            app_logger.log(
+                f"Zenity error dialog failed; falling back to stderr. {exc}",
+                level="WARNING",
+                include_context=True,
+                location="error-dialog",
+            )
+
+    app_logger.log_dialog(title, message, level="ERROR", backend="stderr", location="error-dialog")
+    sys.stderr.write(f"{title}: {message}\n")
 
 
 def preferred_start_dir(initial: Optional[Path], settings: Dict[str, object], dialog_key: str) -> Path:

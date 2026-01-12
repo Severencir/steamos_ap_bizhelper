@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -39,6 +40,7 @@ from ap_bizhelper.constants import (  # noqa: E402
     LOG_PREFIX,
     SAVE_MIGRATION_HELPER_PATH_KEY,
 )
+from ap_bizhelper.dialogs import fallback_error_dialog  # noqa: E402
 from ap_bizhelper.logging_utils import (  # noqa: E402
     LOG_LEVEL_ERROR,
     LOG_LEVEL_WARNING,
@@ -73,14 +75,7 @@ EMUHAWK_PID_DISCOVERY_SLEEP_SECONDS = 0.25
 
 def _show_error_dialog(msg: str) -> None:
     RUNNER_LOGGER.log(f"Error dialog requested: {msg}", level=LOG_LEVEL_ERROR, include_context=True)
-    zenity = shutil.which("zenity")
-    if zenity and os.environ.get("DISPLAY"):
-        subprocess.run(
-            [zenity, "--error", "--title", RUNNER_ERROR_TITLE, "--text", msg],
-            check=False,
-        )
-        return
-    sys.stderr.write(f"{RUNNER_ERROR_TITLE}: {msg}\n")
+    fallback_error_dialog(msg, title=RUNNER_ERROR_TITLE, logger=RUNNER_LOGGER)
 
 
 def _load_settings_safe() -> dict[str, Any]:
@@ -144,7 +139,11 @@ def get_env_or_config(var: str, settings: dict[str, Any]) -> Optional[str]:
 def ensure_bizhawk_exe(settings: dict[str, Any]) -> Path:
     exe = get_env_or_config(BIZHAWK_EXE_KEY, settings)
     if not exe or not Path(exe).is_file():
-        _show_error_dialog(f"{LOG_PREFIX} BIZHAWK_EXE is not set or not a file; cannot launch BizHawk.")
+        fallback_error_dialog(
+            f"{LOG_PREFIX} BIZHAWK_EXE is not set or not a file; cannot launch BizHawk.",
+            title=RUNNER_ERROR_TITLE,
+            logger=RUNNER_LOGGER,
+        )
         sys.exit(1)
     RUNNER_LOGGER.log(f"Resolved BizHawk launcher script: {exe}", include_context=True)
     return Path(exe)
@@ -198,9 +197,11 @@ def _validate_runtime(runtime_root: Path) -> None:
         missing.append("libgdiplus")
 
     if missing:
-        _show_error_dialog(
+        fallback_error_dialog(
             "BizHawk runtime dependencies are missing from runtime_root:\n"
-            f"{runtime_root}\n\nMissing: {', '.join(missing)}"
+            f"{runtime_root}\n\nMissing: {', '.join(missing)}",
+            title=RUNNER_ERROR_TITLE,
+            logger=RUNNER_LOGGER,
         )
         sys.exit(1)
 
@@ -398,7 +399,11 @@ def _launch_sni(sni_path: Path, env: dict[str, str]) -> None:
             stderr=subprocess.DEVNULL,
         )
     except Exception as exc:
-        _show_error_dialog(f"Failed to launch SNI: {exc}")
+        fallback_error_dialog(
+            f"Failed to launch SNI: {exc}",
+            title=RUNNER_ERROR_TITLE,
+            logger=RUNNER_LOGGER,
+        )
         sys.exit(1)
 
 
@@ -488,14 +493,23 @@ def main(argv: list[str]) -> int:
             location="startup",
         )
         try:
+            if importlib.util.find_spec("PySide6") is None:
+                fallback_error_dialog(
+                    f"{LOG_PREFIX} PySide6 is required to launch BizHawk.",
+                    title=RUNNER_ERROR_TITLE,
+                    logger=RUNNER_LOGGER,
+                )
+                return 1
             settings = _load_settings_safe()
             bizhawk_exe = ensure_bizhawk_exe(settings)
             bizhawk_root = bizhawk_exe.parent
 
             runtime_root = _runtime_root(settings)
             if not runtime_root:
-                _show_error_dialog(
-                    f"{LOG_PREFIX} BIZHAWK_RUNTIME_ROOT is not set; cannot launch BizHawk."
+                fallback_error_dialog(
+                    f"{LOG_PREFIX} BIZHAWK_RUNTIME_ROOT is not set; cannot launch BizHawk.",
+                    title=RUNNER_ERROR_TITLE,
+                    logger=RUNNER_LOGGER,
                 )
                 return 1
             _validate_runtime(runtime_root)
@@ -539,9 +553,11 @@ def main(argv: list[str]) -> int:
             if needs_archipelago:
                 mount = _find_archipelago_mount()
                 if not mount:
-                    _show_error_dialog(
+                    fallback_error_dialog(
                         "Archipelago AppImage mount not found.\n\n"
-                        "Please start Archipelago before launching BizHawk so the AppImage mount is available."
+                        "Please start Archipelago before launching BizHawk so the AppImage mount is available.",
+                        title=RUNNER_ERROR_TITLE,
+                        logger=RUNNER_LOGGER,
                     )
                     return 1
 
@@ -549,12 +565,20 @@ def main(argv: list[str]) -> int:
                     if wants_sni:
                         connector_path = _resolve_sni_connector(mount)
                         if not connector_path:
-                            _show_error_dialog("SNI connector not found inside Archipelago AppImage mount.")
+                            fallback_error_dialog(
+                                "SNI connector not found inside Archipelago AppImage mount.",
+                                title=RUNNER_ERROR_TITLE,
+                                logger=RUNNER_LOGGER,
+                            )
                             return 1
                     else:
                         connector_path = _resolve_connector_from_arg(mount, ap_lua_arg)
                 except FileNotFoundError as exc:
-                    _show_error_dialog(str(exc))
+                    fallback_error_dialog(
+                        str(exc),
+                        title=RUNNER_ERROR_TITLE,
+                        logger=RUNNER_LOGGER,
+                    )
                     return 1
 
                 env[AP_BIZHELPER_CONNECTOR_PATH_ENV] = str(connector_path)
@@ -562,14 +586,22 @@ def main(argv: list[str]) -> int:
                 if wants_sni:
                     sni_path = _resolve_sni(mount)
                     if not sni_path:
-                        _show_error_dialog("SNI binary not found inside Archipelago AppImage mount.")
+                        fallback_error_dialog(
+                            "SNI binary not found inside Archipelago AppImage mount.",
+                            title=RUNNER_ERROR_TITLE,
+                            logger=RUNNER_LOGGER,
+                        )
                         return 1
                     _launch_sni(sni_path, env)
 
                 helpers_root = _helpers_root(settings)
                 entry_lua = helpers_root / BIZHAWK_ENTRY_LUA_FILENAME
                 if not entry_lua.is_file():
-                    _show_error_dialog(f"Missing BizHawk entry Lua script: {entry_lua}")
+                    fallback_error_dialog(
+                        f"Missing BizHawk entry Lua script: {entry_lua}",
+                        title=RUNNER_ERROR_TITLE,
+                        logger=RUNNER_LOGGER,
+                    )
                     return 1
 
             final_args: list[str] = []
@@ -591,8 +623,10 @@ def main(argv: list[str]) -> int:
 
             systemd_run = shutil.which("systemd-run")
             if not systemd_run:
-                _show_error_dialog(
-                    "systemd-run is not available; cannot launch BizHawk as a detached transient service."
+                fallback_error_dialog(
+                    "systemd-run is not available; cannot launch BizHawk as a detached transient service.",
+                    title=RUNNER_ERROR_TITLE,
+                    logger=RUNNER_LOGGER,
                 )
                 return 1
 
@@ -656,8 +690,10 @@ def main(argv: list[str]) -> int:
             )
 
             if result.returncode != 0:
-                _show_error_dialog(
-                    f"Failed to launch BizHawk via systemd-run service (rc={result.returncode}).\n\nOutput:\n{output}"
+                fallback_error_dialog(
+                    f"Failed to launch BizHawk via systemd-run service (rc={result.returncode}).\n\nOutput:\n{output}",
+                    title=RUNNER_ERROR_TITLE,
+                    logger=RUNNER_LOGGER,
                 )
                 return 1
 
