@@ -12,3 +12,4 @@
 - Remove dialog references to Linux, Windows, or Proton; everything is assumed to be Linux now.
 - Solve main app staying open past AP closure. Consider decoupling app from AP by staging shim + shim deps. If done, consider having staged components use same deps.
 - Ensure all staged components are present independently every launch and copy/download them as necessary.
+- Add versions, self updating logic, and replacement of staged source when updated.
