@@ -30,8 +30,11 @@ from .constants import (
     BIZHAWK_HELPERS_LIB_DIRNAME,
     BIZHAWK_RUNNER_KEY,
     DIALOG_SHIM_KDIALOG_FILENAME,
+    DIALOG_SHIM_KDIALOG_SHIM_FILENAME,
     DIALOG_SHIM_PORTAL_FILENAME,
+    DIALOG_SHIM_PORTAL_SHIM_FILENAME,
     DIALOG_SHIM_ZENITY_FILENAME,
+    DIALOG_SHIM_ZENITY_SHIM_FILENAME,
     LAST_ROM_DIR_KEY,
     ROM_HASH_CACHE_KEY,
     ROM_ROOTS_KEY,
@@ -43,7 +46,7 @@ from .logging_utils import (
     TIMESTAMP_ENV,
     create_component_logger,
 )
-from .staging import get_helpers_bin_root, get_helpers_lib_root, stage_helper_lib
+from .staging import get_helpers_lib_root, get_helpers_root, stage_helper_lib
 
 _REAL_ZENITY_ENV = "AP_BIZHELPER_REAL_ZENITY"
 _REAL_KDIALOG_ENV = "AP_BIZHELPER_REAL_KDIALOG"
@@ -1160,7 +1163,7 @@ import sys
 
 
 def _prepend_helpers_lib_path() -> None:
-    helpers_root = Path(__file__).resolve().parents[1]
+    helpers_root = Path(__file__).resolve().parent
     helpers_lib = helpers_root / "{BIZHAWK_HELPERS_LIB_DIRNAME}"
     if not helpers_lib.is_dir():
         return
@@ -1189,6 +1192,23 @@ def _stage_dialog_shim_script(target: Path, entrypoint: str) -> bool:
         return False
 
 
+def _dialog_shim_wrapper_script(shim_name: str) -> str:
+    return f"""#!/bin/sh
+shim_path="$(dirname "$0")/{shim_name}"
+exec "$shim_path" "$@"
+"""
+
+
+def _stage_dialog_shim_wrapper_script(target: Path, shim_name: str) -> bool:
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_dialog_shim_wrapper_script(shim_name), encoding="utf-8")
+        target.chmod(target.stat().st_mode | 0o111)
+        return True
+    except Exception:
+        return False
+
+
 def prepare_dialog_shim_env(logger: Optional[AppLogger] = None) -> Optional[Dict[str, str]]:
     """Create a dialog shim script and return environment overrides.
 
@@ -1199,9 +1219,9 @@ def prepare_dialog_shim_env(logger: Optional[AppLogger] = None) -> Optional[Dict
 
     try:
         settings = load_settings()
-        helpers_bin = get_helpers_bin_root(settings)
+        helpers_root = get_helpers_root(settings)
         helpers_lib = get_helpers_lib_root(settings)
-        helpers_bin.mkdir(parents=True, exist_ok=True)
+        helpers_root.mkdir(parents=True, exist_ok=True)
     except Exception:
         return None
 
@@ -1217,20 +1237,34 @@ def prepare_dialog_shim_env(logger: Optional[AppLogger] = None) -> Optional[Dict
 
     search_path = os.environ.get("PATH", "")
     cleaned_path = os.pathsep.join(
-        [p for p in search_path.split(os.pathsep) if p and Path(p) != helpers_bin]
+        [p for p in search_path.split(os.pathsep) if p and Path(p) != helpers_root]
     )
 
     real_zenity = shutil.which(DIALOG_SHIM_ZENITY_FILENAME, path=cleaned_path)
     real_kdialog = shutil.which(DIALOG_SHIM_KDIALOG_FILENAME, path=cleaned_path)
     real_portal = shutil.which(DIALOG_SHIM_PORTAL_FILENAME, path=cleaned_path)
 
-    zenity_path = helpers_bin / DIALOG_SHIM_ZENITY_FILENAME
-    kdialog_path = helpers_bin / DIALOG_SHIM_KDIALOG_FILENAME
-    portal_path = helpers_bin / DIALOG_SHIM_PORTAL_FILENAME
+    zenity_shim_path = helpers_root / DIALOG_SHIM_ZENITY_SHIM_FILENAME
+    kdialog_shim_path = helpers_root / DIALOG_SHIM_KDIALOG_SHIM_FILENAME
+    portal_shim_path = helpers_root / DIALOG_SHIM_PORTAL_SHIM_FILENAME
     staged = {
-        zenity_path: _stage_dialog_shim_script(zenity_path, "shim_main"),
-        kdialog_path: _stage_dialog_shim_script(kdialog_path, "kdialog_main"),
-        portal_path: _stage_dialog_shim_script(portal_path, "portal_file_chooser_main"),
+        zenity_shim_path: _stage_dialog_shim_script(zenity_shim_path, "shim_main"),
+        kdialog_shim_path: _stage_dialog_shim_script(kdialog_shim_path, "kdialog_main"),
+        portal_shim_path: _stage_dialog_shim_script(
+            portal_shim_path, "portal_file_chooser_main"
+        ),
+        helpers_root / DIALOG_SHIM_ZENITY_FILENAME: _stage_dialog_shim_wrapper_script(
+            helpers_root / DIALOG_SHIM_ZENITY_FILENAME,
+            DIALOG_SHIM_ZENITY_SHIM_FILENAME,
+        ),
+        helpers_root / DIALOG_SHIM_KDIALOG_FILENAME: _stage_dialog_shim_wrapper_script(
+            helpers_root / DIALOG_SHIM_KDIALOG_FILENAME,
+            DIALOG_SHIM_KDIALOG_SHIM_FILENAME,
+        ),
+        helpers_root / DIALOG_SHIM_PORTAL_FILENAME: _stage_dialog_shim_wrapper_script(
+            helpers_root / DIALOG_SHIM_PORTAL_FILENAME,
+            DIALOG_SHIM_PORTAL_SHIM_FILENAME,
+        ),
     }
     if logger:
         for path, ok in staged.items():
@@ -1247,13 +1281,13 @@ def prepare_dialog_shim_env(logger: Optional[AppLogger] = None) -> Optional[Dict
     if helpers_lib.is_dir():
         pythonpath_parts.insert(0, helpers_lib.as_posix())
     env = {
-        "PATH": helpers_bin.as_posix() + os.pathsep + os.environ.get("PATH", ""),
+        "PATH": helpers_root.as_posix() + os.pathsep + os.environ.get("PATH", ""),
         "PYTHONPATH": os.pathsep.join(pythonpath_parts)
         + (os.pathsep + pythonpath if pythonpath else ""),
         _REAL_ZENITY_ENV: real_zenity or "",
         _REAL_KDIALOG_ENV: real_kdialog or "",
         _REAL_PORTAL_ENV: real_portal or "",
-        "AP_BIZHELPER_SHIM_DIR": helpers_bin.as_posix(),
+        "AP_BIZHELPER_SHIM_DIR": helpers_root.as_posix(),
     }
     session_env: Dict[str, str] = {}
     if logger:

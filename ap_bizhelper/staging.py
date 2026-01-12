@@ -9,7 +9,6 @@ from typing import Any
 from .ap_bizhelper_config import PATH_SETTINGS_DEFAULTS
 from .constants import (
     BIZHAWK_ENTRY_LUA_FILENAME,
-    BIZHAWK_HELPERS_BIN_DIRNAME,
     BIZHAWK_HELPERS_LIB_DIRNAME,
     BIZHAWK_HELPERS_ROOT_KEY,
     BIZHAWK_RUNNER_FILENAME,
@@ -29,10 +28,6 @@ def get_helpers_root(settings: dict[str, Any]) -> Path:
         {BIZHAWK_HELPERS_ROOT_KEY: PATH_SETTINGS_DEFAULTS[BIZHAWK_HELPERS_ROOT_KEY]},
     )
     return Path(os.path.expanduser(str(settings[BIZHAWK_HELPERS_ROOT_KEY])))
-
-
-def get_helpers_bin_root(settings: dict[str, Any]) -> Path:
-    return get_helpers_root(settings) / BIZHAWK_HELPERS_BIN_DIRNAME
 
 
 def get_helpers_lib_root(settings: dict[str, Any]) -> Path:
@@ -87,24 +82,22 @@ def stage_helper_lib(settings: dict[str, Any]) -> dict[str, tuple[Path, bool]]:
 
 def stage_bizhawk_helpers(settings: dict[str, Any]) -> dict[str, tuple[Path, bool]]:
     helpers_root = get_helpers_root(settings)
-    helpers_bin = helpers_root / BIZHAWK_HELPERS_BIN_DIRNAME
     helpers_root.mkdir(parents=True, exist_ok=True)
-    helpers_bin.mkdir(parents=True, exist_ok=True)
 
     staged = {
         BIZHAWK_RUNNER_FILENAME: (
-            helpers_bin / BIZHAWK_RUNNER_FILENAME,
+            helpers_root / BIZHAWK_RUNNER_FILENAME,
             stage_helper_resource(
                 BIZHAWK_RUNNER_FILENAME,
-                helpers_bin / BIZHAWK_RUNNER_FILENAME,
+                helpers_root / BIZHAWK_RUNNER_FILENAME,
                 make_executable=True,
             ),
         ),
         BIZHAWK_ENTRY_LUA_FILENAME: (
-            helpers_bin / BIZHAWK_ENTRY_LUA_FILENAME,
+            helpers_root / BIZHAWK_ENTRY_LUA_FILENAME,
             stage_helper_resource(
                 BIZHAWK_ENTRY_LUA_FILENAME,
-                helpers_bin / BIZHAWK_ENTRY_LUA_FILENAME,
+                helpers_root / BIZHAWK_ENTRY_LUA_FILENAME,
                 make_executable=False,
             ),
         ),
