@@ -11,7 +11,7 @@ from typing import Any, Optional
 
 def _prepend_helpers_lib_path() -> None:
     script_path = Path(__file__).resolve()
-    helpers_root = script_path.parent.parent
+    helpers_root = script_path.parent
     helpers_lib = helpers_root / "lib"
     if not helpers_lib.is_dir():
         return
@@ -32,7 +32,6 @@ from ap_bizhelper.constants import (  # noqa: E402
     AP_BIZHELPER_EMUHAWK_PID_ENV,
     BIZHAWK_ENTRY_LUA_FILENAME,
     BIZHAWK_EXE_KEY,
-    BIZHAWK_HELPERS_BIN_DIRNAME,
     BIZHAWK_HELPERS_ROOT_KEY,
     BIZHAWK_LAST_LAUNCH_ARGS_KEY,
     BIZHAWK_LAST_PID_KEY,
@@ -568,7 +567,7 @@ def main(argv: list[str]) -> int:
                     _launch_sni(sni_path, env)
 
                 helpers_root = _helpers_root(settings)
-                entry_lua = helpers_root / BIZHAWK_HELPERS_BIN_DIRNAME / BIZHAWK_ENTRY_LUA_FILENAME
+                entry_lua = helpers_root / BIZHAWK_ENTRY_LUA_FILENAME
                 if not entry_lua.is_file():
                     _show_error_dialog(f"Missing BizHawk entry Lua script: {entry_lua}")
                     return 1
