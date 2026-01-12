@@ -27,6 +27,7 @@ from ap_bizhelper import dialogs
 from .ap_bizhelper_config import load_settings, save_settings
 from .constants import (
     BIZHAWK_EXE_KEY,
+    BIZHAWK_HELPERS_APPIMAGE_DIRNAME,
     BIZHAWK_HELPERS_LIB_DIRNAME,
     BIZHAWK_RUNNER_KEY,
     DIALOG_SHIM_KDIALOG_FILENAME,
@@ -46,7 +47,12 @@ from .logging_utils import (
     TIMESTAMP_ENV,
     create_component_logger,
 )
-from .staging import get_helpers_lib_root, get_helpers_root, stage_helper_lib
+from .staging import (
+    get_helpers_lib_root,
+    get_helpers_root,
+    stage_helper_lib,
+    stage_pyside6_from_appimage,
+)
 
 _REAL_ZENITY_ENV = "AP_BIZHELPER_REAL_ZENITY"
 _REAL_KDIALOG_ENV = "AP_BIZHELPER_REAL_KDIALOG"
@@ -1158,21 +1164,104 @@ class PortalShim:
 
 def _dialog_shim_script(entrypoint: str) -> str:
     return f"""#!/usr/bin/env python3
+import os
 from pathlib import Path
 import sys
 
 
-def _prepend_helpers_lib_path() -> None:
+_REAL_ENV_BY_ENTRYPOINT = {{
+    "shim_main": "{_REAL_ZENITY_ENV}",
+    "kdialog_main": "{_REAL_KDIALOG_ENV}",
+    "portal_file_chooser_main": "{_REAL_PORTAL_ENV}",
+}}
+
+_BOOTSTRAP_LOGGER = None
+
+
+def _prepend_sys_path(path: Path) -> None:
+    if not path.is_dir():
+        return
+    path_str = path.as_posix()
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
+
+
+def _prepend_env_path(key: str, value: Path) -> None:
+    if not value.is_dir():
+        return
+    value_str = value.as_posix()
+    existing = os.environ.get(key, "")
+    if existing:
+        os.environ[key] = value_str + os.pathsep + existing
+    else:
+        os.environ[key] = value_str
+
+
+def _stage_pyside6_paths() -> None:
     helpers_root = Path(__file__).resolve().parent
     helpers_lib = helpers_root / "{BIZHAWK_HELPERS_LIB_DIRNAME}"
-    if not helpers_lib.is_dir():
-        return
-    helpers_lib_str = helpers_lib.as_posix()
-    if helpers_lib_str not in sys.path:
-        sys.path.insert(0, helpers_lib_str)
+    helpers_appimage = helpers_lib / "{BIZHAWK_HELPERS_APPIMAGE_DIRNAME}"
+    _prepend_sys_path(helpers_lib)
+    for site_packages in helpers_appimage.glob("usr/lib/python*/site-packages"):
+        _prepend_sys_path(site_packages)
+    _prepend_env_path("LD_LIBRARY_PATH", helpers_appimage / "usr/lib")
+    for plugin_rel in ("usr/lib/qt6/plugins", "usr/lib/qt/plugins"):
+        _prepend_env_path("QT_PLUGIN_PATH", helpers_appimage / plugin_rel)
 
 
-_prepend_helpers_lib_path()
+def _bootstrap_logger():
+    global _BOOTSTRAP_LOGGER
+    if _BOOTSTRAP_LOGGER is not None:
+        return _BOOTSTRAP_LOGGER
+    from ap_bizhelper.logging_utils import create_component_logger, SHIM_LOG_ENV
+
+    _BOOTSTRAP_LOGGER = create_component_logger(
+        "zenity-shim", env_var=SHIM_LOG_ENV, subdir="shim"
+    )
+    return _BOOTSTRAP_LOGGER
+
+
+def _fallback_to_real_dialog(argv: list[str], reason: str) -> None:
+    logger = _bootstrap_logger()
+    if logger:
+        logger.log(
+            f"PySide6 unavailable, falling back to real dialog: {{reason}}",
+            include_context=True,
+            location="shim-bootstrap",
+            level="ERROR",
+        )
+    env_key = _REAL_ENV_BY_ENTRYPOINT.get("{entrypoint}", "")
+    real_dialog = os.environ.get(env_key, "")
+    if real_dialog:
+        os.execv(real_dialog, [real_dialog, *argv[1:]])
+    sys.stderr.write(f"Dialog shim fallback failed (missing {{env_key}}).\\n")
+    sys.exit(127)
+
+
+def _ensure_pyside6(entrypoint: str) -> None:
+    logger = _bootstrap_logger()
+    if logger:
+        logger.log(
+            f"Dialog shim bootstrap for {{entrypoint}}",
+            include_context=True,
+            location="shim-bootstrap",
+        )
+    try:
+        import PySide6  # noqa: F401
+    except Exception as exc:
+        missing = getattr(exc, "name", "") or str(exc)
+        if logger:
+            logger.log(
+                f"PySide6 import failed (missing={{missing}}): {{exc}}",
+                include_context=True,
+                location="shim-bootstrap",
+                level="ERROR",
+            )
+        _fallback_to_real_dialog(sys.argv, missing)
+
+
+_stage_pyside6_paths()
+_ensure_pyside6("{entrypoint}")
 
 from ap_bizhelper.dialog_shim import {entrypoint}
 
@@ -1227,10 +1316,11 @@ def prepare_dialog_shim_env(logger: Optional[AppLogger] = None) -> Optional[Dict
 
     try:
         stage_helper_lib(settings)
+        stage_pyside6_from_appimage(settings)
     except Exception:
         if logger:
             logger.log(
-                "Failed staging dialog shim helper library.",
+                "Failed staging dialog shim helper files.",
                 include_context=True,
                 location="shim-stage",
             )
