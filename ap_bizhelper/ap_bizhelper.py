@@ -40,7 +40,7 @@ from .ap_bizhelper_config import (
     set_ext_behavior,
     set_ext_association,
 )
-from .dialog_shim import prepare_dialog_shim_env
+from .staging import ensure_staged_runtime, prepare_dialog_shim_env
 from .constants import (
     AP_APPIMAGE_KEY,
     AP_WAIT_FOR_EXIT_KEY,
@@ -1223,6 +1223,7 @@ def _run_full_flow(
             error_dialog("Archipelago was not selected for download and is required to continue.")
             return 1
 
+        ensure_staged_runtime(settings, APP_LOGGER)
         _apply_association_files(_registered_association_exts())
 
         try:
