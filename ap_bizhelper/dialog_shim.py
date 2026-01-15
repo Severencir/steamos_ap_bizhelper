@@ -1,10 +1,6 @@
 """Desktop dialog shim that proxies to PySide6 dialogs when possible.
 
-This module provides two entry points:
-
-* ``shim_main``: CLI handler invoked by the temporary ``zenity`` script.
-* ``prepare_dialog_shim_env``: helper to build an environment pointing ``PATH``
-  at the shim so launched applications use it instead of the system zenity.
+This module provides entry points for each shimmed dialog binary.
 
 Unsupported commands fall back to the real binaries when present so the shim
 stays transparent during gaps in coverage.
@@ -21,42 +17,28 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from ap_bizhelper import dialogs
 from .ap_bizhelper_config import load_settings, save_settings
 from .constants import (
     BIZHAWK_EXE_KEY,
-    BIZHAWK_HELPERS_APPIMAGE_DIRNAME,
-    BIZHAWK_HELPERS_LIB_DIRNAME,
     BIZHAWK_RUNNER_KEY,
     DIALOG_SHIM_KDIALOG_FILENAME,
-    DIALOG_SHIM_KDIALOG_SHIM_FILENAME,
     DIALOG_SHIM_PORTAL_FILENAME,
-    DIALOG_SHIM_PORTAL_SHIM_FILENAME,
     DIALOG_SHIM_ZENITY_FILENAME,
-    DIALOG_SHIM_ZENITY_SHIM_FILENAME,
+    DIALOG_SHIM_REAL_KDIALOG_ENV,
+    DIALOG_SHIM_REAL_PORTAL_ENV,
+    DIALOG_SHIM_REAL_ZENITY_ENV,
     LAST_ROM_DIR_KEY,
     ROM_HASH_CACHE_KEY,
     ROM_ROOTS_KEY,
 )
-from .logging_utils import (
-    SHIM_LOG_ENV,
-    AppLogger,
-    RUN_ID_ENV,
-    TIMESTAMP_ENV,
-    create_component_logger,
-)
-from .staging import (
-    get_helpers_lib_root,
-    get_helpers_root,
-    stage_helper_lib,
-    stage_pyside6_from_appimage,
-)
+from .logging_utils import AppLogger, create_component_logger
 
-_REAL_ZENITY_ENV = "AP_BIZHELPER_REAL_ZENITY"
-_REAL_KDIALOG_ENV = "AP_BIZHELPER_REAL_KDIALOG"
-_REAL_PORTAL_ENV = "AP_BIZHELPER_REAL_XDG_DESKTOP_PORTAL"
+_REAL_ZENITY_ENV = DIALOG_SHIM_REAL_ZENITY_ENV
+_REAL_KDIALOG_ENV = DIALOG_SHIM_REAL_KDIALOG_ENV
+_REAL_PORTAL_ENV = DIALOG_SHIM_REAL_PORTAL_ENV
 _PATCH_PATH_ENV = "AP_BIZHELPER_PATCH"
 _ROM_DEBUG_ENV = "AP_BIZHELPER_DEBUG_ROM"
 
@@ -1162,240 +1144,6 @@ class PortalShim:
         return 127
 
 
-def _dialog_shim_script(entrypoint: str) -> str:
-    return f"""#!/usr/bin/env python3
-import os
-from pathlib import Path
-import sys
-
-
-_REAL_ENV_BY_ENTRYPOINT = {{
-    "shim_main": "{_REAL_ZENITY_ENV}",
-    "kdialog_main": "{_REAL_KDIALOG_ENV}",
-    "portal_file_chooser_main": "{_REAL_PORTAL_ENV}",
-}}
-
-_BOOTSTRAP_LOGGER = None
-
-
-def _prepend_sys_path(path: Path) -> None:
-    if not path.is_dir():
-        return
-    path_str = path.as_posix()
-    if path_str not in sys.path:
-        sys.path.insert(0, path_str)
-
-
-def _prepend_env_path(key: str, value: Path) -> None:
-    if not value.is_dir():
-        return
-    value_str = value.as_posix()
-    existing = os.environ.get(key, "")
-    if existing:
-        os.environ[key] = value_str + os.pathsep + existing
-    else:
-        os.environ[key] = value_str
-
-
-def _stage_pyside6_paths() -> None:
-    helpers_root = Path(__file__).resolve().parent
-    helpers_lib = helpers_root / "{BIZHAWK_HELPERS_LIB_DIRNAME}"
-    helpers_appimage = helpers_lib / "{BIZHAWK_HELPERS_APPIMAGE_DIRNAME}"
-    _prepend_sys_path(helpers_lib)
-    for site_packages in helpers_appimage.glob("usr/lib/python*/site-packages"):
-        _prepend_sys_path(site_packages)
-    _prepend_env_path("LD_LIBRARY_PATH", helpers_appimage / "usr/lib")
-    for plugin_rel in ("usr/lib/qt6/plugins", "usr/lib/qt/plugins"):
-        _prepend_env_path("QT_PLUGIN_PATH", helpers_appimage / plugin_rel)
-
-
-def _bootstrap_logger():
-    global _BOOTSTRAP_LOGGER
-    if _BOOTSTRAP_LOGGER is not None:
-        return _BOOTSTRAP_LOGGER
-    from ap_bizhelper.logging_utils import create_component_logger, SHIM_LOG_ENV
-
-    _BOOTSTRAP_LOGGER = create_component_logger(
-        "zenity-shim", env_var=SHIM_LOG_ENV, subdir="shim"
-    )
-    return _BOOTSTRAP_LOGGER
-
-
-def _fallback_to_real_dialog(argv: list[str], reason: str) -> None:
-    logger = _bootstrap_logger()
-    if logger:
-        logger.log(
-            f"PySide6 unavailable, falling back to real dialog: {{reason}}",
-            include_context=True,
-            location="shim-bootstrap",
-            level="ERROR",
-        )
-    env_key = _REAL_ENV_BY_ENTRYPOINT.get("{entrypoint}", "")
-    real_dialog = os.environ.get(env_key, "")
-    if real_dialog:
-        os.execv(real_dialog, [real_dialog, *argv[1:]])
-    sys.stderr.write(f"Dialog shim fallback failed (missing {{env_key}}).\\n")
-    sys.exit(127)
-
-
-def _ensure_pyside6(entrypoint: str) -> None:
-    logger = _bootstrap_logger()
-    if logger:
-        logger.log(
-            f"Dialog shim bootstrap for {{entrypoint}}",
-            include_context=True,
-            location="shim-bootstrap",
-        )
-    try:
-        import PySide6  # noqa: F401
-    except Exception as exc:
-        missing = getattr(exc, "name", "") or str(exc)
-        if logger:
-            logger.log(
-                f"PySide6 import failed (missing={{missing}}): {{exc}}",
-                include_context=True,
-                location="shim-bootstrap",
-                level="ERROR",
-            )
-        _fallback_to_real_dialog(sys.argv, missing)
-
-
-_stage_pyside6_paths()
-_ensure_pyside6("{entrypoint}")
-
-from ap_bizhelper.dialog_shim import {entrypoint}
-
-
-if __name__ == "__main__":
-    {entrypoint}()
-"""
-
-
-def _stage_dialog_shim_script(target: Path, entrypoint: str) -> bool:
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(_dialog_shim_script(entrypoint), encoding="utf-8")
-        target.chmod(target.stat().st_mode | 0o111)
-        return True
-    except Exception:
-        return False
-
-
-def _dialog_shim_wrapper_script(shim_name: str) -> str:
-    return f"""#!/bin/sh
-shim_path="$(dirname "$0")/{shim_name}"
-exec "$shim_path" "$@"
-"""
-
-
-def _stage_dialog_shim_wrapper_script(target: Path, shim_name: str) -> bool:
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(_dialog_shim_wrapper_script(shim_name), encoding="utf-8")
-        target.chmod(target.stat().st_mode | 0o111)
-        return True
-    except Exception:
-        return False
-
-
-def prepare_dialog_shim_env(logger: Optional[AppLogger] = None) -> Optional[Dict[str, str]]:
-    """Create a dialog shim script and return environment overrides.
-
-    The returned mapping can be merged into a subprocess environment to force
-    child processes to use the shimmed tools. If the shim cannot be created,
-    ``None`` is returned.
-    """
-
-    try:
-        settings = load_settings()
-        helpers_root = get_helpers_root(settings)
-        helpers_lib = get_helpers_lib_root(settings)
-        helpers_root.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        return None
-
-    try:
-        stage_helper_lib(settings)
-        stage_pyside6_from_appimage(settings)
-    except Exception:
-        if logger:
-            logger.log(
-                "Failed staging dialog shim helper files.",
-                include_context=True,
-                location="shim-stage",
-            )
-
-    search_path = os.environ.get("PATH", "")
-    cleaned_path = os.pathsep.join(
-        [p for p in search_path.split(os.pathsep) if p and Path(p) != helpers_root]
-    )
-
-    real_zenity = shutil.which(DIALOG_SHIM_ZENITY_FILENAME, path=cleaned_path)
-    real_kdialog = shutil.which(DIALOG_SHIM_KDIALOG_FILENAME, path=cleaned_path)
-    real_portal = shutil.which(DIALOG_SHIM_PORTAL_FILENAME, path=cleaned_path)
-
-    zenity_shim_path = helpers_root / DIALOG_SHIM_ZENITY_SHIM_FILENAME
-    kdialog_shim_path = helpers_root / DIALOG_SHIM_KDIALOG_SHIM_FILENAME
-    portal_shim_path = helpers_root / DIALOG_SHIM_PORTAL_SHIM_FILENAME
-    staged = {
-        zenity_shim_path: _stage_dialog_shim_script(zenity_shim_path, "shim_main"),
-        kdialog_shim_path: _stage_dialog_shim_script(kdialog_shim_path, "kdialog_main"),
-        portal_shim_path: _stage_dialog_shim_script(
-            portal_shim_path, "portal_file_chooser_main"
-        ),
-        helpers_root / DIALOG_SHIM_ZENITY_FILENAME: _stage_dialog_shim_wrapper_script(
-            helpers_root / DIALOG_SHIM_ZENITY_FILENAME,
-            DIALOG_SHIM_ZENITY_SHIM_FILENAME,
-        ),
-        helpers_root / DIALOG_SHIM_KDIALOG_FILENAME: _stage_dialog_shim_wrapper_script(
-            helpers_root / DIALOG_SHIM_KDIALOG_FILENAME,
-            DIALOG_SHIM_KDIALOG_SHIM_FILENAME,
-        ),
-        helpers_root / DIALOG_SHIM_PORTAL_FILENAME: _stage_dialog_shim_wrapper_script(
-            helpers_root / DIALOG_SHIM_PORTAL_FILENAME,
-            DIALOG_SHIM_PORTAL_SHIM_FILENAME,
-        ),
-    }
-    if logger:
-        for path, ok in staged.items():
-            if not ok:
-                logger.log(
-                    f"Failed staging dialog shim script: {path}",
-                    include_context=True,
-                    location="shim-stage",
-                )
-
-    pkg_root = Path(__file__).resolve().parent.parent
-    pythonpath = os.environ.get("PYTHONPATH", "")
-    pythonpath_parts = [pkg_root.as_posix()]
-    if helpers_lib.is_dir():
-        pythonpath_parts.insert(0, helpers_lib.as_posix())
-    env = {
-        "PATH": helpers_root.as_posix() + os.pathsep + os.environ.get("PATH", ""),
-        "PYTHONPATH": os.pathsep.join(pythonpath_parts)
-        + (os.pathsep + pythonpath if pythonpath else ""),
-        _REAL_ZENITY_ENV: real_zenity or "",
-        _REAL_KDIALOG_ENV: real_kdialog or "",
-        _REAL_PORTAL_ENV: real_portal or "",
-        "AP_BIZHELPER_SHIM_DIR": helpers_root.as_posix(),
-    }
-    session_env: Dict[str, str] = {}
-    if logger:
-        session_env = logger.session_environ()
-        env[SHIM_LOG_ENV] = str(logger.component_log_path("zenity-shim", subdir="shim"))
-    else:
-        if RUN_ID_ENV in os.environ:
-            session_env[RUN_ID_ENV] = os.environ[RUN_ID_ENV]
-        if TIMESTAMP_ENV in os.environ:
-            session_env[TIMESTAMP_ENV] = os.environ[TIMESTAMP_ENV]
-        if SHIM_LOG_ENV in os.environ:
-            env[SHIM_LOG_ENV] = os.environ[SHIM_LOG_ENV]
-    env.update({k: v for k, v in session_env.items() if v})
-    return env
-
-
-# Backwards compatibility
-prepare_zenity_shim_env = prepare_dialog_shim_env
 
 
 def shim_main() -> None:
