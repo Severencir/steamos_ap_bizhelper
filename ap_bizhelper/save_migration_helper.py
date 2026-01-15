@@ -11,36 +11,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-def _prepend_helpers_lib_path() -> None:
-    script_path = Path(__file__).resolve()
-    helpers_root = script_path.parent
-    helpers_lib = helpers_root / "lib"
-    if not helpers_lib.is_dir():
-        return
-    helpers_lib_str = helpers_lib.as_posix()
-    if helpers_lib_str not in sys.path:
-        sys.path.insert(0, helpers_lib_str)
-
-
-_prepend_helpers_lib_path()
-
-from ap_bizhelper.ap_bizhelper_config import get_path_setting, load_settings
-from ap_bizhelper.constants import (
-    BIZHAWK_EXE_KEY,
-    BIZHAWK_INSTALL_DIR_KEY,
-    BIZHAWK_LAST_LAUNCH_ARGS_KEY,
-    BIZHAWK_LAST_PID_KEY,
-    BIZHAWK_RUNNER_KEY,
-    BIZHAWK_SAVERAM_DIR_KEY,
-    BIZHAWK_HELPERS_APPIMAGE_DIRNAME,
-    BIZHAWK_HELPERS_LIB_DIRNAME,
-)
-from ap_bizhelper.dialogs import (
-    ensure_qt_app,
-    ensure_qt_available,
-    error_dialog,
-    question_dialog,
-)
 from ap_bizhelper.logging_utils import create_component_logger
 
 CONFLICTS_DIRNAME = ".conflicts"
@@ -54,38 +24,121 @@ PID_POLL_INTERVAL_SECONDS = 0.1
 HELPER_LOGGER = create_component_logger("save-migration", subdir=MIGRATION_LOG_SUBDIR)
 
 
-def _prepend_sys_path(path: Path) -> None:
+def _prepend_sys_path(path: Path) -> bool:
     if not path.is_dir():
-        return
+        return False
     path_str = path.as_posix()
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
+        return True
+    return False
 
 
-def _prepend_env_path(key: str, value: Path) -> None:
+def _prepend_env_path(key: str, value: Path) -> bool:
     if not value.is_dir():
-        return
+        return False
     value_str = value.as_posix()
     existing = os.environ.get(key, "")
     if existing:
+        if value_str in existing.split(os.pathsep):
+            return False
         os.environ[key] = value_str + os.pathsep + existing
     else:
         os.environ[key] = value_str
+    return True
 
 
-def _stage_pyside6_paths() -> None:
+def _stage_pyside6_paths() -> dict[str, object]:
+    from ap_bizhelper.constants import (
+        BIZHAWK_HELPERS_APPIMAGE_DIRNAME,
+        BIZHAWK_HELPERS_LIB_DIRNAME,
+    )
+
     helpers_root = Path(__file__).resolve().parent
     helpers_lib = helpers_root / BIZHAWK_HELPERS_LIB_DIRNAME
     helpers_appimage = helpers_lib / BIZHAWK_HELPERS_APPIMAGE_DIRNAME
-    _prepend_sys_path(helpers_lib)
+    added_sys_paths: list[str] = []
+    if _prepend_sys_path(helpers_lib):
+        added_sys_paths.append(helpers_lib.as_posix())
     for site_packages in helpers_appimage.glob("usr/lib/python*/site-packages"):
-        _prepend_sys_path(site_packages)
+        if _prepend_sys_path(site_packages):
+            added_sys_paths.append(site_packages.as_posix())
     _prepend_env_path("LD_LIBRARY_PATH", helpers_appimage / "usr/lib")
     for plugin_rel in ("usr/lib/qt6/plugins", "usr/lib/qt/plugins"):
         _prepend_env_path("QT_PLUGIN_PATH", helpers_appimage / plugin_rel)
 
+    HELPER_LOGGER.log(
+        (
+            "Staged PySide6 helper paths from "
+            f"{helpers_appimage.resolve().as_posix()}."
+        ),
+        include_context=True,
+        location="pyside6-stage",
+    )
+    HELPER_LOGGER.log(
+        f"Inserted sys.path entries: {added_sys_paths}",
+        include_context=True,
+        location="pyside6-stage",
+    )
+    HELPER_LOGGER.log(
+        (
+            "Environment after staging: "
+            f"LD_LIBRARY_PATH={os.environ.get('LD_LIBRARY_PATH', '')} "
+            f"QT_PLUGIN_PATH={os.environ.get('QT_PLUGIN_PATH', '')}"
+        ),
+        include_context=True,
+        location="pyside6-stage",
+    )
+    return {
+        "helpers_root": helpers_root.as_posix(),
+        "helpers_lib": helpers_lib.as_posix(),
+        "helpers_appimage": helpers_appimage.as_posix(),
+        "sys_paths": added_sys_paths,
+        "ld_library_path": os.environ.get("LD_LIBRARY_PATH", ""),
+        "qt_plugin_path": os.environ.get("QT_PLUGIN_PATH", ""),
+    }
 
-_stage_pyside6_paths()
+
+def _ensure_pyside6_available(stage_info: dict[str, object]) -> None:
+    try:
+        import PySide6
+        from PySide6 import QtCore
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to import PySide6 after staging helper paths. "
+            f"Staging info: {stage_info}"
+        ) from exc
+
+    HELPER_LOGGER.log(
+        f"PySide6 loaded from {getattr(PySide6, '__file__', 'unknown')}.",
+        include_context=True,
+        location="pyside6-stage",
+    )
+    HELPER_LOGGER.log(
+        f"QtCore.qVersion() reported {QtCore.qVersion()}.",
+        include_context=True,
+        location="pyside6-stage",
+    )
+
+
+_STAGE_INFO = _stage_pyside6_paths()
+_ensure_pyside6_available(_STAGE_INFO)
+
+from ap_bizhelper.ap_bizhelper_config import get_path_setting, load_settings
+from ap_bizhelper.constants import (
+    BIZHAWK_EXE_KEY,
+    BIZHAWK_INSTALL_DIR_KEY,
+    BIZHAWK_LAST_LAUNCH_ARGS_KEY,
+    BIZHAWK_LAST_PID_KEY,
+    BIZHAWK_RUNNER_KEY,
+    BIZHAWK_SAVERAM_DIR_KEY,
+)
+from ap_bizhelper.dialogs import (
+    ensure_qt_app,
+    ensure_qt_available,
+    error_dialog,
+    question_dialog,
+)
 
 
 def _bizhawk_root(settings: dict) -> Optional[Path]:
