@@ -34,18 +34,39 @@ def _prepend_sys_path(path: Path) -> bool:
     return False
 
 
-def _prepend_env_path(key: str, value: Path) -> bool:
-    if not value.is_dir():
-        return False
-    value_str = value.as_posix()
-    existing = os.environ.get(key, "")
-    if existing:
-        if value_str in existing.split(os.pathsep):
-            return False
-        os.environ[key] = value_str + os.pathsep + existing
-    else:
-        os.environ[key] = value_str
-    return True
+def _normalize_env_paths(value: str) -> list[str]:
+    return [path for path in value.split(os.pathsep) if path]
+
+
+def _build_staged_env_path(
+    key: str,
+    staged: list[Path],
+    blocked_exact: set[str],
+    blocked_prefixes: tuple[str, ...],
+) -> dict[str, object]:
+    staged_values = [path.as_posix() for path in staged if path.is_dir()]
+    existing_values = _normalize_env_paths(os.environ.get(key, ""))
+    removed_values: list[str] = []
+    filtered_existing: list[str] = []
+    for path in existing_values:
+        if path in blocked_exact or path.startswith(blocked_prefixes):
+            removed_values.append(path)
+        else:
+            filtered_existing.append(path)
+    seen: set[str] = set()
+    merged_values: list[str] = []
+    for path in staged_values + filtered_existing:
+        if path in seen:
+            continue
+        merged_values.append(path)
+        seen.add(path)
+    os.environ[key] = os.pathsep.join(merged_values)
+    return {
+        "key": key,
+        "value": os.environ.get(key, ""),
+        "removed": removed_values,
+        "staged": staged_values,
+    }
 
 
 def _stage_pyside6_paths() -> dict[str, object]:
@@ -63,9 +84,31 @@ def _stage_pyside6_paths() -> dict[str, object]:
     for site_packages in helpers_appimage.glob("usr/lib/python*/site-packages"):
         if _prepend_sys_path(site_packages):
             added_sys_paths.append(site_packages.as_posix())
-    _prepend_env_path("LD_LIBRARY_PATH", helpers_appimage / "usr/lib")
-    for plugin_rel in ("usr/lib/qt6/plugins", "usr/lib/qt/plugins"):
-        _prepend_env_path("QT_PLUGIN_PATH", helpers_appimage / plugin_rel)
+    ld_library_info = _build_staged_env_path(
+        "LD_LIBRARY_PATH",
+        [helpers_appimage / "usr/lib"],
+        blocked_exact={"/usr/lib", "/usr/lib64", "/lib", "/lib64"},
+        blocked_prefixes=(
+            "/usr/lib/qt",
+            "/usr/lib64/qt",
+            "/lib/qt",
+            "/lib64/qt",
+        ),
+    )
+    qt_plugin_info = _build_staged_env_path(
+        "QT_PLUGIN_PATH",
+        [
+            helpers_appimage / "usr/lib/qt6/plugins",
+            helpers_appimage / "usr/lib/qt/plugins",
+        ],
+        blocked_exact=set(),
+        blocked_prefixes=(
+            "/usr/lib/qt",
+            "/usr/lib64/qt",
+            "/lib/qt",
+            "/lib64/qt",
+        ),
+    )
 
     HELPER_LOGGER.log(
         (
@@ -83,8 +126,17 @@ def _stage_pyside6_paths() -> dict[str, object]:
     HELPER_LOGGER.log(
         (
             "Environment after staging: "
-            f"LD_LIBRARY_PATH={os.environ.get('LD_LIBRARY_PATH', '')} "
-            f"QT_PLUGIN_PATH={os.environ.get('QT_PLUGIN_PATH', '')}"
+            f"LD_LIBRARY_PATH={ld_library_info['value']} "
+            f"QT_PLUGIN_PATH={qt_plugin_info['value']}"
+        ),
+        include_context=True,
+        location="pyside6-stage",
+    )
+    HELPER_LOGGER.log(
+        (
+            "System Qt paths removed or overridden: "
+            f"LD_LIBRARY_PATH={ld_library_info['removed']} "
+            f"QT_PLUGIN_PATH={qt_plugin_info['removed']}"
         ),
         include_context=True,
         location="pyside6-stage",
@@ -94,8 +146,8 @@ def _stage_pyside6_paths() -> dict[str, object]:
         "helpers_lib": helpers_lib.as_posix(),
         "helpers_appimage": helpers_appimage.as_posix(),
         "sys_paths": added_sys_paths,
-        "ld_library_path": os.environ.get("LD_LIBRARY_PATH", ""),
-        "qt_plugin_path": os.environ.get("QT_PLUGIN_PATH", ""),
+        "ld_library_path": ld_library_info["value"],
+        "qt_plugin_path": qt_plugin_info["value"],
     }
 
 
