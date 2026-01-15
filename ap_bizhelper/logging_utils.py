@@ -30,6 +30,8 @@ ENCODING_UTF8 = "utf-8"
 LOG_FILE_SUFFIX = ".log"
 LOG_LEVEL_ERROR = "ERROR"
 LOG_LEVEL_INFO = "INFO"
+LOG_LEVEL_WARNING = "WARNING"
+LOG_LEVELS = (LOG_LEVEL_INFO, LOG_LEVEL_WARNING, LOG_LEVEL_ERROR)
 STDERR_STREAM = "stderr"
 STDOUT_STREAM = "stdout"
 _CONTEXT_STACK: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
@@ -279,6 +281,8 @@ def get_app_logger(category: str = DEFAULT_CATEGORY, *, log_dir: Optional[Path] 
 
 __all__ = [
     "AppLogger",
+    "LOG_LEVELS",
+    "LOG_LEVEL_WARNING",
     "LOG_ROOT",
     "RUNNER_LOG_ENV",
     "RUN_ID_ENV",
