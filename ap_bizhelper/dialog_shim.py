@@ -34,7 +34,7 @@ from .constants import (
     ROM_HASH_CACHE_KEY,
     ROM_ROOTS_KEY,
 )
-from .logging_utils import AppLogger, create_component_logger
+from .logging_utils import AppLogger, SHIM_LOG_ENV, create_component_logger
 
 _REAL_ZENITY_ENV = DIALOG_SHIM_REAL_ZENITY_ENV
 _REAL_KDIALOG_ENV = DIALOG_SHIM_REAL_KDIALOG_ENV
