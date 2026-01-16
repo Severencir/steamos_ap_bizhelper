@@ -46,6 +46,8 @@ DIALOG_DEFAULTS = {
     "KIVY_BUTTON_HEIGHT_DP": 52,
     "KIVY_LIST_ROW_HEIGHT_DP": 48,
     "KIVY_FILE_DIALOG_HEIGHT": 800,
+    "KIVY_BG_RGBA": [0.12, 0.12, 0.12, 1],
+    "KIVY_FOCUS_RGBA": [0.2, 0.4, 0.6, 1],
 }
 
 _FORCE_CONSOLE_DIALOGS_ENV = "AP_BIZHELPER_FORCE_CONSOLE_DIALOGS"
@@ -208,6 +210,9 @@ class _DialogSession:
         modules.Window.borderless = _coerce_bool_setting(
             settings, "KIVY_DIALOG_BORDERLESS", bool(DIALOG_DEFAULTS["KIVY_DIALOG_BORDERLESS"])
         )
+        modules.Window.clearcolor = _coerce_rgba_setting(
+            settings, "KIVY_BG_RGBA", DIALOG_DEFAULTS["KIVY_BG_RGBA"]
+        )
         self.focus_manager.set_cancel_handler(lambda: self.close(self.result))
         root = build(self, modules)
         modules.Window.bind(on_key_down=self.focus_manager.on_key_down)
@@ -311,6 +316,28 @@ def _coerce_bool_setting(settings: Dict[str, object], key: str, default: bool) -
     return default
 
 
+def _coerce_rgba_setting(
+    settings: Dict[str, object], key: str, default: Sequence[float]
+) -> List[float]:
+    value = settings.get(key, default)
+    if isinstance(value, str):
+        cleaned = value.strip().strip("[]()")
+        if cleaned:
+            value = [part.strip() for part in cleaned.split(",")]
+    if isinstance(value, (list, tuple)):
+        if len(value) != 4:
+            return list(default)
+        rgba: List[float] = []
+        for component in value:
+            try:
+                numeric = float(component)
+            except Exception:
+                return list(default)
+            rgba.append(max(0.0, min(1.0, numeric)))
+        return rgba
+    return list(default)
+
+
 def _display_available() -> bool:
     if os.environ.get(_FORCE_CONSOLE_DIALOGS_ENV):
         return False
@@ -372,24 +399,28 @@ def _get_kivy_modules_raw() -> _KivyModules:
     from kivy.uix.togglebutton import ToggleButton
 
     class FocusableButton(FocusBehavior, Button):
+        focus_color = [0.2, 0.5, 0.9, 1]
+
         def __init__(self, **kwargs) -> None:
             super().__init__(**kwargs)
             self._base_color = list(self.background_color)
 
         def on_focus(self, _instance: object, value: bool) -> None:
             if value:
-                self.background_color = [0.2, 0.5, 0.9, 1]
+                self.background_color = list(self.focus_color)
             else:
                 self.background_color = list(self._base_color)
 
     class FocusableToggleButton(FocusBehavior, ToggleButton):
+        focus_color = [0.2, 0.5, 0.9, 1]
+
         def __init__(self, **kwargs) -> None:
             super().__init__(**kwargs)
             self._base_color = list(self.background_color)
 
         def on_focus(self, _instance: object, value: bool) -> None:
             if value:
-                self.background_color = [0.2, 0.5, 0.9, 1]
+                self.background_color = list(self.focus_color)
             else:
                 self.background_color = list(self._base_color)
 
@@ -424,10 +455,20 @@ def _get_kivy_modules_raw() -> _KivyModules:
 def _get_kivy(settings: Dict[str, object]) -> _KivyModules:
     global _KIVY_MODULES, _KIVY_IMPORT_ERROR
     if _KIVY_MODULES is not None:
+        focus_color = _coerce_rgba_setting(
+            settings, "KIVY_FOCUS_RGBA", DIALOG_DEFAULTS["KIVY_FOCUS_RGBA"]
+        )
+        _KIVY_MODULES.FocusableButton.focus_color = focus_color
+        _KIVY_MODULES.FocusableToggleButton.focus_color = focus_color
         return _KIVY_MODULES
     try:
         _configure_kivy(settings)
         _KIVY_MODULES = _get_kivy_modules_raw()
+        focus_color = _coerce_rgba_setting(
+            settings, "KIVY_FOCUS_RGBA", DIALOG_DEFAULTS["KIVY_FOCUS_RGBA"]
+        )
+        _KIVY_MODULES.FocusableButton.focus_color = focus_color
+        _KIVY_MODULES.FocusableToggleButton.focus_color = focus_color
     except Exception as exc:  # pragma: no cover - import guard
         _KIVY_IMPORT_ERROR = exc
         raise
