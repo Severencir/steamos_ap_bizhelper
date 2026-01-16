@@ -219,6 +219,8 @@ class _DialogSession:
         modules.Window.bind(on_request_close=lambda *_args: self.close(self.result) or True)
         with _track_dialog_activity():
             modules.runTouchApp(root)
+        if root in modules.Window.children:
+            modules.Window.remove_widget(root)
         modules.Window.unbind(on_key_down=self.focus_manager.on_key_down)
         return self.result
 
