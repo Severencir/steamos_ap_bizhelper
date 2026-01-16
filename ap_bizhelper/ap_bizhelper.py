@@ -12,6 +12,9 @@ from urllib.parse import quote, unquote, urlparse
 from pathlib import Path
 from typing import Optional, Tuple
 
+if "KIVY_NO_ARGS" not in os.environ:
+    os.environ["KIVY_NO_ARGS"] = "1"
+
 from .ap_bizhelper_ap import AP_APPIMAGE_DEFAULT, ensure_appimage
 from .dialogs import (
     checklist_dialog,
