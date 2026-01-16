@@ -31,6 +31,7 @@ from .constants import (
     USER_AGENT,
     USER_AGENT_HEADER,
 )
+from .download_cache import maybe_use_download_cache, store_download_cache
 from .logging_utils import get_app_logger
 
 # Paths mirror the bash script and the config helper.
@@ -216,6 +217,7 @@ def force_update_appimage(settings: Optional[Dict[str, Any]] = None) -> bool:
             latest_ver,
             expected_digest=latest_digest,
             digest_algorithm=latest_algo,
+            settings=settings,
         )
     except Exception as exc:
         error_dialog(f"Archipelago download failed or was cancelled: {exc}")
@@ -313,6 +315,7 @@ def download_with_progress(
     expected_hash: Optional[str] = None,
     hash_name: str = "sha256",
     require_hash: bool = False,
+    settings: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Download ``url`` to ``dest`` with a Kivy progress dialog.
 
@@ -324,11 +327,26 @@ def download_with_progress(
     """
 
     _ensure_dirs()
+    settings = settings if settings is not None else _load_shared_settings()
+    if maybe_use_download_cache(
+        url,
+        dest,
+        settings,
+        expected_hash=expected_hash,
+        hash_name=hash_name,
+    ):
+        try:
+            dest.chmod(dest.stat().st_mode | 0o111)
+        except Exception:
+            pass
+        return
 
     req = urllib.request.Request(url, headers={USER_AGENT_HEADER: USER_AGENT})
 
     response_headers: dict[str, str] = {}
     temp_path: Optional[Path] = None
+    computed_hash: Optional[str] = None
+    computed_hash_name = hash_name
 
     dest.parent.mkdir(parents=True, exist_ok=True)
 
@@ -349,6 +367,8 @@ def download_with_progress(
 
     def _download_stream() -> Iterable[str]:
         nonlocal response_headers
+        nonlocal computed_hash
+        nonlocal computed_hash_name
         try:
             with urllib.request.urlopen(req, timeout=300) as resp, temp_path.open("wb") as f:
                 response_headers = {k.lower(): v for k, v in resp.headers.items()}
@@ -398,6 +418,7 @@ def download_with_progress(
                         yield str(percent)
 
                 computed_hash = hash_ctx.hexdigest().lower()
+                computed_hash_name = normalized_hash_name
                 if normalized_expected:
                     if normalized_expected.lower() != computed_hash:
                         raise RuntimeError("Downloaded file failed hash verification")
@@ -432,6 +453,17 @@ def download_with_progress(
     except Exception:
         pass
 
+    store_download_cache(
+        url,
+        dest,
+        settings,
+        expected_hash=expected_hash,
+        hash_name=hash_name,
+        computed_hash=computed_hash,
+        computed_hash_name=computed_hash_name,
+    )
+
+
 def download_appimage(
     url: str,
     dest: Path,
@@ -440,6 +472,7 @@ def download_appimage(
     expected_digest: str,
     digest_algorithm: str,
     download_messages: Optional[list[str]] = None,
+    settings: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Download the AppImage to ``dest`` with a Kivy progress dialog."""
 
@@ -451,6 +484,7 @@ def download_appimage(
         expected_hash=expected_digest,
         hash_name=digest_algorithm,
         require_hash=True,
+        settings=settings,
     )
     if download_messages is not None:
         download_messages.append(f"Downloaded Archipelago {version}")
@@ -559,6 +593,7 @@ def maybe_update_appimage(
             expected_digest=latest_digest,
             digest_algorithm=latest_algo,
             download_messages=download_messages,
+            settings=settings,
         )
     except Exception as e:
         error_dialog(f"Archipelago update failed: {e}")
@@ -642,6 +677,7 @@ def ensure_appimage(
                     expected_digest=digest,
                     digest_algorithm=digest_algo,
                     download_messages=download_messages,
+                    settings=settings,
                 )
             except Exception as e:
                 error_dialog(f"Archipelago download failed or was cancelled: {e}")
