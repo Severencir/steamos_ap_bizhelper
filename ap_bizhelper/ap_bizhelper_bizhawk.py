@@ -157,7 +157,14 @@ def _extract_tarball(archive: Path, dest_dir: Path) -> None:
         tar.extractall(dest_dir)
 
 
-def _download_archive(url: str, dest: Path, *, expected_digest: str, digest_algorithm: str) -> None:
+def _download_archive(
+    url: str,
+    dest: Path,
+    *,
+    expected_digest: str,
+    digest_algorithm: str,
+    settings: dict,
+) -> None:
     download_with_progress(
         url,
         dest,
@@ -166,16 +173,18 @@ def _download_archive(url: str, dest: Path, *, expected_digest: str, digest_algo
         expected_hash=expected_digest,
         hash_name=digest_algorithm,
         require_hash=True,
+        settings=settings,
     )
 
 
-def _download_runtime_package(pkg: RuntimePackage, dest: Path) -> None:
+def _download_runtime_package(pkg: RuntimePackage, dest: Path, *, settings: dict) -> None:
     url = f"{ARCH_MIRROR_BASE}/{ARCH_REPO}/os/x86_64/{pkg.filename}"
     download_with_progress(
         url,
         dest,
         title="BizHawk runtime download",
         text=f"Downloading {pkg.name}{ELLIPSIS}",
+        settings=settings,
     )
 
 
@@ -403,7 +412,13 @@ def download_and_extract_bizhawk(
     install_dir.mkdir(parents=True, exist_ok=True)
 
     archive_path = install_dir / f"BizHawk-{version}{ARCHIVE_TAR_GZ_SUFFIX}"
-    _download_archive(url, archive_path, expected_digest=expected_digest, digest_algorithm=digest_algorithm)
+    _download_archive(
+        url,
+        archive_path,
+        expected_digest=expected_digest,
+        digest_algorithm=digest_algorithm,
+        settings=settings,
+    )
 
     temp_extract = Path(tempfile.mkdtemp(prefix="bizhawk-extract-"))
     _extract_tarball(archive_path, temp_extract)
@@ -550,7 +565,7 @@ def ensure_runtime_root(
     for pkg in RUNTIME_PACKAGES:
         archive_path = runtime_root / pkg.filename
         if not archive_path.exists():
-            _download_runtime_package(pkg, archive_path)
+            _download_runtime_package(pkg, archive_path, settings=settings)
         _extract_pkg_archive(archive_path, runtime_root)
         if download_messages is not None:
             download_messages.append(f"Staged runtime package: {pkg.name}")

@@ -51,6 +51,7 @@ from .constants import (
     BIZHAWK_RUNNER_KEY,
     BIZHAWK_RUNTIME_DOWNLOAD_KEY,
     BIZHAWK_RUNTIME_ROOT_KEY,
+    DEBUG_DOWNLOAD_CACHE_KEY,
     FILE_FILTER_APWORLD,
     LOG_PREFIX,
     MIME_PACKAGES_DIR,
@@ -75,13 +76,16 @@ APP_LOGGER = get_app_logger()
 NO_STEAM_DEFAULT_COMMANDS = {"ensure", "uninstall-all", "uninstall-core"}
 
 
-def _split_launcher_args(argv: list[str]) -> tuple[list[str], bool, bool]:
+def _split_launcher_args(argv: list[str]) -> tuple[list[str], bool, bool, bool]:
     user_args = [arg for arg in argv[1:] if not arg.startswith("--appimage")]
     explicit_no_steam = "--nosteam" in user_args
     explicit_steam = "--steam" in user_args
+    debug_cache = "--debug-cache-downloads" in user_args
     if explicit_no_steam or explicit_steam:
         user_args = [arg for arg in user_args if arg not in {"--nosteam", "--steam"}]
-    return user_args, explicit_no_steam, explicit_steam
+    if debug_cache:
+        user_args = [arg for arg in user_args if arg != "--debug-cache-downloads"]
+    return user_args, explicit_no_steam, explicit_steam, debug_cache
 
 def _steam_game_id_from_env() -> Optional[str]:
     """Return the Steam game id from common environment keys, if available."""
@@ -1254,7 +1258,7 @@ def main(argv: list[str]) -> int:
         if settings_dirty:
             save_settings(settings)
 
-        user_args, explicit_no_steam, explicit_steam = _split_launcher_args(argv)
+        user_args, explicit_no_steam, explicit_steam, debug_cache = _split_launcher_args(argv)
         if explicit_no_steam and explicit_steam:
             APP_LOGGER.log(
                 "Cannot combine --steam and --nosteam.",
@@ -1264,6 +1268,10 @@ def main(argv: list[str]) -> int:
                 stream="stderr",
             )
             return 1
+
+        if settings.get(DEBUG_DOWNLOAD_CACHE_KEY) != debug_cache:
+            settings[DEBUG_DOWNLOAD_CACHE_KEY] = debug_cache
+            save_settings(settings)
 
         patch_arg: Optional[str] = user_args[0] if user_args else None
         no_steam = explicit_no_steam or (
