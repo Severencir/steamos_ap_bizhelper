@@ -32,9 +32,9 @@ from .constants import (
 from .logging_utils import AppLogger, get_app_logger
 
 DIALOG_DEFAULTS = {
-    "KIVY_FONT_SCALE": 1.0,
-    "KIVY_MIN_TEXT_SP": 18,
-    "KIVY_TITLE_SP": 22,
+    "KIVY_FONT_SCALE": 1.5,
+    "KIVY_MIN_TEXT_SP": 20,
+    "KIVY_TITLE_SP": 24,
     "KIVY_DIALOG_WIDTH": 1080,
     "KIVY_DIALOG_HEIGHT": 720,
     "KIVY_DIALOG_MIN_WIDTH": 900,
