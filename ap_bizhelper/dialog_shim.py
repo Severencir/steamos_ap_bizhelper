@@ -1,4 +1,4 @@
-"""Desktop dialog shim that proxies to PySide6 dialogs when possible.
+"""Desktop dialog shim that proxies to Kivy dialogs when possible.
 
 This module provides entry points for each shimmed dialog binary.
 
@@ -8,7 +8,6 @@ stays transparent during gaps in coverage.
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -565,7 +564,7 @@ def _locate_bizhawk_runner(logger: AppLogger) -> Optional[Path]:
 
 
 class ZenityShim:
-    """Parse a zenity command and render equivalent PySide6 dialogs."""
+    """Parse a zenity command and render equivalent Kivy dialogs."""
 
     def __init__(self, real_zenity: Optional[str] = None) -> None:
         self.real_zenity = real_zenity or self._discover_real_zenity()
@@ -600,12 +599,6 @@ class ZenityShim:
                 return self._fallback(
                     argv,
                     "The zenity shim could not recognize the requested dialog type.",
-                )
-
-            if not self._qt_available():
-                return self._fallback(
-                    argv,
-                    "PySide6 is unavailable, so the shim cannot render the requested dialog.",
                 )
 
             self.logger.log(f"Detected zenity mode: {mode}", include_context=True, location="zenity")
@@ -665,9 +658,6 @@ class ZenityShim:
         )
         return 0
 
-    def _qt_available(self) -> bool:
-        return importlib.util.find_spec("PySide6") is not None
-
     def _fallback(self, argv: Sequence[str], reason: str) -> int:
         self.logger.log(
             f"Fallback invoked. Reason: {reason}. Original argv: {list(argv)}",
@@ -707,17 +697,16 @@ class ZenityShim:
             return None
 
     def _show_error_dialog(self, message: str) -> None:
-        if self._qt_available():
-            try:
-                dialogs.error_dialog(message, title="Zenity Shim Error")
-                return
-            except Exception:
-                self.logger.log(
-                    "Qt error dialog rendering failed; trying zenity fallback.",
-                    level="WARNING",
-                    include_context=True,
-                    location="error-dialog",
-                )
+        try:
+            dialogs.error_dialog(message, title="Zenity Shim Error")
+            return
+        except Exception:
+            self.logger.log(
+                "Dialog rendering failed; trying zenity fallback.",
+                level="WARNING",
+                include_context=True,
+                location="error-dialog",
+            )
 
         if self.real_zenity:
             try:
@@ -754,9 +743,6 @@ class ZenityShim:
         return None
 
     def _handle_question(self, argv: Sequence[str]) -> int:
-        from PySide6 import QtWidgets  # type: ignore
-
-        dialogs.ensure_qt_app()
         title = self._extract_option(argv, "--title=") or "Question"
         text = self._extract_option(argv, "--text=") or ""
         ok_label = self._extract_option(argv, "--ok-label=") or "OK"
@@ -907,7 +893,7 @@ class ZenityShim:
 
 
 class KDialogShim:
-    """Lightweight kdialog-compatible shim that proxies to PySide6 dialogs."""
+    """Lightweight kdialog-compatible shim that proxies to Kivy dialogs."""
 
     def __init__(self, real_kdialog: Optional[str] = None) -> None:
         self.real_kdialog = real_kdialog or self._discover_real_kdialog()
@@ -923,9 +909,6 @@ class KDialogShim:
         else:
             cleaned = search_path
         return shutil.which(DIALOG_SHIM_KDIALOG_FILENAME, path=cleaned) or None
-
-    def _qt_available(self) -> bool:
-        return importlib.util.find_spec("PySide6") is not None
 
     def _extract_value(self, argv: Sequence[str], flag: str) -> Optional[str]:
         if flag in argv:
@@ -990,9 +973,6 @@ class KDialogShim:
             if auto_answer is not None:
                 return auto_answer
 
-            if not self._qt_available():
-                return self._fallback(argv, "PySide6 is unavailable for kdialog shimming.")
-
             if "--yesno" in argv or "--warningyesno" in argv:
                 return self._handle_yesno(argv)
             if "--msgbox" in argv or "--sorry" in argv or "--error" in argv:
@@ -1003,14 +983,10 @@ class KDialogShim:
             return self._fallback(argv, "The requested kdialog mode is not supported by the shim.")
 
     def _handle_yesno(self, argv: Sequence[str]) -> int:
-        from PySide6 import QtWidgets  # type: ignore
-
-        dialogs.ensure_qt_app()
         text = self._extract_value(argv, "--yesno") or self._extract_value(
             argv, "--warningyesno"
         )
         title = self._extract_value(argv, "--title") or "Question"
-        QtWidgets.QApplication.instance()
         choice = dialogs.question_dialog(
             title=title, text=text or "", ok_label="Yes", cancel_label="No"
         )
@@ -1090,9 +1066,6 @@ class PortalShim:
         self.real_portal = real_portal
         self.logger = _logger()
 
-    def _qt_available(self) -> bool:
-        return importlib.util.find_spec("PySide6") is not None
-
     def handle(self, argv: Sequence[str]) -> int:
         with self.logger.context("portal-handle"):
             self.logger.log(
@@ -1104,9 +1077,8 @@ class PortalShim:
                 sys.stdout.write("ap-bizhelper portal shim (FileChooser only)\n")
                 return 0
 
-            if self._qt_available():
-                if argv and argv[0] in {"--choose-file", "--choose-multiple"}:
-                    return self._handle_choose_file(argv)
+            if argv and argv[0] in {"--choose-file", "--choose-multiple"}:
+                return self._handle_choose_file(argv)
 
             return self._fallback(argv)
 
