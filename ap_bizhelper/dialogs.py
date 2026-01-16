@@ -640,7 +640,21 @@ def modular_dialog(
             root.add_widget(scroll)
 
         progress_bar = None
+        progress_label = None
         if progress_stream is not None:
+            progress_label = modules.Label(
+                text="",
+                font_size=modules.sp(_font_sp(settings, "KIVY_MIN_TEXT_SP", int(DIALOG_DEFAULTS["KIVY_MIN_TEXT_SP"]))),
+                text_size=(None, None),
+                size_hint_y=None,
+            )
+            progress_label.bind(
+                width=lambda instance, value: setattr(instance, "text_size", (value, None))
+            )
+            progress_label.bind(
+                texture_size=lambda instance, value: setattr(instance, "height", value[1])
+            )
+            root.add_widget(progress_label)
             progress_bar = modules.ProgressBar(max=100, value=0)
             root.add_widget(progress_bar)
 
@@ -691,11 +705,20 @@ def modular_dialog(
                 for line in progress_stream:
                     if result.progress_cancelled:
                         break
+                    line_text = str(line).strip()
+                    if line_text.startswith("#") and progress_label is not None:
+                        message = line_text.lstrip("# ").strip()
+                        modules.Clock.schedule_once(
+                            lambda _dt, text=message: setattr(progress_label, "text", text)
+                        )
+                        continue
                     try:
-                        percent = int(float(str(line).strip()))
+                        percent = int(float(line_text))
                     except Exception:
                         continue
-                    modules.Clock.schedule_once(lambda _dt, v=percent: setattr(progress_bar, "value", max(0, min(100, v))))
+                    modules.Clock.schedule_once(
+                        lambda _dt, v=percent: setattr(progress_bar, "value", max(0, min(100, v)))
+                    )
                 if not result.progress_cancelled:
                     modules.Clock.schedule_once(lambda _dt: setattr(progress_bar, "value", 100))
                     result.role = "positive"
