@@ -621,7 +621,7 @@ def modular_dialog(
             scroll.add_widget(grid)
             root.add_widget(scroll)
 
-        checklist_buttons: List[object] = []
+        checklist_buttons: List[Tuple[object, str]] = []
         if checklist is not None:
             scroll = modules.ScrollView(size_hint=(1, 1))
             grid = modules.GridLayout(cols=1, size_hint_y=None, spacing=spacing)
@@ -633,7 +633,7 @@ def modular_dialog(
                     height=modules.dp(_list_row_height(settings)),
                 )
                 btn.state = "down" if checked else "normal"
-                checklist_buttons.append(btn)
+                checklist_buttons.append((btn, str(label_text)))
                 session.focus_manager.register(btn, default=len(checklist_buttons) == 1)
                 grid.add_widget(btn)
             scroll.add_widget(grid)
@@ -661,6 +661,11 @@ def modular_dialog(
                 def _handler(*_args):
                     result.label = button_spec.label
                     result.role = button_spec.role
+                    result.checklist = [
+                        label_text
+                        for btn, label_text in checklist_buttons
+                        if getattr(btn, "state", None) == "down"
+                    ]
                     session.close(result)
                 return _handler
 
