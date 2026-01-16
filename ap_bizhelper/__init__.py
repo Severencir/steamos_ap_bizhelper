@@ -1,11 +1,15 @@
 """ap-bizhelper package initialization and CLI entry point."""
 from __future__ import annotations
 
+import os
 import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .ap_bizhelper import main as _main
+
+if "KIVY_NO_ARGS" not in os.environ:
+    os.environ["KIVY_NO_ARGS"] = "1"
 
 
 def console_main() -> None:
