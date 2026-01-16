@@ -51,12 +51,15 @@ from .constants import (
 )
 from .dialogs import (
     DIALOG_DEFAULTS,
+    DialogButtonSpec,
     checklist_dialog,
-    enable_dialog_gamepad,
-    ensure_qt_app,
-    ensure_qt_available,
+    copy_to_clipboard,
     error_dialog,
+    gui_available,
     info_dialog,
+    list_action_dialog,
+    question_dialog,
+    run_custom_dialog,
     select_file_dialog,
 )
 from .logging_utils import get_app_logger
@@ -302,98 +305,65 @@ def _format_status_text() -> str:
     return "\n".join(lines)
 
 
-def show_apworlds_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
+def show_apworlds_dialog(parent: Optional[object] = None) -> None:
     """Display managed APWorlds with actions to refresh them."""
 
-    ensure_qt_available()
-    from PySide6 import QtCore, QtWidgets
-
-    dialog = QtWidgets.QDialog(parent)
-    dialog.setWindowTitle("ap-bizhelper APWorlds")
-
-    layout = QtWidgets.QVBoxLayout(dialog)
-    header = QtWidgets.QLabel("Managed APWorlds")
-    layout.addWidget(header)
-
-    table = QtWidgets.QTableWidget()
-    table.setColumnCount(4)
-    table.setHorizontalHeaderLabels(["APWorld", "Installed version", "Latest seen", "Source"])
-    table.verticalHeader().setVisible(False)
-    table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-    table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-    table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-    table.setFocusPolicy(QtCore.Qt.StrongFocus)
-    table.horizontalHeader().setStretchLastSection(True)
-    table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
-    layout.addWidget(table)
-
-    def _refresh_table() -> None:
+    if not gui_available():
         cache = load_apworld_cache()
         playable_cache = cache.get("playable_worlds", {})
-        table.clearContents()
         if not playable_cache:
-            table.setRowCount(1)
-            placeholder = QtWidgets.QTableWidgetItem("—")
-            placeholder.setFlags(placeholder.flags() & ~QtCore.Qt.ItemIsEditable)
-            table.setItem(0, 0, placeholder)
-            table.setEnabled(False)
+            info_dialog("No APWorlds are currently managed.")
             return
-        table.setEnabled(True)
-        table.setRowCount(len(playable_cache))
-        for row_index, world_name in enumerate(sorted(playable_cache.keys(), key=str.casefold)):
+        lines = [
+            "Managed APWorlds:",
+            *[
+                f"- {name}: version={entry.get('version', '—')} latest={entry.get('latest_seen_version', '—')} source={entry.get('source', '—')}"
+                for name, entry in sorted(playable_cache.items(), key=lambda item: str(item[0]).casefold())
+            ],
+        ]
+        info_dialog("\n".join(lines), title="ap-bizhelper APWorlds")
+        return
+
+    while True:
+        cache = load_apworld_cache()
+        playable_cache = cache.get("playable_worlds", {})
+        if not playable_cache:
+            info_dialog("No APWorlds are currently managed.")
+            return
+        items = []
+        mapping: dict[str, str] = {}
+        for idx, world_name in enumerate(sorted(playable_cache.keys(), key=str.casefold), start=1):
             entry = playable_cache.get(world_name, {})
             installed_version = _dash_if_empty(str(entry.get("version", "") or ""))
             latest_seen = _dash_if_empty(str(entry.get("latest_seen_version", "") or ""))
             source = _dash_if_empty(str(entry.get("source", "") or ""))
-            values = [world_name, installed_version, latest_seen, source]
-            for col_index, value in enumerate(values):
-                item = QtWidgets.QTableWidgetItem(value)
-                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
-                item.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-                if col_index == 0:
-                    item.setData(QtCore.Qt.UserRole, world_name)
-                table.setItem(row_index, col_index, item)
+            label = f"{idx}. {world_name} | {installed_version} | {latest_seen} | {source}"
+            items.append(label)
+            mapping[label] = world_name
 
-    button_row = QtWidgets.QHBoxLayout()
-    force_button = QtWidgets.QPushButton("Force update")
-    manual_button = QtWidgets.QPushButton("Manual select")
-    close_button = QtWidgets.QPushButton("Close")
-    button_row.addWidget(force_button)
-    button_row.addWidget(manual_button)
-    button_row.addStretch()
-    button_row.addWidget(close_button)
-    layout.addLayout(button_row)
-
-    def _selected_world() -> Optional[str]:
-        row = table.currentRow()
-        if row < 0:
-            return None
-        item = table.item(row, 0)
-        if item is None:
-            return None
-        value = item.data(QtCore.Qt.UserRole)
-        return str(value) if value else None
-
-    def _run_action(action: Callable[[Optional[str]], bool]) -> None:
-        selected = _selected_world()
-        if not selected:
-            info_dialog("Select an APWorld from the list first.")
+        selection, action = list_action_dialog(
+            title="ap-bizhelper APWorlds",
+            text="Managed APWorlds",
+            items=items,
+            actions=[
+                DialogButtonSpec("Force update", role="positive", is_default=True),
+                DialogButtonSpec("Manual select", role="special"),
+            ],
+            cancel_label="Close",
+        )
+        if action is None or action.role == "negative":
             return
-        action(selected)
-        _refresh_table()
-
-    force_button.clicked.connect(lambda _=False: _run_action(force_update_apworlds))
-    manual_button.clicked.connect(lambda _=False: _run_action(manual_select_apworld))
-    close_button.clicked.connect(dialog.reject)
-
-    enable_dialog_gamepad(dialog, affirmative=close_button, negative=close_button, default=close_button)
-    _refresh_table()
-    table.resizeColumnsToContents()
-    dialog.setMinimumSize(1400, 800)
-    dialog.resize(1400, 800)
-    dialog.exec()
+        if not selection:
+            info_dialog("Select an APWorld from the list first.")
+            continue
+        chosen = mapping.get(selection)
+        if not chosen:
+            info_dialog("Select an APWorld from the list first.")
+            continue
+        if action.label == "Force update":
+            force_update_apworlds(chosen)
+        elif action.label == "Manual select":
+            manual_select_apworld(chosen)
 
 
 AP_CONFIG_DIR = ARCHIPELAGO_CONFIG_DIR
@@ -653,7 +623,7 @@ def _export_settings() -> None:
     info_dialog(f"Settings exported to:\n{export_path}")
 
 
-def _import_settings(parent: Optional["QtWidgets.QWidget"] = None) -> bool:
+def _import_settings(parent: Optional[object] = None) -> bool:
     export_dir = _ensure_exports_dir()
     if not export_dir:
         return False
@@ -666,18 +636,16 @@ def _import_settings(parent: Optional["QtWidgets.QWidget"] = None) -> bool:
     if not selection:
         return False
 
-    ensure_qt_available()
-    from PySide6 import QtWidgets
-
-    response = QtWidgets.QMessageBox.warning(
-        parent,
-        "Import settings?",
-        "Import settings from the selected file?\n"
-        "This will replace your current settings (managed paths stay as-is).",
-        QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-        QtWidgets.QMessageBox.No,
+    response = question_dialog(
+        title="Import settings?",
+        text=(
+            "Import settings from the selected file?\n"
+            "This will replace your current settings (managed paths stay as-is)."
+        ),
+        ok_label="Import",
+        cancel_label="Cancel",
     )
-    if response != QtWidgets.QMessageBox.Yes:
+    if response != "ok":
         return False
 
     imported_settings = _read_settings_export(selection)
@@ -696,236 +664,205 @@ def _import_settings(parent: Optional["QtWidgets.QWidget"] = None) -> bool:
     return True
 
 
-def show_managed_dirs_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
+def show_managed_dirs_dialog(parent: Optional[object] = None) -> None:
     """Display a dialog listing managed directories with quick open actions."""
 
-    ensure_qt_available()
-    from PySide6 import QtCore, QtWidgets
-
-    ensure_qt_app()
-    dialog = QtWidgets.QDialog(parent)
-    dialog.setWindowTitle("Managed directories")
-    dialog.setMinimumSize(1000, 400)
-    dialog.resize(1000, 400)
-
-    layout = QtWidgets.QVBoxLayout(dialog)
-    table = QtWidgets.QTableWidget()
-    table.setColumnCount(2)
-    table.setHorizontalHeaderLabels(["Role", "Path"])
-    table.verticalHeader().setVisible(False)
-    table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-    table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
-    table.setFocusPolicy(QtCore.Qt.NoFocus)
-    table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
-    layout.addWidget(table)
-
     rows = _build_managed_dir_rows()
-    table.setRowCount(len(rows))
-
-    for row_index, row in enumerate(rows):
-        role_item = QtWidgets.QTableWidgetItem(row.role)
-        role_item.setFlags(role_item.flags() & ~QtCore.Qt.ItemIsEditable)
-        table.setItem(row_index, 0, role_item)
-
+    items = []
+    mapping: dict[str, _ManagedDirRow] = {}
+    for idx, row in enumerate(rows, start=1):
         path_text = _managed_dir_display(row.path)
-        path_widget = QtWidgets.QWidget()
-        path_layout = QtWidgets.QHBoxLayout(path_widget)
-        path_layout.setContentsMargins(0, 0, 0, 0)
-        path_layout.setSpacing(8)
+        label = f\"{idx}. {row.role}: {path_text}\"
+        items.append(label)
+        mapping[label] = row
 
-        label = QtWidgets.QLabel(path_text)
-        label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        path_layout.addWidget(label)
-        path_layout.addStretch()
+    if not gui_available():
+        info_dialog(\"\\n\".join(items), title=\"Managed directories\")
+        return
 
-        open_button = QtWidgets.QPushButton("Open")
-        if row.path and _managed_dir_exists(row.path):
-            open_button.clicked.connect(lambda _=False, p=row.path: _open_path_in_manager(p))
-        else:
-            open_button.setEnabled(False)
-            open_button.setToolTip("Path not available.")
-        path_layout.addWidget(open_button)
-
-        table.setCellWidget(row_index, 1, path_widget)
-
-    button_row = QtWidgets.QHBoxLayout()
-    button_row.addStretch()
-    close_button = QtWidgets.QPushButton("Close")
-    close_button.clicked.connect(dialog.reject)
-    button_row.addWidget(close_button)
-    layout.addLayout(button_row)
-
-    enable_dialog_gamepad(dialog, affirmative=close_button, negative=close_button, default=close_button)
-    dialog.exec()
+    while True:
+        selection, action = list_action_dialog(
+            title=\"Managed directories\",
+            text=\"Select a directory to open.\",
+            items=items,
+            actions=[DialogButtonSpec(\"Open\", role=\"positive\", is_default=True)],
+            cancel_label=\"Close\",
+        )
+        if action is None or action.role == \"negative\":
+            return
+        if not selection:
+            info_dialog(\"Select a directory from the list first.\")
+            continue
+        row = mapping.get(selection)
+        if not row or not row.path or not _managed_dir_exists(row.path):
+            info_dialog(\"That path is not available on this device.\")
+            continue
+        _open_path_in_manager(row.path)
 
 
-def show_utils_dialog(parent: Optional["QtWidgets.QWidget"] = None) -> None:
+def show_utils_dialog(parent: Optional[object] = None) -> None:
     """Display a utilities dialog with component versions and update actions."""
 
-    ensure_qt_available()
-    from PySide6 import QtCore, QtWidgets
+    if not gui_available():
+        info_dialog(_format_status_text(), title="ap-bizhelper utilities")
+        return
 
-    ensure_qt_app()
-    dialog = QtWidgets.QDialog(parent)
-    dialog.setWindowTitle("ap-bizhelper utilities")
+    def _build(session, modules):  # type: ignore[no-untyped-def]
+        settings = load_settings()
+        padding_value = int(settings.get("KIVY_DIALOG_PADDING_DP", DIALOG_DEFAULTS["KIVY_DIALOG_PADDING_DP"]))
+        spacing_value = int(settings.get("KIVY_DIALOG_SPACING_DP", DIALOG_DEFAULTS["KIVY_DIALOG_SPACING_DP"]))
+        button_height_value = int(settings.get("KIVY_BUTTON_HEIGHT_DP", DIALOG_DEFAULTS["KIVY_BUTTON_HEIGHT_DP"]))
+        row_height_value = int(settings.get("KIVY_LIST_ROW_HEIGHT_DP", DIALOG_DEFAULTS["KIVY_LIST_ROW_HEIGHT_DP"]))
+        padding = modules.dp(padding_value)
+        spacing = modules.dp(spacing_value)
+        root = modules.BoxLayout(orientation="vertical", padding=padding, spacing=spacing)
 
-    layout = QtWidgets.QVBoxLayout(dialog)
-    header = QtWidgets.QLabel(f"ap-bizhelper version: {_app_version()}")
-    layout.addWidget(header)
-
-    table = QtWidgets.QTableWidget()
-    table.setColumnCount(6)
-    table.setHorizontalHeaderLabels(
-        ["Component", "Installed version", "Latest seen", "Skip version", "Source", "Actions"]
-    )
-    table.verticalHeader().setVisible(False)
-    table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-    table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
-    table.setFocusPolicy(QtCore.Qt.NoFocus)
-    table.horizontalHeader().setStretchLastSection(True)
-    table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeToContents)
-    layout.addWidget(table)
-
-    copy_status_button = QtWidgets.QPushButton("Copy status")
-    managed_dirs_button = QtWidgets.QPushButton("Managed dirs")
-    export_settings_button = QtWidgets.QPushButton("Export settings")
-    open_exports_button = QtWidgets.QPushButton("Open exports")
-    import_settings_button = QtWidgets.QPushButton("Import settings")
-    update_app_button = QtWidgets.QPushButton("Update App")
-    apworlds_button = QtWidgets.QPushButton("APWorlds…")
-    rollback_button = QtWidgets.QPushButton("Rollback")
-    reset_settings_button = QtWidgets.QPushButton("Reset settings")
-    uninstall_button = QtWidgets.QPushButton("Uninstall")
-    close_button = QtWidgets.QPushButton("Close")
-
-    button_row_top = QtWidgets.QHBoxLayout()
-    button_row_top.addWidget(copy_status_button)
-    button_row_top.addWidget(managed_dirs_button)
-    button_row_top.addWidget(update_app_button)
-    button_row_top.addWidget(apworlds_button)
-    button_row_top.addStretch()
-    layout.addLayout(button_row_top)
-
-    button_row_middle = QtWidgets.QHBoxLayout()
-    button_row_middle.addWidget(import_settings_button)
-    button_row_middle.addWidget(export_settings_button)
-    button_row_middle.addWidget(open_exports_button)
-    button_row_middle.addStretch()
-    layout.addLayout(button_row_middle)
-
-    button_row_bottom = QtWidgets.QHBoxLayout()
-    button_row_bottom.addWidget(rollback_button)
-    button_row_bottom.addWidget(reset_settings_button)
-    button_row_bottom.addWidget(uninstall_button)
-    button_row_bottom.addStretch()
-    layout.addLayout(button_row_bottom)
-
-    button_row_close = QtWidgets.QHBoxLayout()
-    button_row_close.addStretch()
-    button_row_close.addWidget(close_button)
-    layout.addLayout(button_row_close)
-
-    def _show_update_app_placeholder() -> None:
-        QtWidgets.QMessageBox.information(
-            dialog,
-            "Update App (Placeholder)",
-            "The Update App feature is not implemented yet. "
-            "This button is a placeholder for future update logic.",
+        header = modules.Label(
+            text=f"ap-bizhelper version: {_app_version()}",
+            size_hint_y=None,
+            height=modules.dp(row_height_value),
+            bold=True,
         )
+        root.add_widget(header)
 
-    update_app_button.clicked.connect(_show_update_app_placeholder)
-    def _show_rollback_placeholder() -> None:
-        QtWidgets.QMessageBox.information(
-            dialog,
-            "Rollback (Planned)",
-            "Rollback is planned but requires the snapshot system. "
-            "Once snapshots are available, this action will restore the latest snapshot.",
-        )
+        scroll = modules.ScrollView(size_hint=(1, 1))
+        grid = modules.GridLayout(cols=6, size_hint_y=None, spacing=spacing)
+        grid.bind(minimum_height=grid.setter("height"))
 
-    rollback_button.clicked.connect(_show_rollback_placeholder)
-    uninstall_button.clicked.connect(show_uninstall_dialog)
-    copy_status_button.clicked.connect(
-        lambda: QtWidgets.QApplication.clipboard().setText(_format_status_text())
-    )
-    managed_dirs_button.clicked.connect(lambda: show_managed_dirs_dialog(dialog))
-    apworlds_button.clicked.connect(lambda _=False: show_apworlds_dialog(dialog))
-    export_settings_button.clicked.connect(_export_settings)
-    open_exports_button.clicked.connect(
-        lambda: _open_path_in_manager(EXPORTS_DIR)
-        if _ensure_exports_dir()
-        else None
-    )
-    import_settings_button.clicked.connect(
-        lambda: _refresh_table() if _import_settings(dialog) else None
-    )
-    reset_settings_button.clicked.connect(lambda: _confirm_reset_settings(dialog))
-    close_button.clicked.connect(dialog.reject)
+        def _add_header_cell(text: str) -> None:
+            label = modules.Label(text=text, bold=True, size_hint_y=None, height=modules.dp(row_height_value))
+            grid.add_widget(label)
 
-    def _refresh_table() -> None:
-        rows = _build_component_rows()
-        table.setRowCount(len(rows))
+        for label in (
+            "Component",
+            "Installed version",
+            "Latest seen",
+            "Skip version",
+            "Source",
+            "Actions",
+        ):
+            _add_header_cell(label)
 
-        for row_index, row in enumerate(rows):
-            values = [
-                row.name,
-                row.installed_version,
-                row.latest_seen,
-                row.skip_version,
-                row.source,
-            ]
-            for col_index, value in enumerate(values):
-                item = QtWidgets.QTableWidgetItem(value)
-                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
-                item.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-                table.setItem(row_index, col_index, item)
+        def _run_action(action: Callable[[], bool]) -> None:
+            action()
+            _refresh_table()
 
-            action_widget = QtWidgets.QWidget()
-            action_layout = QtWidgets.QHBoxLayout(action_widget)
-            action_layout.setContentsMargins(0, 0, 0, 0)
-            action_layout.setSpacing(6)
-            action_layout.addStretch()
+        def _refresh_table() -> None:
+            grid.clear_widgets()
+            for label in (
+                "Component",
+                "Installed version",
+                "Latest seen",
+                "Skip version",
+                "Source",
+                "Actions",
+            ):
+                _add_header_cell(label)
 
-            force_button = QtWidgets.QPushButton("Force update")
-            manual_button = QtWidgets.QPushButton("Manual select")
-            action_layout.addWidget(force_button)
-            action_layout.addWidget(manual_button)
+            rows = _build_component_rows()
+            for row in rows:
+                for value in (
+                    row.name,
+                    row.installed_version,
+                    row.latest_seen,
+                    row.skip_version,
+                    row.source,
+                ):
+                    cell = modules.Label(text=value, size_hint_y=None, height=modules.dp(row_height_value))
+                    grid.add_widget(cell)
 
-            force_button.clicked.connect(lambda _=False, cb=row.force_update: _run_action(cb))
-            manual_button.clicked.connect(lambda _=False, cb=row.manual_select: _run_action(cb))
+                action_box = modules.BoxLayout(orientation="horizontal", spacing=spacing)
+                force_button = modules.FocusableButton(text="Force update", size_hint_x=None, width=modules.dp(140))
+                manual_button = modules.FocusableButton(text="Manual select", size_hint_x=None, width=modules.dp(140))
+                session.focus_manager.register(force_button)
+                session.focus_manager.register(manual_button)
+                force_button.bind(on_release=lambda _btn, cb=row.force_update: _run_action(cb))
+                manual_button.bind(on_release=lambda _btn, cb=row.manual_select: _run_action(cb))
+                action_box.add_widget(force_button)
+                action_box.add_widget(manual_button)
+                grid.add_widget(action_box)
 
-            table.setCellWidget(row_index, 5, action_widget)
-
-    def _run_action(action: Callable[[], bool]) -> None:
-        action()
         _refresh_table()
+        scroll.add_widget(grid)
+        root.add_widget(scroll)
 
-    def _confirm_reset_settings(parent: Optional["QtWidgets.QWidget"] = None) -> None:
-        response = QtWidgets.QMessageBox.warning(
-            parent or dialog,
-            "Reset settings?",
-            "Reset settings to defaults? This will clear saved paths and preferences.",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.No,
+        def _show_update_app_placeholder() -> None:
+            info_dialog(
+                "The Update App feature is not implemented yet. "
+                "This button is a placeholder for future update logic.",
+                title="Update App (Placeholder)",
+            )
+
+        def _show_rollback_placeholder() -> None:
+            info_dialog(
+                "Rollback is planned but requires the snapshot system. "
+                "Once snapshots are available, this action will restore the latest snapshot.",
+                title="Rollback (Planned)",
+            )
+
+        def _confirm_reset_settings() -> None:
+            response = question_dialog(
+                title="Reset settings?",
+                text="Reset settings to defaults? This will clear saved paths and preferences.",
+                ok_label="Reset",
+                cancel_label="Cancel",
+            )
+            if response != "ok":
+                return
+            _reset_settings()
+            _refresh_table()
+
+        def _copy_status() -> None:
+            if not copy_to_clipboard(_format_status_text(), settings=settings):
+                info_dialog("Clipboard is not available on this system.")
+
+        button_rows = [
+            [
+                ("Copy status", _copy_status),
+                ("Managed dirs", lambda: show_managed_dirs_dialog()),
+                ("Update App", _show_update_app_placeholder),
+                ("APWorlds…", lambda: show_apworlds_dialog()),
+            ],
+            [
+                ("Import settings", lambda: _refresh_table() if _import_settings() else None),
+                ("Export settings", _export_settings),
+                ("Open exports", lambda: _open_path_in_manager(EXPORTS_DIR) if _ensure_exports_dir() else None),
+            ],
+            [
+                ("Rollback", _show_rollback_placeholder),
+                ("Reset settings", _confirm_reset_settings),
+                ("Uninstall", show_uninstall_dialog),
+            ],
+        ]
+
+        for row_buttons in button_rows:
+            row_layout = modules.BoxLayout(
+                orientation="horizontal",
+                spacing=spacing,
+                size_hint_y=None,
+                height=modules.dp(button_height_value),
+            )
+            for label, handler in row_buttons:
+                btn = modules.FocusableButton(text=label)
+                session.focus_manager.register(btn)
+                btn.bind(on_release=lambda _btn, h=handler: h())
+                row_layout.add_widget(btn)
+            root.add_widget(row_layout)
+
+        close_row = modules.BoxLayout(
+            orientation="horizontal",
+            spacing=spacing,
+            size_hint_y=None,
+            height=modules.dp(button_height_value),
         )
-        if response != QtWidgets.QMessageBox.Yes:
-            return
-        _reset_settings()
-        _refresh_table()
+        close_button = modules.FocusableButton(text="Close", size_hint_x=None, width=modules.dp(160))
+        session.focus_manager.register(close_button, default=True)
+        close_button.bind(on_release=lambda *_args: session.close(None))
+        close_row.add_widget(close_button)
+        root.add_widget(close_row)
+        return root
 
-    _refresh_table()
-    table.resizeColumnsToContents()
-    dialog.adjustSize()
-    size_hint = dialog.sizeHint()
-    target_width = int(1400)
-    dialog.setMinimumWidth(target_width)
-    dialog.resize(target_width, size_hint.height())
-    enable_dialog_gamepad(dialog, affirmative=close_button, negative=close_button, default=close_button)
-    dialog.exec()
+    run_custom_dialog(title="ap-bizhelper utilities", build=_build)
 
 
 def show_uninstall_dialog() -> None:

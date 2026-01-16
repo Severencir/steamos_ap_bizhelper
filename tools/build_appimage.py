@@ -30,7 +30,6 @@ LIB_SEARCH_ROOTS = [
     Path("/lib"),
     Path("/lib/x86_64-linux-gnu"),
 ]
-QT_RUNTIME_DIRNAME = "qt-runtime"
 
 
 def _build_wheel() -> Path:
@@ -58,38 +57,6 @@ def _create_appdir_venv() -> Path:
 def _install_wheel(python: Path, wheel: Path) -> None:
     subprocess.run([python, "-m", "pip", "install", "--upgrade", "pip"], check=True)
     subprocess.run([python, "-m", "pip", "install", str(wheel)], check=True)
-
-
-def _copy_qt_runtime(appdir: Path, python: Path) -> None:
-    qt_root = subprocess.check_output(
-        [
-            str(python),
-            "-c",
-            textwrap.dedent(
-                """
-                import sysconfig
-                from pathlib import Path
-
-                site_packages = Path(sysconfig.get_path("purelib"))
-                candidates = [
-                    site_packages / "PySide6" / "Qt",
-                    site_packages / "PySide6_Addons" / "Qt",
-                ]
-                for candidate in candidates:
-                    if candidate.exists():
-                        print(candidate)
-                        break
-                else:
-                    raise SystemExit("PySide6 Qt runtime not found")
-                """
-            ),
-        ]
-    )
-    qt_root_path = Path(qt_root.decode().strip())
-    target = appdir / "usr" / QT_RUNTIME_DIRNAME
-    if target.exists():
-        shutil.rmtree(target)
-    shutil.copytree(qt_root_path, target)
 
 
 def _find_library_path(names: Iterable[str]) -> Optional[Path]:
@@ -156,30 +123,7 @@ def _write_apprun(appdir: Path) -> None:
         HERE="$(dirname "$(readlink -f "$0")")"
         export PATH="$HERE/usr/bin:$PATH"
         export APPDIR="$HERE"
-        QT_RUNTIME="${AP_BIZHELPER_QT_RUNTIME:-$HERE/usr/qt-runtime}"
-        QML2_IMPORT_PATH=""
-        QT_PLUGIN_PATH=""
-        if [ -d "$QT_RUNTIME/lib" ]; then
-            export LD_LIBRARY_PATH="$QT_RUNTIME/lib:$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-        else
-            export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-        fi
-        if [ -d "$QT_RUNTIME/plugins" ]; then
-            QT_PLUGIN_PATH="$QT_RUNTIME/plugins"
-        fi
-        if [ -d "$QT_RUNTIME/qml" ]; then
-            QML2_IMPORT_PATH="$QT_RUNTIME/qml"
-        fi
-        for site in "$HERE"/usr/lib/python*/site-packages; do
-            if [ -d "$site/PySide6/qml" ]; then
-                QML2_IMPORT_PATH="$site/PySide6/qml${QML2_IMPORT_PATH:+:$QML2_IMPORT_PATH}"
-            fi
-            if [ -d "$site/PySide6_Addons/qml" ]; then
-                QML2_IMPORT_PATH="$site/PySide6_Addons/qml${QML2_IMPORT_PATH:+:$QML2_IMPORT_PATH}"
-            fi
-        done
-        export QT_PLUGIN_PATH
-        export QML2_IMPORT_PATH
+        export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         exec "$HERE/usr/bin/python" -m ap_bizhelper "$@"
         """
     ).strip()
@@ -235,7 +179,6 @@ def build_appimage() -> Path:
     wheel = _build_wheel()
     python = _create_appdir_venv()
     _install_wheel(python, wheel)
-    _copy_qt_runtime(APPDIR, python)
     _bundle_runtime_libs(APPDIR)
     _write_apprun(APPDIR)
     _write_desktop(APPDIR)

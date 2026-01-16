@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import importlib.util
 import os
 import shutil
 import subprocess
@@ -493,13 +492,6 @@ def main(argv: list[str]) -> int:
             location="startup",
         )
         try:
-            if importlib.util.find_spec("PySide6") is None:
-                fallback_error_dialog(
-                    f"{LOG_PREFIX} PySide6 is required to launch BizHawk.",
-                    title=RUNNER_ERROR_TITLE,
-                    logger=RUNNER_LOGGER,
-                )
-                return 1
             settings = _load_settings_safe()
             bizhawk_exe = ensure_bizhawk_exe(settings)
             bizhawk_root = bizhawk_exe.parent

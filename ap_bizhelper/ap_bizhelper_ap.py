@@ -69,21 +69,6 @@ def _save_settings(settings: Dict[str, Any]) -> None:
     _save_shared_settings(merged_settings)
 
 
-def _ensure_qt_available() -> None:
-    try:
-        dialogs.ensure_qt_available()
-    except Exception as exc:
-        APP_LOGGER.log(
-            f"PySide6 is required but could not be imported: {exc}",
-            level="ERROR",
-            include_context=True,
-            mirror_console=True,
-            stream="stderr",
-            location="qt-deps",
-        )
-        raise
-
-
 def _version_sort_key(version: str) -> tuple[tuple[int, object], ...]:
     cleaned = version.strip()
     if cleaned.lower().startswith("v"):
@@ -123,24 +108,12 @@ def _select_file_dialog(
     settings: Optional[Dict[str, Any]] = None,
     dialog_key: str = "default",
 ) -> Optional[Path]:
-    _ensure_qt_available()
     settings_obj = settings if settings is not None else _load_settings()
     start_dir = dialogs.preferred_start_dir(initial, settings_obj, dialog_key)
 
-    try:
-        selection = dialogs.file_dialog(
-            title=title, start_dir=start_dir, file_filter=file_filter, settings=settings_obj
-        )
-    except Exception as exc:  # pragma: no cover - GUI/runtime issues
-        APP_LOGGER.log(
-            f"PySide6 file selection failed: {exc}",
-            level="ERROR",
-            include_context=True,
-            mirror_console=True,
-            stream="stderr",
-            location="qt-file-dialog",
-        )
-        raise
+    selection = dialogs.file_dialog(
+        title=title, start_dir=start_dir, file_filter=file_filter, settings=settings_obj
+    )
 
     if selection:
         dialogs.remember_file_dialog_dir(settings_obj, selection, dialog_key)
@@ -341,7 +314,7 @@ def download_with_progress(
     hash_name: str = "sha256",
     require_hash: bool = False,
 ) -> None:
-    """Download ``url`` to ``dest`` with a PySide6 progress dialog.
+    """Download ``url`` to ``dest`` with a Kivy progress dialog.
 
     When ``expected_hash`` is provided, the downloaded file is validated using
     the ``hash_name`` algorithm (``sha256`` by default). If the server provides
@@ -351,7 +324,6 @@ def download_with_progress(
     """
 
     _ensure_dirs()
-    _ensure_qt_available()
 
     req = urllib.request.Request(url, headers={USER_AGENT_HEADER: USER_AGENT})
 
@@ -469,7 +441,7 @@ def download_appimage(
     digest_algorithm: str,
     download_messages: Optional[list[str]] = None,
 ) -> None:
-    """Download the AppImage to ``dest`` with a Qt progress dialog."""
+    """Download the AppImage to ``dest`` with a Kivy progress dialog."""
 
     download_with_progress(
         url,

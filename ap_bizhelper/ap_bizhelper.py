@@ -14,13 +14,11 @@ from typing import Optional, Tuple
 
 from .ap_bizhelper_ap import AP_APPIMAGE_DEFAULT, ensure_appimage
 from .dialogs import (
-    enable_dialog_gamepad as _enable_dialog_gamepad,
-    ensure_qt_app as _ensure_qt_app,
-    ensure_qt_available as _ensure_qt_available,
-    question_dialog as _qt_question_dialog,
-    select_file_dialog as _select_file_dialog,
+    checklist_dialog,
     error_dialog,
     info_dialog,
+    question_dialog as _qt_question_dialog,
+    select_file_dialog as _select_file_dialog,
 )
 from .ap_bizhelper_bizhawk import (
     ensure_bizhawk_install,
@@ -402,67 +400,40 @@ def _prompt_setup_choices(
 ) -> Tuple[bool, bool, bool, bool]:
     if not any((show_archipelago, show_bizhawk, show_runtime)):
         return False, False, False, False
+    options: list[tuple[bool, str]] = []
+    option_map: dict[str, str] = {}
 
-    from PySide6 import QtCore, QtWidgets
+    def _add_option(label: str) -> None:
+        options.append((True, label))
+        option_map[label] = label
 
-    _ensure_qt_app()
-    dialog = QtWidgets.QDialog()
-    dialog.setWindowTitle("Download setup")
-    dialog.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
-    layout = QtWidgets.QVBoxLayout(dialog)
-    label = QtWidgets.QLabel("Select which components to download and configure.")
-    layout.addWidget(label)
-
-    arch_box = None
     if show_archipelago:
-        arch_box = QtWidgets.QCheckBox("Archipelago")
-        arch_box.setChecked(True)
-        layout.addWidget(arch_box)
-
-    bizhawk_box = None
+        _add_option("Archipelago")
     if show_bizhawk:
-        bizhawk_box = QtWidgets.QCheckBox("BizHawk (Linux)")
-        bizhawk_box.setChecked(True)
-        layout.addWidget(bizhawk_box)
-
-    runtime_box = None
+        _add_option("BizHawk (Linux)")
     if show_runtime:
-        runtime_box = QtWidgets.QCheckBox("BizHawk deps (mono/libgdiplus/lua)")
-        runtime_box.setChecked(True)
-        layout.addWidget(runtime_box)
-
-    shortcut_box = None
+        _add_option("BizHawk deps (mono/libgdiplus/lua)")
     if show_archipelago or show_bizhawk or show_runtime:
-        shortcut_box = QtWidgets.QCheckBox(
-            "Create Desktop shortcuts (Archipelago & BizHawk)"
-        )
-        shortcut_box.setChecked(True)
-        layout.addWidget(shortcut_box)
+        _add_option("Create Desktop shortcuts (Archipelago & BizHawk)")
 
-    button_row = QtWidgets.QHBoxLayout()
-    button_row.addStretch()
-    download_btn = QtWidgets.QPushButton("Download")
-    download_btn.setDefault(True)
-    button_row.addWidget(download_btn)
-    cancel_btn = QtWidgets.QPushButton("Cancel")
-    button_row.addWidget(cancel_btn)
-    button_row.addStretch()
-    layout.addLayout(button_row)
-
-    download_btn.clicked.connect(dialog.accept)
-    cancel_btn.clicked.connect(dialog.reject)
-
-    _enable_dialog_gamepad(
-        dialog, affirmative=download_btn, negative=cancel_btn, default=download_btn
+    selections = checklist_dialog(
+        "Download setup",
+        "Select which components to download and configure.",
+        options,
+        ok_label="Download",
+        cancel_label="Cancel",
     )
-
-    if dialog.exec() != QtWidgets.QDialog.Accepted:
+    if selections is None:
         raise RuntimeError("User cancelled setup selection.")
 
-    arch = arch_box.isChecked() if arch_box is not None else False
-    bizhawk = bizhawk_box.isChecked() if bizhawk_box is not None else False
-    runtime = runtime_box.isChecked() if runtime_box is not None else False
-    shortcuts = shortcut_box.isChecked() if shortcut_box is not None else False
+    selection_set = set(selections)
+    arch = "Archipelago" in selection_set
+    bizhawk = "BizHawk (Linux)" in selection_set
+    runtime = "BizHawk deps (mono/libgdiplus/lua)" in selection_set
+    shortcuts = "Create Desktop shortcuts (Archipelago & BizHawk)" in selection_set
+
+    if not allow_archipelago_skip:
+        arch = True
 
     return arch, bizhawk, runtime, shortcuts
 
@@ -1264,25 +1235,9 @@ def _run_full_flow(
 def main(argv: list[str]) -> int:
     with APP_LOGGER.context("main"):
         APP_LOGGER.log("Starting ap-bizhelper", include_context=True)
-        try:
-            _ensure_qt_available()
-        except RuntimeError:
-            return 1
         settings = load_settings()
         _capture_bizhelper_appimage(settings)
         ensure_local_action_scripts(settings)
-
-        try:
-            _ensure_qt_app(settings)
-        except Exception as exc:
-            APP_LOGGER.log(
-                f"Failed to initialize Qt with settings: {exc}",
-                level="ERROR",
-                include_context=True,
-                mirror_console=True,
-                stream="stderr",
-            )
-            return 1
 
         settings_dirty = False
 
