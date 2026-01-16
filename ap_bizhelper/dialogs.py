@@ -628,9 +628,10 @@ def modular_dialog(
             )
             root.add_widget(title_label)
 
-        if text:
+        text_label = None
+        if text or progress_stream is not None:
             text_label = modules.Label(
-                text=text,
+                text=text or "",
                 font_size=modules.sp(_font_sp(settings, "KIVY_MIN_TEXT_SP", int(DIALOG_DEFAULTS["KIVY_MIN_TEXT_SP"]))),
                 text_size=(None, None),
                 size_hint_y=None,
@@ -683,19 +684,7 @@ def modular_dialog(
         progress_bar = None
         progress_label = None
         if progress_stream is not None:
-            progress_label = modules.Label(
-                text="",
-                font_size=modules.sp(_font_sp(settings, "KIVY_MIN_TEXT_SP", int(DIALOG_DEFAULTS["KIVY_MIN_TEXT_SP"]))),
-                text_size=(None, None),
-                size_hint_y=None,
-            )
-            progress_label.bind(
-                width=lambda instance, value: setattr(instance, "text_size", (value, None))
-            )
-            progress_label.bind(
-                texture_size=lambda instance, value: setattr(instance, "height", value[1])
-            )
-            root.add_widget(progress_label)
+            progress_label = text_label
             progress_bar = modules.ProgressBar(max=100, value=0)
             root.add_widget(progress_bar)
 
