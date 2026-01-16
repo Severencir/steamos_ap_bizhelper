@@ -409,13 +409,12 @@ def _prompt_setup_choices(
         return False, False, False, False
     options: list[tuple[bool, str]] = []
     option_map: dict[str, str] = {}
-    arch_required = show_archipelago and not allow_archipelago_skip
 
     def _add_option(label: str) -> None:
         options.append((True, label))
         option_map[label] = label
 
-    if show_archipelago and allow_archipelago_skip:
+    if show_archipelago:
         _add_option("Archipelago")
     if show_bizhawk:
         _add_option("BizHawk (Linux)")
@@ -425,8 +424,10 @@ def _prompt_setup_choices(
         _add_option("Create Desktop shortcuts (Archipelago & BizHawk)")
 
     dialog_text = "Select which components to download and configure."
-    if arch_required:
-        dialog_text += "\n\nArchipelago is required for this flow and will be included."
+    if show_archipelago:
+        dialog_text += (
+            "\n\nUncheck Archipelago to skip downloading and select an existing AppImage."
+        )
 
     selections = checklist_dialog(
         "Download setup",
@@ -439,7 +440,7 @@ def _prompt_setup_choices(
         raise RuntimeError("User cancelled setup selection.")
 
     selection_set = set(selections)
-    arch = arch_required or ("Archipelago" in selection_set)
+    arch = "Archipelago" in selection_set
     bizhawk = "BizHawk (Linux)" in selection_set
     runtime = "BizHawk deps (mono/libgdiplus/lua)" in selection_set
     shortcuts = "Create Desktop shortcuts (Archipelago & BizHawk)" in selection_set
@@ -1135,7 +1136,7 @@ def _run_prereqs(settings: dict, *, allow_archipelago_skip: bool = False) -> Tup
         appimage: Optional[Path] = None
         runner: Optional[Path] = None
 
-        if arch or not allow_archipelago_skip:
+        if need_arch or not allow_archipelago_skip:
             appimage = ensure_appimage(
                 download_selected=arch,
                 create_shortcut=shortcuts,
