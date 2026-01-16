@@ -424,10 +424,6 @@ def _prompt_setup_choices(
         _add_option("Create Desktop shortcuts (Archipelago & BizHawk)")
 
     dialog_text = "Select which components to download and configure."
-    if show_archipelago:
-        dialog_text += (
-            "\n\nUncheck Archipelago to skip downloading and select an existing AppImage."
-        )
 
     selections = checklist_dialog(
         "Download setup",
