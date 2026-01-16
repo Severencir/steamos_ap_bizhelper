@@ -672,30 +672,30 @@ def show_managed_dirs_dialog(parent: Optional[object] = None) -> None:
     mapping: dict[str, _ManagedDirRow] = {}
     for idx, row in enumerate(rows, start=1):
         path_text = _managed_dir_display(row.path)
-        label = f\"{idx}. {row.role}: {path_text}\"
+        label = f"{idx}. {row.role}: {path_text}"
         items.append(label)
         mapping[label] = row
 
     if not gui_available():
-        info_dialog(\"\\n\".join(items), title=\"Managed directories\")
+        info_dialog("\n".join(items), title="Managed directories")
         return
 
     while True:
         selection, action = list_action_dialog(
-            title=\"Managed directories\",
-            text=\"Select a directory to open.\",
+            title="Managed directories",
+            text="Select a directory to open.",
             items=items,
-            actions=[DialogButtonSpec(\"Open\", role=\"positive\", is_default=True)],
-            cancel_label=\"Close\",
+            actions=[DialogButtonSpec("Open", role="positive", is_default=True)],
+            cancel_label="Close",
         )
-        if action is None or action.role == \"negative\":
+        if action is None or action.role == "negative":
             return
         if not selection:
-            info_dialog(\"Select a directory from the list first.\")
+            info_dialog("Select a directory from the list first.")
             continue
         row = mapping.get(selection)
         if not row or not row.path or not _managed_dir_exists(row.path):
-            info_dialog(\"That path is not available on this device.\")
+            info_dialog("That path is not available on this device.")
             continue
         _open_path_in_manager(row.path)
 
