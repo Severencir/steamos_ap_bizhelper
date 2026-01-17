@@ -39,15 +39,20 @@ DIALOG_DEFAULTS = {
     "KIVY_DIALOG_HEIGHT": 720,
     "KIVY_DIALOG_MIN_WIDTH": 900,
     "KIVY_DIALOG_MIN_HEIGHT": 600,
+    "KIVY_DIALOG_MAX_HEIGHT": 820,
     "KIVY_DIALOG_RESIZABLE": True,
     "KIVY_DIALOG_BORDERLESS": True,
     "KIVY_DIALOG_PADDING_DP": 24,
+    "KIVY_DIALOG_TOP_PADDING_DP": 12,
     "KIVY_DIALOG_SPACING_DP": 12,
     "KIVY_BUTTON_HEIGHT_DP": 52,
     "KIVY_LIST_ROW_HEIGHT_DP": 48,
+    "KIVY_TITLE_BUTTON_HEIGHT_DP": 32,
     "KIVY_FILE_DIALOG_HEIGHT": 800,
     "KIVY_BG_RGBA": [0.12, 0.12, 0.12, 1],
     "KIVY_FOCUS_RGBA": [0.2, 0.4, 0.6, 1],
+    "KIVY_DIALOG_BORDER_COLOR": [0.3, 0.3, 0.3, 1],
+    "KIVY_DIALOG_BORDER_WIDTH_DP": 2,
 }
 
 _FORCE_CONSOLE_DIALOGS_ENV = "AP_BIZHELPER_FORCE_CONSOLE_DIALOGS"
@@ -97,6 +102,8 @@ class _KivyModules:
     Clipboard: object
     dp: object
     sp: object
+    Color: object
+    Line: object
     FocusableButton: object
     FocusableToggleButton: object
     FocusableFileChooser: object
@@ -201,12 +208,15 @@ class _DialogSession:
         height = _coerce_int_setting(settings, "KIVY_DIALOG_HEIGHT", int(DIALOG_DEFAULTS["KIVY_DIALOG_HEIGHT"]), minimum=240)
         min_width = _coerce_int_setting(settings, "KIVY_DIALOG_MIN_WIDTH", int(DIALOG_DEFAULTS["KIVY_DIALOG_MIN_WIDTH"]), minimum=0)
         min_height = _coerce_int_setting(settings, "KIVY_DIALOG_MIN_HEIGHT", int(DIALOG_DEFAULTS["KIVY_DIALOG_MIN_HEIGHT"]), minimum=0)
+        max_height = _dialog_max_height(settings)
         modules.Window.set_title(self.title)
         modules.Window.size = (width, height)
         if min_width > 0:
             modules.Window.minimum_width = min_width
         if min_height > 0:
             modules.Window.minimum_height = min_height
+        if max_height > 0 and hasattr(modules.Window, "maximum_height"):
+            modules.Window.maximum_height = max_height
         modules.Window.borderless = _coerce_bool_setting(
             settings, "KIVY_DIALOG_BORDERLESS", bool(DIALOG_DEFAULTS["KIVY_DIALOG_BORDERLESS"])
         )
@@ -399,6 +409,7 @@ def _get_kivy_modules_raw() -> _KivyModules:
     from kivy.uix.scrollview import ScrollView
     from kivy.uix.textinput import TextInput
     from kivy.uix.togglebutton import ToggleButton
+    from kivy.graphics import Color, Line
 
     class FocusableButton(FocusBehavior, Button):
         focus_color = [0.2, 0.5, 0.9, 1]
@@ -448,6 +459,8 @@ def _get_kivy_modules_raw() -> _KivyModules:
         Clipboard=Clipboard,
         dp=metrics.dp,
         sp=metrics.sp,
+        Color=Color,
+        Line=Line,
         FocusableButton=FocusableButton,
         FocusableToggleButton=FocusableToggleButton,
         FocusableFileChooser=FocusableFileChooser,
@@ -489,6 +502,12 @@ def _dialog_padding(settings: Dict[str, object]) -> float:
     return _coerce_int_setting(settings, "KIVY_DIALOG_PADDING_DP", int(DIALOG_DEFAULTS["KIVY_DIALOG_PADDING_DP"]), minimum=0)
 
 
+def _dialog_top_padding(settings: Dict[str, object]) -> float:
+    return _coerce_int_setting(
+        settings, "KIVY_DIALOG_TOP_PADDING_DP", int(DIALOG_DEFAULTS["KIVY_DIALOG_TOP_PADDING_DP"]), minimum=0
+    )
+
+
 def _dialog_spacing(settings: Dict[str, object]) -> float:
     return _coerce_int_setting(settings, "KIVY_DIALOG_SPACING_DP", int(DIALOG_DEFAULTS["KIVY_DIALOG_SPACING_DP"]), minimum=0)
 
@@ -499,6 +518,24 @@ def _button_height(settings: Dict[str, object]) -> float:
 
 def _list_row_height(settings: Dict[str, object]) -> float:
     return _coerce_int_setting(settings, "KIVY_LIST_ROW_HEIGHT_DP", int(DIALOG_DEFAULTS["KIVY_LIST_ROW_HEIGHT_DP"]), minimum=0)
+
+
+def _title_button_height(settings: Dict[str, object]) -> float:
+    return _coerce_int_setting(
+        settings, "KIVY_TITLE_BUTTON_HEIGHT_DP", int(DIALOG_DEFAULTS["KIVY_TITLE_BUTTON_HEIGHT_DP"]), minimum=0
+    )
+
+
+def _dialog_border_width(settings: Dict[str, object]) -> float:
+    return _coerce_int_setting(
+        settings, "KIVY_DIALOG_BORDER_WIDTH_DP", int(DIALOG_DEFAULTS["KIVY_DIALOG_BORDER_WIDTH_DP"]), minimum=0
+    )
+
+
+def _dialog_max_height(settings: Dict[str, object]) -> int:
+    return _coerce_int_setting(
+        settings, "KIVY_DIALOG_MAX_HEIGHT", int(DIALOG_DEFAULTS["KIVY_DIALOG_MAX_HEIGHT"]), minimum=0
+    )
 
 
 def _console_prompt(prompt: str, *, default: Optional[str] = None) -> Optional[str]:
@@ -585,6 +622,11 @@ def modular_dialog(
     if not buttons:
         raise ValueError("At least one button must be provided to modular_dialog")
 
+    if radio_items is not None:
+        radio_items = list(radio_items)
+    if checklist is not None:
+        checklist = list(checklist)
+
     settings_obj = _load_dialog_settings(None)
     if height is not None:
         settings_obj = {**settings_obj, "KIVY_DIALOG_HEIGHT": height}
@@ -617,18 +659,79 @@ def modular_dialog(
     def _build(session: _DialogSession, modules: _KivyModules):
         settings = session.settings
         padding = modules.dp(_dialog_padding(settings))
+        top_padding = modules.dp(_dialog_top_padding(settings))
         spacing = modules.dp(_dialog_spacing(settings))
-        root = modules.BoxLayout(orientation="vertical", padding=padding, spacing=spacing)
+        root = modules.BoxLayout(
+            orientation="vertical",
+            padding=(padding, top_padding, padding, padding),
+            spacing=spacing,
+        )
 
-        if title:
-            title_label = modules.Label(
-                text=title,
-                bold=True,
-                font_size=modules.sp(_font_sp(settings, "KIVY_TITLE_SP", int(DIALOG_DEFAULTS["KIVY_TITLE_SP"]))),
-                size_hint_y=None,
-                height=modules.dp(40),
+        border_width = modules.dp(_dialog_border_width(settings))
+        if border_width > 0:
+            border_color = _coerce_rgba_setting(
+                settings, "KIVY_DIALOG_BORDER_COLOR", DIALOG_DEFAULTS["KIVY_DIALOG_BORDER_COLOR"]
             )
-            root.add_widget(title_label)
+            with root.canvas.before:
+                modules.Color(*border_color)
+                border_line = modules.Line(rectangle=(0, 0, 0, 0), width=border_width)
+
+            def _update_border(*_args) -> None:
+                border_line.rectangle = (*root.pos, *root.size)
+
+            root.bind(pos=_update_border, size=_update_border)
+
+        title_row = modules.BoxLayout(
+            orientation="horizontal",
+            size_hint_y=None,
+            spacing=spacing,
+        )
+        title_label = modules.Label(
+            text=title,
+            bold=True,
+            font_size=modules.sp(_font_sp(settings, "KIVY_TITLE_SP", int(DIALOG_DEFAULTS["KIVY_TITLE_SP"]))),
+            size_hint_y=None,
+            text_size=(None, None),
+        )
+        title_label.bind(
+            width=lambda instance, value: setattr(instance, "text_size", (value, None))
+        )
+        title_label.bind(
+            texture_size=lambda instance, value: setattr(instance, "height", value[1])
+        )
+        title_buttons = modules.BoxLayout(
+            orientation="horizontal",
+            size_hint=(None, None),
+            spacing=modules.dp(6),
+        )
+        title_button_height = modules.dp(_title_button_height(settings))
+        minimize_button = modules.Button(
+            text="-",
+            size_hint=(None, None),
+            size=(title_button_height, title_button_height),
+        )
+        close_button = modules.Button(
+            text="X",
+            size_hint=(None, None),
+            size=(title_button_height, title_button_height),
+        )
+        can_minimize = hasattr(modules.Window, "minimize")
+        minimize_button.disabled = not can_minimize
+        if can_minimize:
+            minimize_button.bind(on_release=lambda *_args: modules.Window.minimize())
+        title_buttons.add_widget(minimize_button)
+        title_buttons.add_widget(close_button)
+        title_buttons.width = title_buttons.spacing + (title_button_height * 2)
+        title_buttons.height = title_button_height
+        title_row.add_widget(title_label)
+        title_row.add_widget(title_buttons)
+        root.add_widget(title_row)
+
+        def _sync_title_height(*_args) -> None:
+            title_row.height = max(title_button_height, title_label.height)
+
+        title_label.bind(height=_sync_title_height)
+        _sync_title_height()
 
         text_label = None
         if text or progress_stream is not None:
@@ -687,7 +790,12 @@ def modular_dialog(
         progress_label = None
         if progress_stream is not None:
             progress_label = text_label
-            progress_bar = modules.ProgressBar(max=100, value=0)
+            progress_bar = modules.ProgressBar(
+                max=100,
+                value=0,
+                size_hint_y=None,
+                height=modules.dp(24),
+            )
             root.add_widget(progress_bar)
 
         button_row = modules.BoxLayout(
@@ -719,9 +827,23 @@ def modular_dialog(
             button_row.add_widget(btn)
         root.add_widget(button_row)
 
+        cancel_spec = next((spec for spec in buttons if spec.role == "negative"), buttons[-1])
+
+        def _close_dialog(*_args) -> None:
+            result.label = cancel_spec.label
+            result.role = cancel_spec.role
+            result.checklist = [
+                label_text
+                for btn, label_text in checklist_buttons
+                if getattr(btn, "state", None) == "down"
+            ]
+            if progress_stream is not None:
+                result.progress_cancelled = True
+            session.close(result)
+
+        close_button.bind(on_release=_close_dialog)
+
         if progress_stream is not None:
-            cancel_spec = next((spec for spec in buttons if spec.role == "negative"), None)
-            cancel_spec = cancel_spec or buttons[-1]
             cancel_button = button_row.children[-1] if button_row.children else None
 
             def _cancel(*_args):
@@ -757,6 +879,40 @@ def modular_dialog(
                     session.close(result)
 
             threading.Thread(target=_run_stream, daemon=True).start()
+
+        def _apply_content_height(*_args) -> None:
+            sections: List[float] = []
+            if title_row is not None:
+                sections.append(title_row.height)
+            if text_label is not None:
+                sections.append(text_label.height)
+            if radio_items is not None:
+                sections.append(len(radio_items) * modules.dp(_list_row_height(settings)))
+            if checklist is not None:
+                sections.append(len(checklist) * modules.dp(_list_row_height(settings)))
+            if progress_bar is not None:
+                sections.append(progress_bar.height)
+            sections.append(button_row.height)
+            total_height = top_padding + padding
+            total_height += sum(sections)
+            if len(sections) > 1:
+                total_height += spacing * (len(sections) - 1)
+            if total_height <= 0:
+                total_height = _coerce_int_setting(
+                    settings, "KIVY_DIALOG_HEIGHT", int(DIALOG_DEFAULTS["KIVY_DIALOG_HEIGHT"]), minimum=240
+                )
+            min_height = _coerce_int_setting(
+                settings, "KIVY_DIALOG_MIN_HEIGHT", int(DIALOG_DEFAULTS["KIVY_DIALOG_MIN_HEIGHT"]), minimum=0
+            )
+            max_height = _dialog_max_height(settings)
+            clamped_height = total_height
+            if min_height > 0:
+                clamped_height = max(clamped_height, min_height)
+            if max_height > 0:
+                clamped_height = min(clamped_height, max_height)
+            modules.Window.size = (modules.Window.width, int(clamped_height))
+
+        modules.Clock.schedule_once(_apply_content_height, 0)
 
         return root
 
