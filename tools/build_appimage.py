@@ -34,14 +34,37 @@ LIB_SEARCH_ROOTS = [
 
 def _build_wheel() -> Path:
     DIST_DIR.mkdir(exist_ok=True)
-    subprocess.run(
-        [sys.executable, "-m", "build", "--wheel", "--outdir", str(DIST_DIR)],
-        check=True,
-        cwd=PROJECT_ROOT,
-    )
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "wheel", ".", "--wheel-dir", str(DIST_DIR)],
+            check=True,
+            cwd=PROJECT_ROOT,
+        )
+    except subprocess.CalledProcessError as exc:
+        setup_path = PROJECT_ROOT / "setup.py"
+        if setup_path.exists():
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(setup_path),
+                    "bdist_wheel",
+                    "--dist-dir",
+                    str(DIST_DIR),
+                ],
+                check=True,
+                cwd=PROJECT_ROOT,
+            )
+        else:
+            raise RuntimeError(
+                "Wheel build failed. The supported primary method is "
+                "`python -m pip wheel . --wheel-dir dist`."
+            ) from exc
     wheels = sorted(DIST_DIR.glob("ap_bizhelper-*.whl"))
     if not wheels:
-        raise FileNotFoundError("Wheel not found after build")
+        raise FileNotFoundError(
+            "Wheel not found after build. The supported primary method is "
+            "`python -m pip wheel . --wheel-dir dist`."
+        )
     return wheels[-1]
 
 
