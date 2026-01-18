@@ -43,13 +43,15 @@ DIALOG_DEFAULTS = {
     "KIVY_DIALOG_RESIZABLE": True,
     "KIVY_DIALOG_BORDERLESS": True,
     "KIVY_DIALOG_PADDING_DP": 24,
-    "KIVY_DIALOG_WINDOW_TOP_OFFSET_DP": 6,
+    "KIVY_DIALOG_WINDOW_TOP_OFFSET_DP": 0,
     "KIVY_DIALOG_SPACING_DP": 12,
     "KIVY_BUTTON_HEIGHT_DP": 52,
     "KIVY_LIST_ROW_HEIGHT_DP": 48,
     "KIVY_TITLE_BUTTON_HEIGHT_DP": 32,
     "KIVY_TITLE_BUTTON_SCALE": 1.5,
     "KIVY_TITLE_BUTTON_SPACING_DP": 12,
+    "KIVY_TITLE_BAR_EXTRA_DP": 4,
+    "KIVY_TITLE_BUTTON_RGBA": [0.18, 0.18, 0.18, 1],
     "KIVY_FILE_DIALOG_HEIGHT": 800,
     "KIVY_BG_RGBA": [0.12, 0.12, 0.12, 1],
     "KIVY_FOCUS_RGBA": [0.2, 0.4, 0.6, 1],
@@ -566,6 +568,30 @@ def _title_button_spacing(settings: Dict[str, object]) -> float:
     )
 
 
+def _title_bar_extra(settings: Dict[str, object]) -> float:
+    return _coerce_int_setting(
+        settings,
+        "KIVY_TITLE_BAR_EXTRA_DP",
+        int(DIALOG_DEFAULTS["KIVY_TITLE_BAR_EXTRA_DP"]),
+        minimum=0,
+    )
+
+
+def _title_button_color(settings: Dict[str, object]) -> List[float]:
+    return _coerce_rgba_setting(
+        settings, "KIVY_TITLE_BUTTON_RGBA", DIALOG_DEFAULTS["KIVY_TITLE_BUTTON_RGBA"]
+    )
+
+
+def _button_text_sp(settings: Dict[str, object]) -> int:
+    return _font_sp(settings, "KIVY_MIN_TEXT_SP", int(DIALOG_DEFAULTS["KIVY_MIN_TEXT_SP"]))
+
+
+def is_user_cancelled_error(message: str) -> bool:
+    lowered = message.strip().lower()
+    return "cancelled" in lowered or "canceled" in lowered or lowered.startswith("cancel")
+
+
 def _dialog_border_width(settings: Dict[str, object]) -> float:
     base = _coerce_int_setting(
         settings,
@@ -752,12 +778,15 @@ def modular_dialog(
             font_size=modules.sp(_font_sp(settings, "KIVY_TITLE_SP", int(DIALOG_DEFAULTS["KIVY_TITLE_SP"]))),
             size_hint_y=None,
             text_size=(None, None),
+            halign="center",
+            valign="middle",
         )
-        title_label.bind(
-            width=lambda instance, value: setattr(instance, "text_size", (value, None))
-        )
+        title_label.bind(width=lambda instance, value: setattr(instance, "text_size", (value, instance.height)))
         title_label.bind(
             texture_size=lambda instance, value: setattr(instance, "height", value[1])
+        )
+        title_label.bind(
+            height=lambda instance, value: setattr(instance, "text_size", (instance.width, value))
         )
         title_buttons = modules.BoxLayout(
             orientation="horizontal",
@@ -765,15 +794,26 @@ def modular_dialog(
             spacing=modules.dp(_title_button_spacing(settings)),
         )
         title_button_height = modules.dp(_title_button_height(settings))
+        title_bar_extra = modules.dp(_title_bar_extra(settings))
+        title_button_color = _title_button_color(settings)
+        button_font_size = modules.sp(_button_text_sp(settings_local))
         minimize_button = modules.Button(
             text="-",
             size_hint=(None, None),
             size=(title_button_height, title_button_height),
+            background_normal="",
+            background_down="",
+            background_color=title_button_color,
+            font_size=button_font_size,
         )
         close_button = modules.Button(
             text="X",
             size_hint=(None, None),
             size=(title_button_height, title_button_height),
+            background_normal="",
+            background_down="",
+            background_color=title_button_color,
+            font_size=button_font_size,
         )
         can_minimize = hasattr(modules.Window, "minimize")
         minimize_button.disabled = not can_minimize
@@ -783,12 +823,32 @@ def modular_dialog(
         title_buttons.add_widget(close_button)
         title_buttons.width = title_buttons.spacing + (title_button_height * 2)
         title_buttons.height = title_button_height
+        title_balance = modules.BoxLayout(size_hint=(None, None))
+        title_row.add_widget(title_balance)
         title_row.add_widget(title_label)
         title_row.add_widget(title_buttons)
         root.add_widget(title_row)
 
+        def _start_title_drag(_instance: object, touch: object) -> bool:
+            if not title_row.collide_point(*touch.pos):
+                return False
+            if title_buttons.collide_point(*touch.pos):
+                return False
+            if getattr(touch, "button", "left") not in ("left", None):
+                return False
+            start_move = getattr(modules.Window, "start_move", None)
+            if callable(start_move):
+                start_move()
+                return True
+            return False
+
+        title_row.bind(on_touch_down=_start_title_drag)
+
         def _sync_title_height(*_args) -> None:
-            title_row.height = max(title_button_height, title_label.height)
+            title_row.height = max(title_button_height, title_label.height) + title_bar_extra
+            title_buttons.height = title_button_height
+            title_balance.width = title_buttons.width
+            title_balance.height = title_row.height
 
         title_label.bind(height=_sync_title_height)
         _sync_title_height()
@@ -828,6 +888,7 @@ def modular_dialog(
                     group=group_name,
                     size_hint_y=None,
                     height=modules.dp(_list_row_height(settings)),
+                    font_size=button_font_size,
                 )
                 radio_buttons.append(btn)
                 session.focus_manager.register(btn, default=len(radio_buttons) == 1)
@@ -845,6 +906,7 @@ def modular_dialog(
                     text=str(label_text),
                     size_hint_y=None,
                     height=modules.dp(_list_row_height(settings)),
+                    font_size=button_font_size,
                 )
                 btn.state = "down" if checked else "normal"
                 checklist_buttons.append((btn, str(label_text)))
@@ -872,7 +934,7 @@ def modular_dialog(
             height=modules.dp(_button_height(settings)),
         )
         for idx, spec in enumerate(buttons):
-            btn = modules.FocusableButton(text=spec.label)
+            btn = modules.FocusableButton(text=spec.label, font_size=button_font_size)
             if spec.is_default or idx == 0:
                 session.focus_manager.register(btn, default=True)
             else:
@@ -1171,8 +1233,9 @@ def file_dialog(
             size_hint_y=None,
             height=modules.dp(_button_height(settings_local)),
         )
-        ok_button = modules.FocusableButton(text="Select")
-        cancel_button = modules.FocusableButton(text="Cancel")
+        button_font_size = modules.sp(_button_text_sp(settings))
+        ok_button = modules.FocusableButton(text="Select", font_size=button_font_size)
+        cancel_button = modules.FocusableButton(text="Cancel", font_size=button_font_size)
         session.focus_manager.register(ok_button)
         session.focus_manager.register(cancel_button)
 

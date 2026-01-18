@@ -20,6 +20,7 @@ from .dialogs import (
     checklist_dialog,
     error_dialog,
     info_dialog,
+    is_user_cancelled_error,
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
 )
@@ -1190,7 +1191,11 @@ def _run_full_flow(
         try:
             appimage, runner = _run_prereqs(settings)
         except RuntimeError as exc:
-            error_dialog(str(exc))
+            message = str(exc)
+            if is_user_cancelled_error(message):
+                APP_LOGGER.log("User cancelled setup flow.", include_context=True)
+                return 0
+            error_dialog(message)
             return 1
 
         if allow_steam:
@@ -1206,7 +1211,11 @@ def _run_full_flow(
         try:
             patch = _parse_patch_arg(patch_arg) if patch_arg else _select_patch_file()
         except RuntimeError as exc:
-            error_dialog(str(exc))
+            message = str(exc)
+            if is_user_cancelled_error(message):
+                APP_LOGGER.log("User cancelled patch selection.", include_context=True)
+                return 0
+            error_dialog(message)
             return 1
 
         _handle_extension_association(patch.suffix.lstrip("."))

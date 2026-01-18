@@ -41,6 +41,7 @@ from .dialogs import (
     select_file_dialog as _select_file_dialog,
     error_dialog,
     info_dialog,
+    is_user_cancelled_error,
 )
 from .staging import stage_bizhawk_helpers
 
@@ -629,6 +630,8 @@ def ensure_bizhawk_install(
                     url, ver, expected_digest=digest, digest_algorithm=digest_algo
                 )
             except Exception as e:
+                if is_user_cancelled_error(str(e)):
+                    return None
                 error_dialog(f"BizHawk download failed or was cancelled: {e}")
                 return None
             settings[BIZHAWK_EXE_KEY] = str(exe)
