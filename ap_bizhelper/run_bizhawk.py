@@ -35,6 +35,7 @@ from ap_bizhelper.constants import (  # noqa: E402
     BIZHAWK_HELPERS_ROOT_KEY,
     BIZHAWK_LAST_LAUNCH_ARGS_KEY,
     BIZHAWK_LAST_PID_KEY,
+    BIZHAWK_MIGRATION_PID_KEY,
     BIZHAWK_RUNTIME_ROOT_KEY,
     LOG_PREFIX,
     SAVE_MIGRATION_HELPER_PATH_KEY,
@@ -431,18 +432,22 @@ def _build_runtime_env(runtime_root: Path, bizhawk_root: Path) -> dict[str, str]
     return env
 
 
-def _update_state_setting(key: str, value: Any) -> None:
+def _update_state_settings(updates: dict[str, Any]) -> None:
     settings = _load_settings_safe()
-    settings[key] = value
+    settings.update(updates)
     try:
         save_settings(settings)
     except Exception as exc:
         RUNNER_LOGGER.log(
-            f"Failed to persist setting {key}: {exc}",
+            f"Failed to persist settings update {updates}: {exc}",
             level=LOG_LEVEL_WARNING,
             include_context=True,
             location=SETTINGS_SAVE_LOCATION,
         )
+
+
+def _update_state_setting(key: str, value: Any) -> None:
+    _update_state_settings({key: value})
 
 
 def _stage_cached_launch(args: list[str]) -> None:
@@ -450,7 +455,13 @@ def _stage_cached_launch(args: list[str]) -> None:
 
 
 def _record_pid(pid: int) -> None:
-    _update_state_setting(BIZHAWK_LAST_PID_KEY, str(pid))
+    value = str(pid)
+    _update_state_settings(
+        {
+            BIZHAWK_LAST_PID_KEY: value,
+            BIZHAWK_MIGRATION_PID_KEY: value,
+        }
+    )
 
 
 def _discover_emuhawk_pid(emuhawk_path: Path) -> Optional[int]:
