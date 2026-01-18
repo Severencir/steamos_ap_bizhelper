@@ -217,9 +217,8 @@ class _DialogSession:
         max_height = _dialog_max_height(settings)
         modules.Window.set_title(self.title)
         modules.Window.size = (width, height)
-        if min_width > 0:
+        if min_width > 0 and min_height > 0:
             modules.Window.minimum_width = min_width
-        if min_height > 0:
             modules.Window.minimum_height = min_height
         if max_height > 0 and hasattr(modules.Window, "maximum_height"):
             modules.Window.maximum_height = max_height
