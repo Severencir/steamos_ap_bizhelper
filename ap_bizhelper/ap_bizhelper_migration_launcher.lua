@@ -2,6 +2,7 @@
 -- Steam Deck / SteamOS friendly symlink detection (POSIX test -L + readlink).
 -- Also detects BROKEN symlinks and treats them like "no symlink" (migration branch).
 -- Tries once per second (wall clock) for up to 10 seconds. Uses emu.yield() to avoid freezing.
+-- EmuHawk PID handling happens outside Lua (Python runner + migration helper).
 
 local Path = luanet.import_type("System.IO.Path")
 
@@ -135,28 +136,12 @@ local function _helper_path()
     return nil
 end
 
-local function _get_emuhawk_pid()
-    local pid_env = os.getenv("AP_BIZHELPER_EMUHAWK_PID")
-    if pid_env and pid_env:match("^%d+$") then
-        local pid = tonumber(pid_env)
-        if pid and pid > 0 then
-            return pid
-        end
-    end
-    return nil
-end
-
-local function _launch_helper(system_dir, pid)
+local function _launch_helper(system_dir)
     local helper = _helper_path()
     if not helper then
         error("Save migration helper path not configured")
     end
-    local cmd
-    if pid then
-        cmd = string.format("%q %q %d &", helper, system_dir, pid)
-    else
-        cmd = string.format("%q %q &", helper, system_dir)
-    end
+    local cmd = string.format("%q %q &", helper, system_dir)
     log("launching save migration helper: " .. cmd)
     os.execute(cmd)
 end
@@ -296,20 +281,8 @@ while os.time() < deadline do
                         if status == "BROKEN" then
                             log(string.format("[warn] broken symlink target=%s resolved=%s", tostring(target), tostring(abs)))
                         end
-                        local emuhawk_pid = _get_emuhawk_pid()
-                        if emuhawk_pid then
-                            log("captured EmuHawk pid from environment=" .. tostring(emuhawk_pid))
-                        else
-                            log("[warn] no EmuHawk pid available from AP_BIZHELPER_EMUHAWK_PID")
-                        end
                         log("starting migration helper")
-                        log("closing emuhawk pending helper relaunch")
-                        _launch_helper(sys, emuhawk_pid)
-                        if client ~= nil and type(client.exit) == "function" then
-                            pcall(client.exit)
-                        else
-                            log("[warn] client.exit unavailable; cannot request EmuHawk shutdown from Lua")
-                        end
+                        _launch_helper(sys)
                         log("=== MIGRATION CHECK DONE (migration) ===")
                         return
                     end
