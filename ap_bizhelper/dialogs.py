@@ -796,7 +796,7 @@ def modular_dialog(
         title_button_height = modules.dp(_title_button_height(settings))
         title_bar_extra = modules.dp(_title_bar_extra(settings))
         title_button_color = _title_button_color(settings)
-        button_font_size = modules.sp(_button_text_sp(settings_local))
+        button_font_size = modules.sp(_button_text_sp(settings))
         minimize_button = modules.Button(
             text="-",
             size_hint=(None, None),
