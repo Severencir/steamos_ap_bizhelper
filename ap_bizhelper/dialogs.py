@@ -1233,7 +1233,7 @@ def file_dialog(
             size_hint_y=None,
             height=modules.dp(_button_height(settings_local)),
         )
-        button_font_size = modules.sp(_button_text_sp(settings))
+        button_font_size = modules.sp(_button_text_sp(settings_local))
         ok_button = modules.FocusableButton(text="Select", font_size=button_font_size)
         cancel_button = modules.FocusableButton(text="Cancel", font_size=button_font_size)
         session.focus_manager.register(ok_button)
