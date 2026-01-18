@@ -220,6 +220,8 @@ def force_update_appimage(settings: Optional[Dict[str, Any]] = None) -> bool:
             settings=settings,
         )
     except Exception as exc:
+        if dialogs.is_user_cancelled_error(str(exc)):
+            return False
         error_dialog(f"Archipelago download failed or was cancelled: {exc}")
         return False
 
@@ -680,6 +682,8 @@ def ensure_appimage(
                     settings=settings,
                 )
             except Exception as e:
+                if dialogs.is_user_cancelled_error(str(e)):
+                    raise RuntimeError("Archipelago download cancelled by user") from e
                 error_dialog(f"Archipelago download failed or was cancelled: {e}")
                 raise RuntimeError("Archipelago download failed") from e
             app_path = AP_APPIMAGE_DEFAULT
