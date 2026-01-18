@@ -26,12 +26,14 @@ from .ap_bizhelper_config import (
 from .constants import (
     DOWNLOADS_DIR_KEY,
     DIALOG_SHIM_ZENITY_FILENAME,
+    KIVY_CLIPBOARD_PROVIDER_KEY,
     LAST_FILE_DIALOG_DIR_KEY,
     LAST_FILE_DIALOG_DIRS_KEY,
 )
 from .logging_utils import AppLogger, get_app_logger
 
 DIALOG_DEFAULTS = {
+    KIVY_CLIPBOARD_PROVIDER_KEY: "sdl2",
     "KIVY_FONT_SCALE": 1.5,
     "KIVY_MIN_TEXT_SP": 20,
     "KIVY_TITLE_SP": 24,
@@ -61,6 +63,10 @@ DIALOG_DEFAULTS = {
 }
 
 _FORCE_CONSOLE_DIALOGS_ENV = "AP_BIZHELPER_FORCE_CONSOLE_DIALOGS"
+_KIVY_CLIPBOARD_ENV = "KIVY_CLIPBOARD"
+
+_KIVY_CLIPBOARD_DEFAULTED = _KIVY_CLIPBOARD_ENV not in os.environ
+os.environ.setdefault(_KIVY_CLIPBOARD_ENV, str(DIALOG_DEFAULTS[KIVY_CLIPBOARD_PROVIDER_KEY]))
 
 _KIVY_IMPORT_ERROR: Optional[BaseException] = None
 _KIVY_MODULES: Optional["_KivyModules"] = None
@@ -104,7 +110,6 @@ class _KivyModules:
     TextInput: object
     ProgressBar: object
     FileChooserListView: object
-    Clipboard: object
     dp: object
     sp: object
     Color: object
@@ -397,6 +402,7 @@ def _configure_kivy(settings: Dict[str, object]) -> None:
     global _KIVY_CONFIGURED
     if _KIVY_CONFIGURED:
         return
+    _configure_kivy_clipboard(settings)
     from kivy.config import Config
 
     resizable = _coerce_bool_setting(
@@ -410,12 +416,19 @@ def _configure_kivy(settings: Dict[str, object]) -> None:
     _KIVY_CONFIGURED = True
 
 
+def _configure_kivy_clipboard(settings: Dict[str, object]) -> None:
+    provider = settings.get(KIVY_CLIPBOARD_PROVIDER_KEY, DIALOG_DEFAULTS[KIVY_CLIPBOARD_PROVIDER_KEY])
+    if not provider:
+        provider = DIALOG_DEFAULTS[KIVY_CLIPBOARD_PROVIDER_KEY]
+    if _KIVY_CLIPBOARD_ENV not in os.environ or _KIVY_CLIPBOARD_DEFAULTED:
+        os.environ[_KIVY_CLIPBOARD_ENV] = str(provider)
+
+
 def _get_kivy_modules_raw() -> _KivyModules:
     from kivy import metrics
     from kivy.base import runTouchApp, stopTouchApp
     from kivy.clock import Clock
     from kivy.config import Config
-    from kivy.core.clipboard import Clipboard
     from kivy.core.window import Window
     from kivy.uix.behaviors import FocusBehavior
     from kivy.uix.boxlayout import BoxLayout
@@ -474,7 +487,6 @@ def _get_kivy_modules_raw() -> _KivyModules:
         TextInput=TextInput,
         ProgressBar=ProgressBar,
         FileChooserListView=FileChooserListView,
-        Clipboard=Clipboard,
         dp=metrics.dp,
         sp=metrics.sp,
         Color=Color,
@@ -1381,11 +1393,16 @@ def copy_to_clipboard(text: str, settings: Optional[Dict[str, object]] = None) -
     if not _kivy_available():
         return False
     settings_obj = _load_dialog_settings(settings)
+    app_logger = get_app_logger()
+    _configure_kivy_clipboard(settings_obj)
+    _configure_kivy(settings_obj)
+    from kivy.core.clipboard import Clipboard
+
     try:
-        modules = _get_kivy(settings_obj)
-        modules.Clipboard.copy(text)
+        Clipboard.copy(text)
         return True
-    except Exception:
+    except Exception as exc:
+        app_logger.warning("Clipboard copy failed: %s", exc)
         return False
 
 
