@@ -43,13 +43,15 @@ DIALOG_DEFAULTS = {
     "KIVY_DIALOG_RESIZABLE": True,
     "KIVY_DIALOG_BORDERLESS": True,
     "KIVY_DIALOG_PADDING_DP": 24,
-    "KIVY_DIALOG_WINDOW_TOP_OFFSET_DP": 6,
+    "KIVY_DIALOG_WINDOW_TOP_OFFSET_DP": 0,
     "KIVY_DIALOG_SPACING_DP": 12,
     "KIVY_BUTTON_HEIGHT_DP": 52,
     "KIVY_LIST_ROW_HEIGHT_DP": 48,
     "KIVY_TITLE_BUTTON_HEIGHT_DP": 32,
     "KIVY_TITLE_BUTTON_SCALE": 1.5,
     "KIVY_TITLE_BUTTON_SPACING_DP": 12,
+    "KIVY_TITLE_BAR_EXTRA_DP": 4,
+    "KIVY_TITLE_BUTTON_RGBA": [0.18, 0.18, 0.18, 1],
     "KIVY_FILE_DIALOG_HEIGHT": 800,
     "KIVY_BG_RGBA": [0.12, 0.12, 0.12, 1],
     "KIVY_FOCUS_RGBA": [0.2, 0.4, 0.6, 1],
@@ -566,6 +568,21 @@ def _title_button_spacing(settings: Dict[str, object]) -> float:
     )
 
 
+def _title_bar_extra(settings: Dict[str, object]) -> float:
+    return _coerce_int_setting(
+        settings,
+        "KIVY_TITLE_BAR_EXTRA_DP",
+        int(DIALOG_DEFAULTS["KIVY_TITLE_BAR_EXTRA_DP"]),
+        minimum=0,
+    )
+
+
+def _title_button_color(settings: Dict[str, object]) -> List[float]:
+    return _coerce_rgba_setting(
+        settings, "KIVY_TITLE_BUTTON_RGBA", DIALOG_DEFAULTS["KIVY_TITLE_BUTTON_RGBA"]
+    )
+
+
 def _dialog_border_width(settings: Dict[str, object]) -> float:
     base = _coerce_int_setting(
         settings,
@@ -752,12 +769,15 @@ def modular_dialog(
             font_size=modules.sp(_font_sp(settings, "KIVY_TITLE_SP", int(DIALOG_DEFAULTS["KIVY_TITLE_SP"]))),
             size_hint_y=None,
             text_size=(None, None),
+            halign="center",
+            valign="middle",
         )
-        title_label.bind(
-            width=lambda instance, value: setattr(instance, "text_size", (value, None))
-        )
+        title_label.bind(width=lambda instance, value: setattr(instance, "text_size", (value, instance.height)))
         title_label.bind(
             texture_size=lambda instance, value: setattr(instance, "height", value[1])
+        )
+        title_label.bind(
+            height=lambda instance, value: setattr(instance, "text_size", (instance.width, value))
         )
         title_buttons = modules.BoxLayout(
             orientation="horizontal",
@@ -765,15 +785,23 @@ def modular_dialog(
             spacing=modules.dp(_title_button_spacing(settings)),
         )
         title_button_height = modules.dp(_title_button_height(settings))
+        title_bar_extra = modules.dp(_title_bar_extra(settings))
+        title_button_color = _title_button_color(settings)
         minimize_button = modules.Button(
             text="-",
             size_hint=(None, None),
             size=(title_button_height, title_button_height),
+            background_normal="",
+            background_down="",
+            background_color=title_button_color,
         )
         close_button = modules.Button(
             text="X",
             size_hint=(None, None),
             size=(title_button_height, title_button_height),
+            background_normal="",
+            background_down="",
+            background_color=title_button_color,
         )
         can_minimize = hasattr(modules.Window, "minimize")
         minimize_button.disabled = not can_minimize
@@ -783,12 +811,17 @@ def modular_dialog(
         title_buttons.add_widget(close_button)
         title_buttons.width = title_buttons.spacing + (title_button_height * 2)
         title_buttons.height = title_button_height
+        title_balance = modules.BoxLayout(size_hint=(None, None))
+        title_row.add_widget(title_balance)
         title_row.add_widget(title_label)
         title_row.add_widget(title_buttons)
         root.add_widget(title_row)
 
         def _sync_title_height(*_args) -> None:
-            title_row.height = max(title_button_height, title_label.height)
+            title_row.height = max(title_button_height, title_label.height) + title_bar_extra
+            title_buttons.height = title_button_height
+            title_balance.width = title_buttons.width
+            title_balance.height = title_row.height
 
         title_label.bind(height=_sync_title_height)
         _sync_title_height()
