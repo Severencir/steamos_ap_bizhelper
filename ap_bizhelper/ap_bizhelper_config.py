@@ -58,6 +58,7 @@ from .constants import (
     BIZHAWK_RUNTIME_ROOT_KEY,
     BIZHAWK_RUNTIME_DOWNLOAD_KEY,
     BIZHAWK_SAVERAM_DIR_KEY,
+    CACHE_DIR,
     CONFIG_DIR,
     DATA_DIR,
     DESKTOP_DIR_KEY,
@@ -89,7 +90,7 @@ HELPERS_ROOT_DEFAULT = DATA_DIR / "helpers"
 PATH_SETTINGS_DEFAULTS = {
     DESKTOP_DIR_KEY: str(Path.home() / "Desktop"),
     DOWNLOADS_DIR_KEY: str(Path.home() / "Downloads"),
-    DOWNLOAD_CACHE_DIR_KEY: str(DATA_DIR / "download_cache"),
+    DOWNLOAD_CACHE_DIR_KEY: str(CACHE_DIR / "download_cache"),
     BIZHAWK_INSTALL_DIR_KEY: str(DATA_DIR / "bizhawk_install"),
     BIZHAWK_HELPERS_ROOT_KEY: str(HELPERS_ROOT_DEFAULT),
     BIZHAWK_RUNTIME_ROOT_KEY: str(DATA_DIR / "runtime_root"),
