@@ -55,7 +55,6 @@
     "description": "Ephemeral/internal state that should persist but is not user-facing.",
     "keys": [
       "BIZHAWK_LAST_LAUNCH_ARGS",
-      "BIZHAWK_MIGRATION_PID",
       "BIZHAWK_LAST_PID",
       "PENDING_RELAUNCH_ARGS",
       "ROM_HASH_CACHE",
