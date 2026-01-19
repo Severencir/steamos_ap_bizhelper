@@ -141,34 +141,55 @@ local function get_pid()
         log("luanet not available; unable to read EmuHawk pid for migration helper")
         return nil
     end
+    local ok_sys = pcall(luanet.load_assembly, "System")
+    if not ok_sys then
+        log("failed to load System assembly; unable to read EmuHawk pid for migration helper")
+    end
+    local ok_proc_asm = pcall(luanet.load_assembly, "System.Diagnostics.Process")
+    if not ok_proc_asm then
+        log("failed to load System.Diagnostics.Process assembly; unable to read EmuHawk pid for migration helper")
+    end
     local ok_env, Env = pcall(luanet.import_type, "System.Environment")
     if ok_env and Env then
-        local ok_pid, pid = pcall(function()
-            return Env.ProcessId
-        end)
-        if ok_pid and type(pid) == "number" and pid > 0 then
-            log("EmuHawk pid via System.Environment.ProcessId: " .. tostring(pid))
-            return pid
+        if Env.ProcessId ~= nil then
+            local ok_pid, pid = pcall(function()
+                return Env.ProcessId
+            end)
+            if ok_pid and type(pid) == "number" and pid > 0 then
+                log("EmuHawk pid via System.Environment.ProcessId: " .. tostring(pid))
+                return pid
+            end
+            log("System.Environment.ProcessId unavailable or invalid; falling back to other pid sources")
+        elseif type(Env.get_ProcessId) == "function" then
+            local ok_pid, pid = pcall(Env.get_ProcessId)
+            if ok_pid and type(pid) == "number" and pid > 0 then
+                log("EmuHawk pid via System.Environment.ProcessId: " .. tostring(pid))
+                return pid
+            end
+            log("System.Environment.ProcessId unavailable or invalid; falling back to other pid sources")
+        else
+            log("System.Environment.ProcessId unavailable or invalid; falling back to other pid sources")
         end
-        log("System.Environment.ProcessId unavailable or invalid; falling back to other pid sources")
     else
         log("failed to import System.Environment; unable to read EmuHawk pid for migration helper")
     end
 
-    local ok, Process = pcall(luanet.import_type, "System.Diagnostics.Process")
-    if not ok or not Process then
-        log("failed to import System.Diagnostics.Process; unable to read EmuHawk pid for migration helper")
-    else
-        local ok_proc, proc = pcall(Process.GetCurrentProcess)
-        if not ok_proc or not proc then
-            log("failed to read current process; unable to read EmuHawk pid for migration helper")
+    if ok_proc_asm then
+        local ok, Process = pcall(luanet.import_type, "System.Diagnostics.Process")
+        if not ok or not Process then
+            log("failed to import System.Diagnostics.Process; unable to read EmuHawk pid for migration helper")
         else
-            local pid = proc.Id
-            if type(pid) == "number" and pid > 0 then
-                log("EmuHawk pid via System.Diagnostics.Process.GetCurrentProcess(): " .. tostring(pid))
-                return pid
+            local ok_proc, proc = pcall(Process.GetCurrentProcess)
+            if not ok_proc or not proc then
+                log("failed to read current process; unable to read EmuHawk pid for migration helper")
+            else
+                local pid = proc.Id
+                if type(pid) == "number" and pid > 0 then
+                    log("EmuHawk pid via System.Diagnostics.Process.GetCurrentProcess(): " .. tostring(pid))
+                    return pid
+                end
+                log("invalid EmuHawk pid result; unable to pass pid argument")
             end
-            log("invalid EmuHawk pid result; unable to pass pid argument")
         end
     end
 
