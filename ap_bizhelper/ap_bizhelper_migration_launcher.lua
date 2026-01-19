@@ -146,12 +146,32 @@ local function _get_emuhawk_pid()
     return nil
 end
 
+local function sh_quote(s)
+    return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
 local function _launch_helper(system_dir, pid)
     local helper = _helper_path()
     if not helper then
         error("Save migration helper path not configured")
     end
     local cmd
+    local helper_cmd = string.format("%s %s", sh_quote(helper), sh_quote(system_dir))
+    if pid then
+        helper_cmd = helper_cmd .. " " .. tostring(pid)
+    end
+    local systemd_check = "command -v systemd-run >/dev/null 2>&1"
+    if _shell_ok(os.execute(systemd_check)) then
+        local unit = string.format("ap-bizhelper-migration-%s", tostring(os.time()))
+        cmd = string.format(
+            "systemd-run --user --collect --unit %s --property=Type=exec -- /bin/sh -lc %s",
+            sh_quote(unit),
+            sh_quote("exec " .. helper_cmd)
+        )
+        log("launching save migration helper as transient systemd service: " .. cmd)
+        os.execute(cmd)
+        return
+    end
     if pid then
         cmd = string.format("%q %q %d &", helper, system_dir, pid)
     else
@@ -204,10 +224,6 @@ local function _run_connector()
     end
 
     log("connector finished successfully")
-end
-
-local function sh_quote(s)
-    return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
 end
 
 local function symlink_status_linux(p)
