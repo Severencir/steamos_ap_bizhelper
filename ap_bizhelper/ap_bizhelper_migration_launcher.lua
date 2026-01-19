@@ -136,14 +136,90 @@ local function _helper_path()
     return nil
 end
 
+local function _get_process_id()
+    if type(luanet) == "table" and type(luanet.import_type) == "function" then
+        local Process = luanet.import_type("System.Diagnostics.Process")
+        if Process then
+            local ok, proc = pcall(Process.GetCurrentProcess)
+            if ok and proc and proc.Id then
+                return tonumber(proc.Id)
+            end
+        end
+    end
+    return nil
+end
+
+local function _emuhawk_pid_arg()
+    local pid = os.getenv("AP_BIZHELPER_EMUHAWK_PID") or ""
+    local pid_num = tonumber(pid)
+    if pid_num then
+        return tostring(pid_num)
+    end
+    return nil
+end
+
+local function _has_systemd_run()
+    return _shell_ok(os.execute("command -v systemd-run >/dev/null 2>&1"))
+end
+
 local function _launch_helper(system_dir)
     local helper = _helper_path()
     if not helper then
         error("Save migration helper path not configured")
     end
-    local cmd = string.format("%q %q &", helper, system_dir)
-    log("launching save migration helper: " .. cmd)
-    os.execute(cmd)
+
+    local entry_dir = entry_script_dir()
+    local cwd = get_cwd()
+    local work_dir = entry_dir
+    if not work_dir or work_dir == "" or work_dir == "." then
+        work_dir = cwd or "."
+    end
+
+    local emuhawk_pid = _emuhawk_pid_arg()
+    local helper_args = { helper, system_dir }
+    if emuhawk_pid then
+        table.insert(helper_args, emuhawk_pid)
+    end
+
+    local systemd_used = false
+    if _has_systemd_run() then
+        local pid = _get_process_id() or 0
+        local unit = string.format("ap-bizhelper-migration-%s-%s", tostring(pid), tostring(os.time()))
+        local cmd_parts = {
+            "systemd-run",
+            "--user",
+            "--unit",
+            unit,
+            "--collect",
+            "--property=Type=exec",
+            "--working-directory",
+            work_dir,
+            "--",
+        }
+        for _, arg in ipairs(helper_args) do
+            table.insert(cmd_parts, arg)
+        end
+        local quoted = {}
+        for _, part in ipairs(cmd_parts) do
+            table.insert(quoted, sh_quote(part))
+        end
+        local cmd = table.concat(quoted, " ")
+        log("launching save migration helper via systemd-run: " .. cmd)
+        log("save migration helper launch method=systemd-run")
+        os.execute(cmd)
+        systemd_used = true
+    end
+
+    if not systemd_used then
+        local cmd_parts = {}
+        for _, arg in ipairs(helper_args) do
+            table.insert(cmd_parts, sh_quote(arg))
+        end
+        local cmd = table.concat(cmd_parts, " ") .. " &"
+        log("launching save migration helper (fallback): " .. cmd)
+        log("save migration helper launch method=fallback-background")
+        os.execute(cmd)
+    end
 end
 
 local function _run_connector()
