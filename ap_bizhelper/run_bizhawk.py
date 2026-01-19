@@ -35,7 +35,6 @@ from ap_bizhelper.constants import (  # noqa: E402
     BIZHAWK_HELPERS_ROOT_KEY,
     BIZHAWK_LAST_LAUNCH_ARGS_KEY,
     BIZHAWK_LAST_PID_KEY,
-    BIZHAWK_MIGRATION_PID_KEY,
     BIZHAWK_RUNTIME_ROOT_KEY,
     LOG_PREFIX,
     SAVE_MIGRATION_HELPER_PATH_KEY,
@@ -459,7 +458,6 @@ def _record_pid(pid: int) -> None:
     _update_state_settings(
         {
             BIZHAWK_LAST_PID_KEY: value,
-            BIZHAWK_MIGRATION_PID_KEY: value,
         }
     )
 

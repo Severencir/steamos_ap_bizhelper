@@ -479,12 +479,12 @@ def main(argv: list[str]) -> int:
                 include_context=True,
                 location="startup",
             )
-        if system_dir:
+        if system_dir and target_pid is None:
             cached_pid = _cached_migration_pid(settings)
             if cached_pid:
                 target_pid = cached_pid
                 HELPER_LOGGER.log(
-                    f"Using cached EmuHawk pid for migration: {cached_pid}",
+                    f"Using cached EmuHawk pid fallback for migration: {cached_pid}",
                     include_context=True,
                     location="startup",
                 )
