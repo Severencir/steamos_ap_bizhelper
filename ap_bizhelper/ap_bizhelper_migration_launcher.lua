@@ -135,13 +135,54 @@ local function _helper_path()
     return nil
 end
 
-local function _get_emuhawk_pid()
-    local pid_env = os.getenv("AP_BIZHELPER_EMUHAWK_PID")
-    if pid_env and pid_env:match("^%d+$") then
-        local pid = tonumber(pid_env)
-        if pid and pid > 0 then
-            return pid
-        end
+local function _config_root()
+    local xdg = os.getenv("XDG_CONFIG_HOME")
+    if xdg and xdg ~= "" then
+        return xdg
+    end
+    local home = os.getenv("HOME") or ""
+    if home ~= "" then
+        return home .. "/.config"
+    end
+    return nil
+end
+
+local function _state_settings_path()
+    local root = _config_root()
+    if not root then
+        return nil
+    end
+    return root .. "/ap_bizhelper/state_settings.json"
+end
+
+local function _cached_migration_pid()
+    local state_path = _state_settings_path()
+    if not state_path or not _exists(state_path) then
+        return nil
+    end
+    local script = [[
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    value = str(data.get("BIZHAWK_MIGRATION_PID", "") or "")
+    if value.isdigit() and int(value) > 0:
+        print(value)
+except Exception:
+    pass
+]]
+    local cmd = "python3 -c " .. sh_quote(script) .. " " .. sh_quote(state_path)
+    local handle = io.popen(cmd)
+    if not handle then
+        return nil
+    end
+    local out = (handle:read("*a") or ""):gsub("%s+$", "")
+    handle:close()
+    if out ~= "" and out:match("^%d+$") then
+        return tonumber(out)
     end
     return nil
 end
@@ -151,13 +192,30 @@ local function _launch_helper(system_dir, pid)
     if not helper then
         error("Save migration helper path not configured")
     end
-    local cmd
-    if pid then
-        cmd = string.format("%q %q %d &", helper, system_dir, pid)
-    else
-        cmd = string.format("%q %q &", helper, system_dir)
+
+    if not _shell_ok(os.execute("command -v systemd-run >/dev/null 2>&1")) then
+        error("systemd-run not available; cannot launch migration helper as transient service")
     end
-    log("launching save migration helper: " .. cmd)
+
+    local unit = string.format("ap-bizhelper-migration-%d", os.time())
+    local args = {sh_quote(helper), sh_quote(system_dir)}
+    if pid then
+        table.insert(args, sh_quote(tostring(pid)))
+    end
+    local cmd = table.concat(
+        {
+            "systemd-run",
+            "--user",
+            "--unit",
+            sh_quote(unit),
+            "--collect",
+            "--property=Type=exec",
+            "--",
+            table.concat(args, " "),
+        },
+        " "
+    )
+    log("launching save migration helper (transient service): " .. cmd)
     os.execute(cmd)
 end
 
@@ -296,20 +354,14 @@ while os.time() < deadline do
                         if status == "BROKEN" then
                             log(string.format("[warn] broken symlink target=%s resolved=%s", tostring(target), tostring(abs)))
                         end
-                        local emuhawk_pid = _get_emuhawk_pid()
+                        local emuhawk_pid = _cached_migration_pid()
                         if emuhawk_pid then
-                            log("captured EmuHawk pid from environment=" .. tostring(emuhawk_pid))
+                            log("captured EmuHawk pid from cached state=" .. tostring(emuhawk_pid))
                         else
-                            log("[warn] no EmuHawk pid available from AP_BIZHELPER_EMUHAWK_PID")
+                            log("[warn] no EmuHawk pid available from cached state")
                         end
                         log("starting migration helper")
-                        log("closing emuhawk pending helper relaunch")
                         _launch_helper(sys, emuhawk_pid)
-                        if client ~= nil and type(client.exit) == "function" then
-                            pcall(client.exit)
-                        else
-                            log("[warn] client.exit unavailable; cannot request EmuHawk shutdown from Lua")
-                        end
                         log("=== MIGRATION CHECK DONE (migration) ===")
                         return
                     end
