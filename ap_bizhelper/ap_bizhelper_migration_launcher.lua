@@ -136,12 +136,43 @@ local function _helper_path()
     return nil
 end
 
+local function get_pid()
+    if type(luanet) ~= "table" or type(luanet.import_type) ~= "function" then
+        log("luanet not available; unable to read EmuHawk pid for migration helper")
+        return nil
+    end
+    local ok, Process = pcall(luanet.import_type, "System.Diagnostics.Process")
+    if not ok or not Process then
+        log("failed to import System.Diagnostics.Process; unable to read EmuHawk pid for migration helper")
+        return nil
+    end
+    local ok_proc, proc = pcall(Process.GetCurrentProcess)
+    if not ok_proc or not proc then
+        log("failed to read current process; unable to read EmuHawk pid for migration helper")
+        return nil
+    end
+    local pid = proc.Id
+    if type(pid) == "number" and pid > 0 then
+        return pid
+    end
+    log("invalid EmuHawk pid result; unable to pass pid argument")
+    return nil
+end
+
 local function _launch_helper(system_dir)
     local helper = _helper_path()
     if not helper then
         error("Save migration helper path not configured")
     end
-    local cmd = string.format("%q %q &", helper, system_dir)
+    local pid = get_pid()
+    local cmd
+    if pid then
+        log("passing EmuHawk pid argument to migration helper: " .. tostring(pid))
+        cmd = string.format("%q %q %q &", helper, system_dir, tostring(pid))
+    else
+        log("no EmuHawk pid available; launching migration helper without pid argument")
+        cmd = string.format("%q %q &", helper, system_dir)
+    end
     log("launching save migration helper: " .. cmd)
     os.execute(cmd)
 end
