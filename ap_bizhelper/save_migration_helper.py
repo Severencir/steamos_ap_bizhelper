@@ -24,13 +24,12 @@ def _prepend_helpers_lib_path() -> None:
 
 _prepend_helpers_lib_path()
 
-from ap_bizhelper.ap_bizhelper_config import get_path_setting, load_settings, save_settings
+from ap_bizhelper.ap_bizhelper_config import get_path_setting, load_settings
 from ap_bizhelper.constants import (
     BIZHAWK_EXE_KEY,
     BIZHAWK_INSTALL_DIR_KEY,
     BIZHAWK_LAST_LAUNCH_ARGS_KEY,
     BIZHAWK_LAST_PID_KEY,
-    BIZHAWK_MIGRATION_PID_KEY,
     BIZHAWK_RUNNER_KEY,
     BIZHAWK_SAVERAM_DIR_KEY,
 )
@@ -146,30 +145,6 @@ def _scan_bizhawk_pids(bizhawk_root: Path) -> set[int]:
         except ValueError:
             continue
     return pids
-
-
-def _cached_migration_pid(settings: dict) -> Optional[int]:
-    value = str(settings.get(BIZHAWK_MIGRATION_PID_KEY, "") or "")
-    if value.isdigit():
-        pid = int(value)
-        if pid > 0:
-            return pid
-    return None
-
-
-def _clear_cached_migration_pid(settings: dict) -> None:
-    current = settings.get(BIZHAWK_MIGRATION_PID_KEY, "")
-    if current in (None, "", 0, "0"):
-        return
-    settings[BIZHAWK_MIGRATION_PID_KEY] = ""
-    try:
-        save_settings(settings)
-    except Exception as exc:
-        HELPER_LOGGER.log(
-            f"Failed to clear cached migration pid: {exc}",
-            include_context=True,
-            location="settings",
-        )
 
 
 def _ensure_bizhawk_closed(
@@ -465,7 +440,6 @@ def main(argv: list[str]) -> int:
         settings = load_settings()
         system_dir = argv[1] if len(argv) > 1 else None
         target_pid: Optional[int] = None
-        cached_pid: Optional[int] = None
         if len(argv) > 2:
             try:
                 candidate = int(argv[2])
@@ -479,15 +453,6 @@ def main(argv: list[str]) -> int:
                 include_context=True,
                 location="startup",
             )
-        if system_dir and target_pid is None:
-            cached_pid = _cached_migration_pid(settings)
-            if cached_pid:
-                target_pid = cached_pid
-                HELPER_LOGGER.log(
-                    f"Using cached EmuHawk pid fallback for migration: {cached_pid}",
-                    include_context=True,
-                    location="startup",
-                )
         if system_dir:
             HELPER_LOGGER.log(
                 f"Running targeted migration for system dir: {system_dir}",
@@ -507,8 +472,6 @@ def main(argv: list[str]) -> int:
                 if not bizhawk_root:
                     raise RuntimeError("BizHawk root directory not configured.")
                 _ensure_bizhawk_closed(settings, bizhawk_root, target_pid)
-                if cached_pid:
-                    _clear_cached_migration_pid(settings)
                 _migrate_system_dir(system_dir, settings=settings)
                 _relaunch_bizhawk(settings)
             else:
