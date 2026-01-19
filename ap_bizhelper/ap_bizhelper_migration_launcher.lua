@@ -141,21 +141,53 @@ local function get_pid()
         log("luanet not available; unable to read EmuHawk pid for migration helper")
         return nil
     end
+    local ok_env, Env = pcall(luanet.import_type, "System.Environment")
+    if ok_env and Env then
+        local ok_pid, pid = pcall(function()
+            return Env.ProcessId
+        end)
+        if ok_pid and type(pid) == "number" and pid > 0 then
+            log("EmuHawk pid via System.Environment.ProcessId: " .. tostring(pid))
+            return pid
+        end
+        log("System.Environment.ProcessId unavailable or invalid; falling back to other pid sources")
+    else
+        log("failed to import System.Environment; unable to read EmuHawk pid for migration helper")
+    end
+
     local ok, Process = pcall(luanet.import_type, "System.Diagnostics.Process")
     if not ok or not Process then
         log("failed to import System.Diagnostics.Process; unable to read EmuHawk pid for migration helper")
-        return nil
+    else
+        local ok_proc, proc = pcall(Process.GetCurrentProcess)
+        if not ok_proc or not proc then
+            log("failed to read current process; unable to read EmuHawk pid for migration helper")
+        else
+            local pid = proc.Id
+            if type(pid) == "number" and pid > 0 then
+                log("EmuHawk pid via System.Diagnostics.Process.GetCurrentProcess(): " .. tostring(pid))
+                return pid
+            end
+            log("invalid EmuHawk pid result; unable to pass pid argument")
+        end
     end
-    local ok_proc, proc = pcall(Process.GetCurrentProcess)
-    if not ok_proc or not proc then
-        log("failed to read current process; unable to read EmuHawk pid for migration helper")
-        return nil
+
+    if type(emu) == "table" then
+        local pid_sources = {
+            { name = "emu.getpid", func = emu.getpid },
+            { name = "emu.get_pid", func = emu.get_pid },
+        }
+        for _, source in ipairs(pid_sources) do
+            if type(source.func) == "function" then
+                local ok_pid, pid = pcall(source.func)
+                if ok_pid and type(pid) == "number" and pid > 0 then
+                    log("EmuHawk pid via " .. source.name .. ": " .. tostring(pid))
+                    return pid
+                end
+                log("invalid EmuHawk pid result from " .. source.name .. "; unable to pass pid argument")
+            end
+        end
     end
-    local pid = proc.Id
-    if type(pid) == "number" and pid > 0 then
-        return pid
-    end
-    log("invalid EmuHawk pid result; unable to pass pid argument")
     return nil
 end
 
