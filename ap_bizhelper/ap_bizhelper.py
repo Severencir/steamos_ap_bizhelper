@@ -45,6 +45,7 @@ from .ap_bizhelper_config import (
 from .staging import ensure_staged_runtime, prepare_dialog_shim_env
 from .constants import (
     AP_APPIMAGE_KEY,
+    AP_TRANSIENT_SERVICE_KEY,
     AP_WAIT_FOR_EXIT_KEY,
     AP_WAIT_FOR_EXIT_POLL_SECONDS_KEY,
     APPLICATIONS_DIR,
@@ -53,6 +54,7 @@ from .constants import (
     BIZHAWK_CLEAR_LD_PRELOAD_KEY,
     BIZHAWK_EXE_KEY,
     BIZHAWK_RUNNER_KEY,
+    BIZHAWK_RUNNER_TRANSIENT_SERVICE_KEY,
     BIZHAWK_RUNTIME_DOWNLOAD_KEY,
     BIZHAWK_RUNTIME_ROOT_KEY,
     DEBUG_DOWNLOAD_CACHE_KEY,
@@ -805,8 +807,14 @@ def _poll_seconds(value: object, *, default: int) -> int:
         return default
 
 
-def _wait_for_archipelago_exit(settings: dict, appimage: Optional[Path]) -> None:
-    wait_enabled = bool(settings.get(AP_WAIT_FOR_EXIT_KEY, True))
+def _wait_for_archipelago_exit(
+    settings: dict,
+    appimage: Optional[Path],
+    *,
+    wait_enabled: Optional[bool] = None,
+) -> None:
+    if wait_enabled is None:
+        wait_enabled = bool(settings.get(AP_WAIT_FOR_EXIT_KEY, True))
     if not wait_enabled:
         return
 
@@ -887,6 +895,70 @@ def _systemd_show_unit(unit: str, properties: list[str]) -> Optional[dict[str, s
     return data
 
 
+def _build_systemd_env_options(env: dict[str, str]) -> list[str]:
+    env_opts: list[str] = []
+    for key, value in sorted(env.items()):
+        env_opts.extend(["-E", f"{key}={value}"])
+    return env_opts
+
+
+def _launch_transient_service(
+    cmd: list[str],
+    *,
+    env: dict[str, str],
+    unit_prefix: str,
+    working_dir: Optional[Path],
+    description: str,
+    error_title: str,
+) -> Optional[str]:
+    systemd_run = shutil.which("systemd-run")
+    if not systemd_run:
+        error_dialog(
+            "systemd-run is not available; cannot launch as a transient service.",
+            title=error_title,
+        )
+        return None
+
+    unit = f"{unit_prefix}-{os.getpid()}-{int(time.time())}"
+    run_cmd = [
+        systemd_run,
+        "--user",
+        "--unit",
+        unit,
+        "--collect",
+        "--property=Type=exec",
+    ]
+    if working_dir:
+        run_cmd.extend(["--working-directory", str(working_dir)])
+    run_cmd.extend(_build_systemd_env_options(env))
+    run_cmd.extend(["--", *cmd])
+
+    result = subprocess.run(
+        run_cmd,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    output = f"{result.stdout or ''}\n{result.stderr or ''}".strip()
+    snippet = " ".join(output.split()) or "<no output>"
+    if len(snippet) > 400:
+        snippet = snippet[:400] + "..."
+    APP_LOGGER.log(
+        f"{description} (unit={unit}) rc={result.returncode} output={snippet}",
+        include_context=True,
+    )
+
+    if result.returncode != 0:
+        error_dialog(
+            f"{description} failed (rc={result.returncode}).\n\nOutput:\n{output}",
+            title=error_title,
+        )
+        return None
+    return unit
+
+
 def _journalctl_tail(unit: str, *, lines: int = 50) -> Optional[str]:
     journalctl = shutil.which("journalctl")
     if not journalctl:
@@ -951,35 +1023,61 @@ def _launch_bizhawk(settings: dict, runner: Path, rom: Path) -> None:
 
         bizhawk_dir = runner.parent
         cmd = [str(runner), str(rom)]
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(bizhawk_dir),
-            env=env,
-        )
-        APP_LOGGER.log(
-            f"BizHawk runner started (pid={proc.pid}). BizHawk will be launched by the runner in a detached systemd scope.",
-            include_context=True,
-        )
-
-        # If the runner exits immediately, surface the error and include a small log tail if available.
-        time.sleep(0.2)
-        rc = proc.poll()
-        if rc is not None and rc != 0:
-            log_tail = ""
-            log_path = env.get(RUNNER_LOG_ENV)
-            if log_path:
-                try:
-                    path = Path(log_path)
-                    if path.is_file():
-                        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-60:]
-                        if lines:
-                            log_tail = "\n\nRecent runner log:\n" + "\n".join(lines)
-                except Exception:
-                    log_tail = ""
-            error_dialog(
-                "BizHawk runner exited immediately "
-                f"(rc={rc}).{log_tail}"
+        use_transient = bool(settings.get(BIZHAWK_RUNNER_TRANSIENT_SERVICE_KEY, True))
+        if use_transient:
+            unit = _launch_transient_service(
+                cmd,
+                env=env,
+                unit_prefix="ap-bizhawk-runner",
+                working_dir=bizhawk_dir,
+                description="BizHawk runner service request",
+                error_title="BizHawk runner launch failed",
             )
+            if not unit:
+                return
+            APP_LOGGER.log(
+                f"BizHawk runner requested via transient systemd service (unit={unit}).",
+                include_context=True,
+            )
+            time.sleep(0.3)
+            failure = _check_bizhawk_unit(unit)
+            if failure:
+                log_tail = _journalctl_tail(unit) or ""
+                log_tail = f"\n\nRecent runner log:\n{log_tail}" if log_tail else ""
+                error_dialog(
+                    f"BizHawk runner reported a failure ({failure}).{log_tail}",
+                    title="BizHawk runner launch failed",
+                )
+        else:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(bizhawk_dir),
+                env=env,
+            )
+            APP_LOGGER.log(
+                f"BizHawk runner started (pid={proc.pid}). BizHawk will be launched by the runner in a detached systemd scope.",
+                include_context=True,
+            )
+
+            # If the runner exits immediately, surface the error and include a small log tail if available.
+            time.sleep(0.2)
+            rc = proc.poll()
+            if rc is not None and rc != 0:
+                log_tail = ""
+                log_path = env.get(RUNNER_LOG_ENV)
+                if log_path:
+                    try:
+                        path = Path(log_path)
+                        if path.is_file():
+                            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-60:]
+                            if lines:
+                                log_tail = "\n\nRecent runner log:\n" + "\n".join(lines)
+                    except Exception:
+                        log_tail = ""
+                error_dialog(
+                    "BizHawk runner exited immediately "
+                    f"(rc={rc}).{log_tail}"
+                )
     except FileNotFoundError as exc:
         error_dialog(f"Failed to launch BizHawk runner: {exc}")
     except Exception as exc:  # pragma: no cover - safety net for runtime environments
@@ -1232,8 +1330,25 @@ def _run_full_flow(
         launch_env["AP_BIZHELPER_PATCH"] = str(patch)
         if shim_env:
             launch_env.update(shim_env)
+        use_transient = bool(settings.get(AP_TRANSIENT_SERVICE_KEY, True))
         try:
-            subprocess.Popen([str(appimage), str(patch)], env=launch_env)
+            if use_transient:
+                unit = _launch_transient_service(
+                    [str(appimage), str(patch)],
+                    env=launch_env,
+                    unit_prefix="ap-archipelago",
+                    working_dir=appimage.parent,
+                    description="Archipelago service request",
+                    error_title="Archipelago launch failed",
+                )
+                if not unit:
+                    return 1
+                APP_LOGGER.log(
+                    f"Archipelago requested via transient systemd service (unit={unit}).",
+                    include_context=True,
+                )
+            else:
+                subprocess.Popen([str(appimage), str(patch)], env=launch_env)
         except Exception as exc:  # pragma: no cover - runtime launcher safety net
             error_dialog(f"Failed to launch Archipelago: {exc}")
             return 1
@@ -1242,7 +1357,11 @@ def _run_full_flow(
         if archipelago_ready:
             _handle_bizhawk_for_patch(settings, patch, runner)
 
-        _wait_for_archipelago_exit(settings, appimage)
+        _wait_for_archipelago_exit(
+            settings,
+            appimage,
+            wait_enabled=bool(settings.get(AP_WAIT_FOR_EXIT_KEY, True)) and not use_transient,
+        )
 
         return 0
 
