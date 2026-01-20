@@ -1318,7 +1318,7 @@ def _run_full_flow(
 
         _handle_extension_association(patch.suffix.lstrip("."))
 
-        ensure_apworld_for_patch(patch)
+        ensure_apworld_for_patch(patch, appimage=appimage, settings=settings)
 
         APP_LOGGER.log(
             f"Launching Archipelago with patch: {patch}",

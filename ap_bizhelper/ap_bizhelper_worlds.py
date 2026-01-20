@@ -20,12 +20,20 @@ from .ap_bizhelper_ap import (
     download_with_progress,
 )
 from .dialogs import (
+    DialogButtonSpec,
+    modular_dialog,
     question_dialog as _qt_question_dialog,
     select_file_dialog as _select_file_dialog,
     error_dialog,
     info_dialog,
 )
 from .ap_bizhelper_config import load_apworld_cache, save_apworld_cache
+from .ap_bizhelper_apindex import lookup_index_candidate
+from .ap_bizhelper_core_worlds import (
+    build_core_worlds_from_appimage,
+    get_cached_core_worlds,
+    update_cached_core_worlds,
+)
 from .constants import ARCHIPELAGO_WORLDS_DIR, FILE_FILTER_APWORLD, USER_AGENT, USER_AGENT_HEADER
 
 SPREADSHEET_ID = "1iuzDTOAvdoNe8Ne8i461qGNucg5OuEoF-Ikqs8aUQZw"
@@ -59,6 +67,7 @@ PLAYABLE_WORLDS_KEY = "playable_worlds"
 SELECTED_APWORLD_MISSING_MSG = "Selected .apworld file does not exist."
 SLASH = "/"
 SOURCE_KEY = "source"
+HOME_KEY = "home"
 VERSION_KEY = "version"
 WORLD_DIR_COPY_LOCATION = "apworld-copy"
 FAILED_STAGE_APWORLD_MSG = "Failed to stage .apworld file"
@@ -241,6 +250,7 @@ def _update_playable_cache(
     version: str,
     source: str,
     latest_seen: Optional[str] = None,
+    home: Optional[str] = None,
 ) -> None:
     entry = dict(playable_cache.get(normalized, {}))
     entry.update(
@@ -250,6 +260,8 @@ def _update_playable_cache(
             SOURCE_KEY: source,
         }
     )
+    if home is not None:
+        entry[HOME_KEY] = home
     if latest_seen is not None:
         entry[LATEST_SEEN_VERSION_KEY] = latest_seen
     playable_cache[normalized] = entry
@@ -314,6 +326,7 @@ def _select_custom_apworld(
                     version or str(existing.get(VERSION_KEY, EMPTY_STRING) or EMPTY_STRING),
                     str(existing.get(SOURCE_KEY, EMPTY_STRING) or EMPTY_STRING),
                     latest_seen=latest_seen or None,
+                    home=str(existing.get(HOME_KEY, EMPTY_STRING) or EMPTY_STRING),
                 )
             return True
         except Exception as exc:  # pragma: no cover - filesystem edge cases
@@ -324,7 +337,13 @@ def _select_custom_apworld(
     return False
 
 
-def ensure_apworld_for_patch(patch: Path) -> None:
+def ensure_apworld_for_patch(
+    patch: Path,
+    appimage: Optional[Path] = None,
+    settings: Optional[Dict[str, Any]] = None,
+) -> None:
+    settings = settings or {}
+
     game = _read_archipelago_game(patch)
     normalized = _normalize_game(game) if game else EMPTY_STRING
     display_name = game or (
@@ -332,110 +351,274 @@ def ensure_apworld_for_patch(patch: Path) -> None:
     )
 
     cache = load_apworld_cache()
-    core_cached = set(cache.get(CORE_VERIFIED_KEY, []))
     playable_cache = cache.get(PLAYABLE_WORLDS_KEY, {})
+    if not isinstance(playable_cache, dict):
+        playable_cache = {}
 
-    if normalized and normalized in core_cached:
-        return
+    # 1) Core worlds: infer from the managed AppImage (cached per AppImage fingerprint).
+    core_worlds = set()
+    if normalized:
+        # Backwards-compatible fallback: previously we cached core-verified worlds from the sheet.
+        legacy = cache.get(CORE_VERIFIED_KEY)
+        if isinstance(legacy, list):
+            core_worlds.update(_normalize_game(v) for v in legacy if isinstance(v, str) and v.strip())
+
+        if appimage is not None and appimage.is_file():
+            cached_core = get_cached_core_worlds(cache, appimage, settings)
+            if cached_core is not None:
+                core_worlds.update(cached_core)
+            else:
+                try:
+                    computed = build_core_worlds_from_appimage(appimage)
+                except Exception as exc:
+                    APP_LOGGER.log(f"Failed to compute core worlds: {exc}", include_context=True)
+                    computed = set()
+                if computed:
+                    core_worlds.update(computed)
+                    update_cached_core_worlds(cache, appimage, settings, sorted(core_worlds))
+                    # Keep the legacy key around so older installs still benefit.
+                    cache[CORE_VERIFIED_KEY] = sorted(core_worlds)
+                    save_apworld_cache(cache)
+
+        if normalized in core_worlds:
+            return
 
     cached_info = playable_cache.get(normalized, {}) if normalized else {}
     cached_name = str(cached_info.get(FILENAME_KEY, EMPTY_STRING) or EMPTY_STRING)
     cached_version = str(cached_info.get(VERSION_KEY, EMPTY_STRING) or EMPTY_STRING)
     cached_source = str(cached_info.get(SOURCE_KEY, EMPTY_STRING) or EMPTY_STRING)
-    cached_latest_seen = str(
-        cached_info.get(LATEST_SEEN_VERSION_KEY, EMPTY_STRING) or EMPTY_STRING
-    )
+    cached_home = str(cached_info.get(HOME_KEY, EMPTY_STRING) or EMPTY_STRING)
+    cached_latest_seen = str(cached_info.get(LATEST_SEEN_VERSION_KEY, EMPTY_STRING) or EMPTY_STRING)
 
+    # 2) If we already staged the APWorld file previously, we're done.
     if normalized and cached_name:
         existing = WORLD_DIR / cached_name
         if existing.is_file():
             return
 
-    core_games = _get_core_games()
-    if normalized and core_games is not None and normalized in core_games:
-        core_cached.add(normalized)
-        cache[CORE_VERIFIED_KEY] = sorted(core_cached)
-        save_apworld_cache(cache)
+    playable_map = _get_playable_map()
+
+    # 3) Resolve an APWorld source: cached override -> sheet -> index.
+    source = cached_source
+    home = cached_home
+    pinned_version = EMPTY_STRING
+    pinned_filename = EMPTY_STRING
+
+    if not source and playable_map and normalized:
+        source = playable_map.get(normalized, EMPTY_STRING)
+        # Sheet entries are usually GitHub repos.
+        if source and GITHUB_DOMAIN in source:
+            home = source
+
+    if not source and normalized:
+        candidate = lookup_index_candidate(cache, normalized)
+        if candidate:
+            source = candidate.download_url
+            pinned_version = candidate.version
+            pinned_filename = candidate.filename
+            home = candidate.home
+            save_apworld_cache(cache)
+
+    if not source:
+        # Nothing found.
         return
 
-    playable_map = _get_playable_map()
-    link = cached_source or (
-        playable_map.get(normalized, EMPTY_STRING) if playable_map and normalized else EMPTY_STRING
-    )
-
-    download_candidate: Optional[Tuple[str, str, str, str]] = None
-    if link:
-        if GITHUB_DOMAIN in link:
-            latest = _github_latest_apworld(link)
-            if latest:
-                download_url, version_tag, asset_name = latest
-                should_prompt = _is_newer_version(version_tag, cached_latest_seen)
-                _update_playable_latest_seen(
-                    cache, playable_cache, normalized, version_tag
-                )
-                filename = asset_name
-                if cached_version == version_tag and (WORLD_DIR / asset_name).is_file():
-                    _update_playable_cache(
-                        cache, playable_cache, normalized, asset_name, version_tag, link
-                    )
-                    return
-                if not should_prompt:
-                    return
-                download_candidate = (download_url, version_tag, asset_name, link)
-        else:
-            filename = cached_name or Path(urllib.parse.urlparse(link).path).name or APWORLD_FILENAME_DEFAULT
-            candidate_name = (
-                filename if filename.lower().endswith(APWORLD_EXTENSION) else f"{filename}{APWORLD_EXTENSION}"
+    def _present_choice(
+        *,
+        title: str,
+        text: str,
+        latest_label: Optional[str] = None,
+        indexed_label: Optional[str] = None,
+    ) -> str:
+        # Returns one of: "Latest", "Indexed", "Select", "Cancel".
+        if latest_label and indexed_label:
+            result = modular_dialog(
+                title=title,
+                text=text,
+                icon="question",
+                buttons=[
+                    DialogButtonSpec(latest_label, role="positive", is_default=True),
+                    DialogButtonSpec(indexed_label, role="special"),
+                    DialogButtonSpec("Use local .apworld", role="neutral"),
+                    DialogButtonSpec("Cancel", role="negative"),
+                ],
             )
-            if (WORLD_DIR / candidate_name).is_file():
-                _update_playable_cache(cache, playable_cache, normalized, candidate_name, cached_version, link)
-                return
-            download_candidate = (link, EMPTY_STRING, candidate_name, link)
+            label = (result.label or "").strip()
+            if label == latest_label:
+                return "Latest"
+            if label == indexed_label:
+                return "Indexed"
+            if label == "Use local .apworld":
+                return "Select"
+            return "Cancel"
 
-    if download_candidate:
-        download_url, version_tag, dest_name, source = download_candidate
-        version_phrase = f"version {version_tag}" if version_tag else "a download"
-        action = choose_install_action(
-            f"{APWORLD_TITLE_PREFIX}{display_name}",
-            (
-                f"An APWorld {version_phrase} was found for {display_name}.\n\n"
-                "Would you like to download it automatically, select your own .apworld file, or cancel?"
-            ),
-            select_label="Use local .apworld",
-        )
-        if action == "Download":
-            dest = _download_apworld(download_url, dest_name)
-            if dest is None:
-                return
+        choice = choose_install_action(title, text, select_label="Use local .apworld")
+        if choice == "Download":
+            return "Latest"
+        if choice == "Select":
+            return "Select"
+        return "Cancel"
+
+    def _download_and_stage(
+        url: str,
+        *,
+        asset_name: str,
+        version_tag: str,
+        source_value: str,
+        home_value: str,
+        latest_seen: str,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="apworld_dl_") as tmp:
+            tmpdir = Path(tmp)
+            tmp_path = tmpdir / asset_name
+            download_with_progress(
+                url,
+                tmp_path,
+                title=f"Download {asset_name}",
+                text=f"Downloading APWorld for {display_name}...",
+                settings=settings,
+            )
+            staged = _stage_apworld_file(tmp_path, asset_name)
+            if staged is None:
+                raise RuntimeError(FAILED_STAGE_APWORLD_MSG)
+
             if normalized:
-                version_value = version_tag or _read_apworld_version(dest)
-                latest_seen = version_tag or version_value
                 _update_playable_cache(
                     cache,
                     playable_cache,
                     normalized,
-                    dest.name,
-                    version_value,
-                    source,
+                    staged.name,
+                    version_tag,
+                    source_value,
                     latest_seen=latest_seen or None,
+                    home=home_value or None,
                 )
-            info_dialog(f"Installed {APWORLD_TITLE_PREFIX}{display_name}{COLON_SPACE}{dest.name}")
-        elif action == "Select":
-            _select_custom_apworld(display_name, normalized, cache, playable_cache)
+
+    # 4) Resolve download candidates.
+    latest_url = EMPTY_STRING
+    latest_ver = EMPTY_STRING
+    latest_name = EMPTY_STRING
+
+    pinned_url = EMPTY_STRING
+    pinned_ver = pinned_version
+    pinned_name = pinned_filename
+
+    # Case A: source is a GitHub repo -> "latest" is the only meaningful candidate.
+    if GITHUB_DOMAIN in source:
+        home = source
+        latest = _github_latest_apworld(source)
+        if latest:
+            latest_url, latest_ver, latest_name = latest
+            pinned_url = latest_url
+            pinned_ver = latest_ver
+            pinned_name = latest_name
+    else:
+        pinned_url = source
+        if not pinned_name:
+            pinned_name = Path(pinned_url.split("?", 1)[0]).name or APWORLD_FILENAME_DEFAULT
+        if not pinned_ver:
+            pinned_ver = cached_version
+
+        # If we have a GitHub home (from the index), also compute latest.
+        if home and GITHUB_DOMAIN in home:
+            latest = _github_latest_apworld(home)
+            if latest:
+                latest_url, latest_ver, latest_name = latest
+
+    # Track latest-seen for update prompts.
+    if normalized and latest_ver:
+        if _is_newer_version(latest_ver, cached_latest_seen):
+            _update_playable_latest_seen(cache, playable_cache, normalized, latest_ver)
+            cached_latest_seen = latest_ver
+
+    # If the cached version is already present, short-circuit.
+    if normalized and cached_version and cached_name and cached_version == pinned_ver:
+        if (WORLD_DIR / cached_name).is_file():
+            return
+
+    # 5) Prompt user.
+    lines = [f"Found APWorld for {display_name}."]
+    if home and home != source:
+        lines.append(f"Source: {home}")
+    else:
+        lines.append(f"Source: {source}")
+
+    latest_label = None
+    indexed_label = None
+
+    # Offer both index-pinned and GitHub latest when they differ.
+    offer_both = bool(
+        latest_url
+        and pinned_url
+        and pinned_url != latest_url
+        and pinned_ver
+        and latest_ver
+        and _is_newer_version(latest_ver, pinned_ver)
+    )
+
+    if offer_both:
+        lines.append("")
+        lines.append(f"Indexed version: {pinned_ver}")
+        lines.append(f"Latest release: {latest_ver}")
+        latest_label = f"Download latest ({latest_ver})"
+        indexed_label = f"Download indexed ({pinned_ver})"
+    elif pinned_ver:
+        lines.append(f"Version: {pinned_ver}")
+
+    text_prompt = "\n".join(lines)
+    title = f"{APWORLD_TITLE_PREFIX}{display_name}"
+    action = _present_choice(
+        title=title,
+        text=text_prompt,
+        latest_label=latest_label,
+        indexed_label=indexed_label,
+    )
+
+    if action == "Select":
+        # Persist manual choice.
+        if _select_custom_apworld(display_name, normalized, cache, playable_cache):
+            _update_playable_cache(
+                cache,
+                playable_cache,
+                normalized,
+                str(playable_cache.get(normalized, {}).get(FILENAME_KEY, "") or ""),
+                str(playable_cache.get(normalized, {}).get(VERSION_KEY, "") or ""),
+                MANUAL_SOURCE,
+                home=str(playable_cache.get(normalized, {}).get(HOME_KEY, "") or "") or None,
+            )
         return
 
-    choice = _qt_question_dialog(
-        title=f"{APWORLD_TITLE_PREFIX}{display_name}",
-        text=(
-            f"No downloadable APWorld was found for {display_name}.\n\n"
-            "Do you want to select a .apworld file now or cancel?"
-        ),
-        ok_label="Select .apworld",
-        cancel_label="Cancel",
-    )
-    if choice == "ok":
-        _select_custom_apworld(display_name, normalized, cache, playable_cache)
-    return
+    if action == "Cancel":
+        return
+
+    # Latest vs Indexed selection.
+    try:
+        if offer_both and action == "Indexed":
+            _download_and_stage(
+                pinned_url,
+                asset_name=pinned_name or APWORLD_FILENAME_DEFAULT,
+                version_tag=pinned_ver or EMPTY_STRING,
+                source_value=pinned_url,
+                home_value=home,
+                latest_seen=cached_latest_seen,
+            )
+            return
+
+        # Default: download latest (or pinned if latest is unavailable).
+        url = latest_url or pinned_url
+        ver = latest_ver or pinned_ver or EMPTY_STRING
+        name = latest_name or pinned_name or APWORLD_FILENAME_DEFAULT
+        source_value = home if (home and GITHUB_DOMAIN in home and url == latest_url) else pinned_url
+        _download_and_stage(
+            url,
+            asset_name=name,
+            version_tag=ver,
+            source_value=source_value,
+            home_value=home,
+            latest_seen=cached_latest_seen,
+        )
+    except Exception as exc:
+        error_dialog(f"Failed to download APWorld for {display_name}{COLON_SPACE}{exc}")
 
 
 def manual_select_apworld(normalized_override: Optional[str] = None) -> bool:
@@ -529,15 +712,25 @@ def force_update_apworlds(normalized_override: Optional[str] = None) -> bool:
         version = str(entry.get(VERSION_KEY, EMPTY_STRING) or EMPTY_STRING)
         filename = str(entry.get(FILENAME_KEY, EMPTY_STRING) or EMPTY_STRING)
         source = str(entry.get(SOURCE_KEY, EMPTY_STRING) or EMPTY_STRING)
+        home = str(entry.get(HOME_KEY, EMPTY_STRING) or EMPTY_STRING)
+        latest_seen = str(entry.get(LATEST_SEEN_VERSION_KEY, EMPTY_STRING) or EMPTY_STRING)
+
+        # Resolve source if missing (sheet preferred; index fallback).
         if not source or source == MANUAL_SOURCE:
             if playable_map is None:
                 playable_map = _get_playable_map() or {}
-            resolved_source = (
-                playable_map.get(normalized, EMPTY_STRING) if playable_map else EMPTY_STRING
-            )
+            resolved_source = playable_map.get(normalized, EMPTY_STRING) if playable_map else EMPTY_STRING
+            if not resolved_source:
+                candidate = lookup_index_candidate(cache, normalized)
+                if candidate:
+                    resolved_source = candidate.download_url
+                    if not home:
+                        home = candidate.home
             if not resolved_source:
                 continue
             source = resolved_source
+            if not home and source and GITHUB_DOMAIN in source:
+                home = source
             _update_playable_cache(
                 cache,
                 playable_cache,
@@ -545,49 +738,65 @@ def force_update_apworlds(normalized_override: Optional[str] = None) -> bool:
                 filename,
                 version,
                 source,
-                latest_seen=str(entry.get(LATEST_SEEN_VERSION_KEY, EMPTY_STRING) or EMPTY_STRING)
-                or None,
+                latest_seen=latest_seen or None,
+                home=home or None,
             )
             entry = playable_cache.get(normalized, entry)
-        if GITHUB_DOMAIN in source:
-            latest = _github_latest_apworld(source)
+
+        # Prefer GitHub latest when we have a repo home or the source itself is a repo.
+        repo = EMPTY_STRING
+        if source and GITHUB_DOMAIN in source:
+            repo = source
+        elif home and GITHUB_DOMAIN in home:
+            repo = home
+
+        if repo:
+            latest = _github_latest_apworld(repo)
             if not latest:
                 continue
             download_url, version_tag, asset_name = latest
-            _update_playable_latest_seen(cache, playable_cache, normalized, version_tag)
+            if version_tag:
+                _update_playable_latest_seen(cache, playable_cache, normalized, version_tag)
+            # Already up-to-date?
             if version_tag and version_tag == version and (WORLD_DIR / asset_name).is_file():
                 continue
             dest = _download_apworld(download_url, asset_name)
             if dest is None:
                 continue
-            version_value = version_tag or _read_apworld_version(dest)
+            version_value = version_tag or _read_apworld_version(dest) or version
             _update_playable_cache(
                 cache,
                 playable_cache,
                 normalized,
                 dest.name,
                 version_value,
-                source,
+                # Keep the repo as the canonical source for future updates.
+                repo,
                 latest_seen=version_tag or version_value or None,
+                home=repo,
             )
             updated = True
-        else:
-            if filename and (WORLD_DIR / filename).is_file():
-                continue
-            dest = _download_apworld(source, filename or None)
-            if dest is None:
-                continue
-            version_value = _read_apworld_version(dest) or version
-            _update_playable_cache(
-                cache,
-                playable_cache,
-                normalized,
-                dest.name,
-                version_value,
-                source,
-                latest_seen=version_value or None,
-            )
-            updated = True
+            continue
+
+        # Direct download URL.
+        if filename and (WORLD_DIR / filename).is_file():
+            continue
+        dest = _download_apworld(source, filename or None)
+        if dest is None:
+            continue
+        version_value = _read_apworld_version(dest) or version
+        _update_playable_cache(
+            cache,
+            playable_cache,
+            normalized,
+            dest.name,
+            version_value,
+            source,
+            latest_seen=version_value or None,
+            home=home or None,
+        )
+        updated = True
+
 
     if updated:
         info_dialog("APWorlds refreshed.")
