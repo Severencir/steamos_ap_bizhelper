@@ -31,6 +31,9 @@ from .constants import (
 )
 from .logging_utils import AppLogger, get_app_logger
 
+os.environ.setdefault("KIVY_CLIPBOARD", "dummy")
+# Avoid SteamOS xclip/xsel errors by using Kivy's dummy clipboard provider.
+
 DIALOG_DEFAULTS = {
     "KIVY_FONT_SCALE": 1.5,
     "KIVY_MIN_TEXT_SP": 20,
