@@ -7,6 +7,7 @@ import json
 import re
 import shutil
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 import zipfile
@@ -28,7 +29,12 @@ from .dialogs import (
     info_dialog,
 )
 from .ap_bizhelper_config import load_apworld_cache, save_apworld_cache
-from .ap_bizhelper_apindex import lookup_index_candidate
+from .ap_bizhelper_apindex import (
+    get_cached_index_mapping,
+    lookup_index_candidate,
+    lookup_index_candidate_cached,
+    lookup_index_candidate_live,
+)
 from .ap_bizhelper_core_worlds import (
     build_core_worlds_from_appimage,
     get_cached_core_worlds,
@@ -64,6 +70,9 @@ GITHUB_RELEASES_URL_TEMPLATE = "https://api.github.com/repos/{owner}/{repo}/rele
 LATEST_SEEN_VERSION_KEY = "latest_seen_version"
 MANUAL_SOURCE = "manual"
 PLAYABLE_WORLDS_KEY = "playable_worlds"
+SHEET_CACHE_KEY = "sheet_cache"
+SHEET_CACHE_TS_KEY = "fetched_at"
+SHEET_CACHE_MAP_KEY = "mapping"
 SELECTED_APWORLD_MISSING_MSG = "Selected .apworld file does not exist."
 SLASH = "/"
 SOURCE_KEY = "source"
@@ -127,10 +136,7 @@ def _extract_single_link(cell: str) -> Optional[str]:
     return links[0]
 
 
-def _get_playable_map() -> Optional[dict[str, str]]:
-    rows = _fetch_sheet(PLAYABLE_SHEET_NAME)
-    if not rows:
-        return None
+def _build_playable_map(rows: list[list[str]]) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for row in rows:
         if not row or len(row) < 3:
@@ -142,6 +148,38 @@ def _get_playable_map() -> Optional[dict[str, str]]:
         if link:
             mapping[_normalize_game(name)] = link
     return mapping
+
+
+def _get_playable_map() -> Optional[dict[str, str]]:
+    rows = _fetch_sheet(PLAYABLE_SHEET_NAME)
+    if not rows:
+        return None
+    mapping = _build_playable_map(rows)
+    return mapping or None
+
+
+def _get_cached_sheet_map(cache: Dict[str, Any]) -> Optional[dict[str, str]]:
+    entry = cache.get(SHEET_CACHE_KEY)
+    if not isinstance(entry, dict):
+        return None
+    mapping = entry.get(SHEET_CACHE_MAP_KEY)
+    if not isinstance(mapping, dict):
+        return None
+    cleaned: dict[str, str] = {}
+    for key, value in mapping.items():
+        if not isinstance(key, str) or not key.strip():
+            continue
+        if not isinstance(value, str) or not value.strip():
+            continue
+        cleaned[_normalize_game(key)] = value.strip()
+    return cleaned
+
+
+def _update_sheet_cache(cache: Dict[str, Any], mapping: dict[str, str]) -> None:
+    cache[SHEET_CACHE_KEY] = {
+        SHEET_CACHE_TS_KEY: time.time(),
+        SHEET_CACHE_MAP_KEY: dict(sorted(mapping.items())),
+    }
 
 
 def _read_archipelago_game(patch: Path) -> Optional[str]:
@@ -368,10 +406,17 @@ def ensure_apworld_for_patch(
             if cached_core is not None:
                 core_worlds.update(cached_core)
             else:
+                APP_LOGGER.log(
+                    f"Error: core worlds cache missing for {appimage}.",
+                    include_context=True,
+                )
                 try:
                     computed = build_core_worlds_from_appimage(appimage)
                 except Exception as exc:
-                    APP_LOGGER.log(f"Failed to compute core worlds: {exc}", include_context=True)
+                    APP_LOGGER.log(
+                        f"Error: failed to compute core worlds: {exc}",
+                        include_context=True,
+                    )
                     computed = set()
                 if computed:
                     core_worlds.update(computed)
@@ -379,9 +424,19 @@ def ensure_apworld_for_patch(
                     # Keep the legacy key around so older installs still benefit.
                     cache[CORE_VERIFIED_KEY] = sorted(core_worlds)
                     save_apworld_cache(cache)
+                    APP_LOGGER.log("Core worlds cache populated from AppImage.", include_context=True)
 
         if normalized in core_worlds:
+            APP_LOGGER.log(
+                f"Core worlds cache hit (core): {display_name}.",
+                include_context=True,
+            )
             return
+        if core_worlds:
+            APP_LOGGER.log(
+                f"Core worlds cache hit (non-core): {display_name}.",
+                include_context=True,
+            )
 
     cached_info = playable_cache.get(normalized, {}) if normalized else {}
     cached_name = str(cached_info.get(FILENAME_KEY, EMPTY_STRING) or EMPTY_STRING)
@@ -396,31 +451,88 @@ def ensure_apworld_for_patch(
         if existing.is_file():
             return
 
-    playable_map = _get_playable_map()
+    def _log_lookup(label: str, message: str) -> None:
+        APP_LOGGER.log(f"{label}: {message}", include_context=True)
 
-    # 3) Resolve an APWorld source: cached override -> sheet -> index.
+    # 3) Resolve an APWorld source: cached override -> sheet -> index -> sheet cache -> index cache.
     source = cached_source
     home = cached_home
     pinned_version = EMPTY_STRING
     pinned_filename = EMPTY_STRING
 
-    if not source and playable_map and normalized:
-        source = playable_map.get(normalized, EMPTY_STRING)
-        # Sheet entries are usually GitHub repos.
-        if source and GITHUB_DOMAIN in source:
-            home = source
+    if source:
+        _log_lookup("Cached source", f"using stored APWorld source for {display_name}.")
 
     if not source and normalized:
-        candidate = lookup_index_candidate(cache, normalized)
+        rows = _fetch_sheet(PLAYABLE_SHEET_NAME)
+        if rows is None:
+            _log_lookup("Sheet lookup", f"Error fetching sheet for {display_name}.")
+        else:
+            playable_map = _build_playable_map(rows)
+            _update_sheet_cache(cache, playable_map)
+            save_apworld_cache(cache)
+            source = playable_map.get(normalized, EMPTY_STRING)
+            if source:
+                _log_lookup("Sheet lookup", f"found APWorld source for {display_name}.")
+                if GITHUB_DOMAIN in source:
+                    home = source
+            else:
+                _log_lookup("Sheet lookup", f"no entry found for {display_name}.")
+
+    if not source and normalized:
+        candidate, refreshed = lookup_index_candidate_live(cache, normalized)
+        if refreshed:
+            save_apworld_cache(cache)
         if candidate:
+            _log_lookup("Index lookup", f"found APWorld source for {display_name}.")
             source = candidate.download_url
             pinned_version = candidate.version
             pinned_filename = candidate.filename
             home = candidate.home
-            save_apworld_cache(cache)
+        else:
+            if refreshed:
+                _log_lookup("Index lookup", f"no entry found for {display_name}.")
+            else:
+                _log_lookup("Index lookup", f"Error fetching index for {display_name}.")
+
+    if not source and normalized:
+        cached_sheet_map = _get_cached_sheet_map(cache)
+        if cached_sheet_map is None:
+            _log_lookup(
+                "Sheet cache",
+                f"Warning: cache missing; skipping cached lookup for {display_name}.",
+            )
+        else:
+            source = cached_sheet_map.get(normalized, EMPTY_STRING)
+            if source:
+                _log_lookup("Sheet cache", f"found APWorld source for {display_name}.")
+                if GITHUB_DOMAIN in source:
+                    home = source
+            else:
+                _log_lookup("Sheet cache", f"no entry found for {display_name}.")
+
+    if not source and normalized:
+        cached_index_map = get_cached_index_mapping(cache)
+        if cached_index_map is None:
+            _log_lookup(
+                "Index cache",
+                f"Warning: cache missing; skipping cached lookup for {display_name}.",
+            )
+        else:
+            candidate = lookup_index_candidate_cached(cache, normalized)
+            if candidate:
+                _log_lookup("Index cache", f"found APWorld source for {display_name}.")
+                source = candidate.download_url
+                pinned_version = candidate.version
+                pinned_filename = candidate.filename
+                home = candidate.home
+            else:
+                _log_lookup("Index cache", f"no entry found for {display_name}.")
 
     if not source:
-        # Nothing found.
+        normalized_fallback = normalized or _normalize_game(patch.stem)
+        _log_lookup("Manual fallback", f"prompting for local APWorld for {display_name}.")
+        _select_custom_apworld(display_name, normalized_fallback, cache, playable_cache)
         return
 
     def _present_choice(
