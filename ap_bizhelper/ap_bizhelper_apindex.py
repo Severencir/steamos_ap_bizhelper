@@ -214,6 +214,61 @@ def _refresh_mapping(cache: Dict[str, Any]) -> Optional[Dict[str, Dict[str, str]
     return mapping
 
 
+def _candidate_from_mapping(
+    mapping: Dict[str, Dict[str, str]], normalized_game: str
+) -> Optional[IndexCandidate]:
+    info = mapping.get(normalized_game)
+    if not isinstance(info, dict):
+        return None
+
+    url = str(info.get("download_url", "") or "").strip()
+    ver = str(info.get("version", "") or "").strip()
+    filename = str(info.get("filename", "") or "").strip()
+    home = str(info.get("home", "") or "").strip()
+
+    if not url:
+        return None
+    if not filename:
+        filename = Path(url.split("?", 1)[0]).name or "world.apworld"
+
+    return IndexCandidate(download_url=url, version=ver, filename=filename, home=home)
+
+
+def lookup_index_candidate_live(
+    cache: Dict[str, Any], normalized_game: str
+) -> tuple[Optional[IndexCandidate], bool]:
+    """Lookup the latest index entry, forcing a live refresh."""
+
+    normalized_game = _normalize(normalized_game)
+    if not normalized_game:
+        return None, False
+
+    mapping = _refresh_mapping(cache)
+    if not mapping:
+        return None, False
+    return _candidate_from_mapping(mapping, normalized_game), True
+
+
+def lookup_index_candidate_cached(cache: Dict[str, Any], normalized_game: str) -> Optional[IndexCandidate]:
+    """Lookup the latest index entry using only cached data."""
+
+    normalized_game = _normalize(normalized_game)
+    if not normalized_game:
+        return None
+
+    mapping = _get_cached_mapping(cache)
+    if not mapping:
+        return None
+
+    return _candidate_from_mapping(mapping, normalized_game)
+
+
+def get_cached_index_mapping(cache: Dict[str, Any]) -> Optional[Dict[str, Dict[str, str]]]:
+    """Return the cached index mapping if present and fresh."""
+
+    return _get_cached_mapping(cache)
+
+
 def lookup_index_candidate(cache: Dict[str, Any], normalized_game: str) -> Optional[IndexCandidate]:
     """Lookup the latest index entry for ``normalized_game``.
 
@@ -233,18 +288,4 @@ def lookup_index_candidate(cache: Dict[str, Any], normalized_game: str) -> Optio
     if not mapping:
         return None
 
-    info = mapping.get(normalized_game)
-    if not isinstance(info, dict):
-        return None
-
-    url = str(info.get("download_url", "") or "").strip()
-    ver = str(info.get("version", "") or "").strip()
-    filename = str(info.get("filename", "") or "").strip()
-    home = str(info.get("home", "") or "").strip()
-
-    if not url:
-        return None
-    if not filename:
-        filename = Path(url.split("?", 1)[0]).name or "world.apworld"
-
-    return IndexCandidate(download_url=url, version=ver, filename=filename, home=home)
+    return _candidate_from_mapping(mapping, normalized_game)
