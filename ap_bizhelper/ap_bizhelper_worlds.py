@@ -8,6 +8,7 @@ import re
 import shutil
 import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -35,11 +36,6 @@ from .ap_bizhelper_apindex import (
     lookup_index_candidate_cached,
     lookup_index_candidate_live,
 )
-from .ap_bizhelper_core_worlds import (
-    build_core_worlds_from_appimage,
-    get_cached_core_worlds,
-    update_cached_core_worlds,
-)
 from .constants import ARCHIPELAGO_WORLDS_DIR, FILE_FILTER_APWORLD, USER_AGENT, USER_AGENT_HEADER
 
 SPREADSHEET_ID = "1iuzDTOAvdoNe8Ne8i461qGNucg5OuEoF-Ikqs8aUQZw"
@@ -59,6 +55,15 @@ APWORLD_FILE_PROMPT = "Select .apworld file"
 ARCHIPELAGO_METADATA_FILE = "archipelago.json"
 COLON_SPACE = ": "
 CORE_VERIFIED_KEY = "core_verified"
+CORE_VERIFIED_TS_KEY = "core_verified_fetched_at"
+CORE_VERIFIED_TTL_SECONDS = 60 * 60 * 24  # 24h
+
+DATAPACKAGE_URL = "https://archipelago.gg/api/datapackage"
+DATAPACKAGE_CACHE_KEY = "datapackage_cache"
+DATAPACKAGE_CACHE_TS_KEY = "fetched_at"
+DATAPACKAGE_CACHE_ETAG_KEY = "etag"
+DATAPACKAGE_CACHE_GAMES_KEY = "games"
+DATAPACKAGE_CACHE_TTL_SECONDS = 60 * 60 * 24  # 24h
 DOT = "."
 EMPTY_STRING = ""
 ENCODING_UTF8 = "utf-8"
@@ -93,6 +98,124 @@ def _read_url(url: str, headers: Dict[str, str]) -> Optional[bytes]:
             return resp.read()
     except Exception:
         return None
+
+
+def _read_url_conditional(
+    url: str,
+    headers: Dict[str, str],
+    *,
+    etag: str = "",
+) -> tuple[Optional[bytes], str, int]:
+    """Read a URL with optional If-None-Match and return (body, etag, status)."""
+
+    req_headers = dict(headers)
+    if etag:
+        req_headers["If-None-Match"] = etag
+
+    req = urllib.request.Request(url, headers=req_headers)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read()
+            new_etag = str(resp.headers.get("ETag") or "")
+            return body, new_etag, int(getattr(resp, "status", 200) or 200)
+    except urllib.error.HTTPError as exc:
+        # urllib treats non-200 responses as exceptions.
+        if getattr(exc, "code", None) == 304:
+            return None, etag, 304
+        return None, etag, int(getattr(exc, "code", 0) or 0)
+    except Exception:
+        return None, etag, 0
+
+
+def _clean_cached_str_list(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    out: list[str] = []
+    for v in values:
+        if isinstance(v, str) and v.strip():
+            out.append(v.strip())
+    return out
+
+
+def _get_datapackage_games_best_effort(cache: Dict[str, Any]) -> tuple[Optional[set[str]], str, bool]:
+    """Return (games, status, cache_updated).
+
+    Status values:
+      - "cache": fresh cache hit
+      - "refreshed": fetched a new package
+      - "not-modified": 304, cache timestamp refreshed
+      - "stale-cache": refresh failed; using stale cache
+      - "miss": no cache and refresh failed
+    """
+
+    entry = cache.get(DATAPACKAGE_CACHE_KEY)
+    cached_games: set[str] = set()
+    cached_etag = ""
+    cached_ts: Optional[float] = None
+    if isinstance(entry, dict):
+        cached_ts_raw = entry.get(DATAPACKAGE_CACHE_TS_KEY)
+        if isinstance(cached_ts_raw, (int, float)):
+            cached_ts = float(cached_ts_raw)
+        cached_etag = str(entry.get(DATAPACKAGE_CACHE_ETAG_KEY) or "")
+        for name in _clean_cached_str_list(entry.get(DATAPACKAGE_CACHE_GAMES_KEY)):
+            cached_games.add(_normalize_game(name))
+
+    if cached_games and cached_ts is not None:
+        if (time.time() - cached_ts) <= DATAPACKAGE_CACHE_TTL_SECONDS:
+            return cached_games, "cache", False
+
+    # Refresh (conditionally if we have an ETag).
+    body, new_etag, status = _read_url_conditional(DATAPACKAGE_URL, USER_AGENT_HEADERS, etag=cached_etag)
+    if status == 304 and cached_games:
+        cache[DATAPACKAGE_CACHE_KEY] = {
+            DATAPACKAGE_CACHE_TS_KEY: time.time(),
+            DATAPACKAGE_CACHE_ETAG_KEY: cached_etag,
+            DATAPACKAGE_CACHE_GAMES_KEY: sorted(cached_games),
+        }
+        return cached_games, "not-modified", True
+
+    if status == 200 and body:
+        try:
+            data = json.loads(body.decode(ENCODING_UTF8, errors="replace"))
+        except Exception:
+            data = {}
+
+        games_obj = data.get("games") if isinstance(data, dict) else None
+        if isinstance(games_obj, dict) and games_obj:
+            games = {_normalize_game(k) for k in games_obj.keys() if isinstance(k, str) and k.strip()}
+            cache[DATAPACKAGE_CACHE_KEY] = {
+                DATAPACKAGE_CACHE_TS_KEY: time.time(),
+                DATAPACKAGE_CACHE_ETAG_KEY: new_etag or cached_etag,
+                DATAPACKAGE_CACHE_GAMES_KEY: sorted(games),
+            }
+            return games, "refreshed", True
+
+    # Refresh failed: fall back to stale cache if we have it.
+    if cached_games:
+        return cached_games, "stale-cache", False
+    return None, "miss", False
+
+
+def _get_core_sheet_games_best_effort(cache: Dict[str, Any]) -> tuple[Optional[set[str]], str, bool]:
+    """Return (games, status, cache_updated) for the Core-Verified sheet."""
+
+    cached_games = {_normalize_game(v) for v in _clean_cached_str_list(cache.get(CORE_VERIFIED_KEY))}
+    ts_raw = cache.get(CORE_VERIFIED_TS_KEY)
+    cached_ts = float(ts_raw) if isinstance(ts_raw, (int, float)) else None
+
+    if cached_games and cached_ts is not None:
+        if (time.time() - cached_ts) <= CORE_VERIFIED_TTL_SECONDS:
+            return cached_games, "cache", False
+
+    fresh = _get_core_games()
+    if fresh:
+        cache[CORE_VERIFIED_KEY] = sorted(fresh)
+        cache[CORE_VERIFIED_TS_KEY] = time.time()
+        return fresh, "refreshed", True
+
+    if cached_games:
+        return cached_games, "stale-cache", False
+    return None, "miss", False
 
 
 def _fetch_sheet(sheet_name: str) -> Optional[list[list[str]]]:
@@ -393,50 +516,41 @@ def ensure_apworld_for_patch(
     if not isinstance(playable_cache, dict):
         playable_cache = {}
 
-    # 1) Core worlds: infer from the managed AppImage (cached per AppImage fingerprint).
-    core_worlds = set()
+    def _log_core(message: str) -> None:
+        APP_LOGGER.log(f"Core check: {message}", include_context=True)
+
+    # 1) Core worlds: prefer the official webhost datapackage; fall back to the
+    # public Core-Verified sheet if needed.
+    #
+    # We intentionally avoid AppImage introspection here: it is fragile on SteamOS
+    # (permissions/FUSE/runtime mismatches). The datapackage is a machine-readable
+    # source of the world list served by the official webhost.
     if normalized:
-        # Backwards-compatible fallback: previously we cached core-verified worlds from the sheet.
-        legacy = cache.get(CORE_VERIFIED_KEY)
-        if isinstance(legacy, list):
-            core_worlds.update(_normalize_game(v) for v in legacy if isinstance(v, str) and v.strip())
+        dp_games, dp_status, dp_updated = _get_datapackage_games_best_effort(cache)
+        if dp_updated:
+            save_apworld_cache(cache)
 
-        if appimage is not None and appimage.is_file():
-            cached_core = get_cached_core_worlds(cache, appimage, settings)
-            if cached_core is not None:
-                core_worlds.update(cached_core)
-            else:
-                APP_LOGGER.log(
-                    f"Error: core worlds cache missing for {appimage}.",
-                    include_context=True,
-                )
-                try:
-                    computed = build_core_worlds_from_appimage(appimage)
-                except Exception as exc:
-                    APP_LOGGER.log(
-                        f"Error: failed to compute core worlds: {exc}",
-                        include_context=True,
-                    )
-                    computed = set()
-                if computed:
-                    core_worlds.update(computed)
-                    update_cached_core_worlds(cache, appimage, settings, sorted(core_worlds))
-                    # Keep the legacy key around so older installs still benefit.
-                    cache[CORE_VERIFIED_KEY] = sorted(core_worlds)
-                    save_apworld_cache(cache)
-                    APP_LOGGER.log("Core worlds cache populated from AppImage.", include_context=True)
-
-        if normalized in core_worlds:
-            APP_LOGGER.log(
-                f"Core worlds cache hit (core): {display_name}.",
-                include_context=True,
-            )
+        if dp_games and normalized in dp_games:
+            _log_core(f"{display_name} is core via datapackage ({dp_status}).")
             return
-        if core_worlds:
-            APP_LOGGER.log(
-                f"Core worlds cache hit (non-core): {display_name}.",
-                include_context=True,
-            )
+
+        sheet_games = None
+        sheet_status = "skipped"
+        sheet_updated = False
+
+        # Only consult the sheet when datapackage didn't confirm core.
+        sheet_games, sheet_status, sheet_updated = _get_core_sheet_games_best_effort(cache)
+        if sheet_updated:
+            save_apworld_cache(cache)
+
+        if sheet_games and normalized in sheet_games:
+            _log_core(f"{display_name} is core via core sheet ({sheet_status}).")
+            return
+
+        # Log final decision at the start of the APWorld resolution flow.
+        _log_core(
+            f"{display_name} treated as non-core (datapackage={dp_status}, core_sheet={sheet_status})."
+        )
 
     cached_info = playable_cache.get(normalized, {}) if normalized else {}
     cached_name = str(cached_info.get(FILENAME_KEY, EMPTY_STRING) or EMPTY_STRING)
